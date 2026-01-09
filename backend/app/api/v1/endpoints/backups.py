@@ -46,7 +46,18 @@ async def get_backups(
     device_id: UUID | None = Query(default=None, description="设备ID筛选"),
     backup_type: BackupType | None = Query(default=None, description="备份类型筛选"),
 ) -> ResponseBase[PaginatedResponse[BackupResponse]]:
-    """获取备份列表。"""
+    """获取分页过滤的配置备份列表。
+
+    Args:
+        service (BackupService): 备份服务依赖。
+        page (int): 当前页码。
+        page_size (int): 每页大小。
+        device_id (UUID | None): 按设备 ID 过滤。
+        backup_type (BackupType | None): 按备份类型（手动/自动）过滤。
+
+    Returns:
+        ResponseBase[PaginatedResponse[BackupResponse]]: 包含备份记录的分页列表。
+    """
     query = BackupListQuery(
         page=page,
         page_size=page_size,
@@ -97,7 +108,15 @@ async def get_backup(
     backup_id: UUID,
     service: BackupServiceDep,
 ) -> ResponseBase[BackupResponse]:
-    """获取备份详情。"""
+    """根据 ID 获取单个备份记录的详细信息。
+
+    Args:
+        backup_id (UUID): 备份记录 ID。
+        service (BackupService): 备份服务依赖。
+
+    Returns:
+        ResponseBase[BackupResponse]: 备份详情响应对象。
+    """
     backup = await service.get_backup(backup_id)
 
     return ResponseBase(
@@ -131,7 +150,15 @@ async def get_backup_content(
     backup_id: UUID,
     service: BackupServiceDep,
 ) -> ResponseBase[BackupContentResponse]:
-    """获取备份配置内容。"""
+    """获取指定备份记录的完整配置文件内容。
+
+    Args:
+        backup_id (UUID): 备份记录 ID。
+        service (BackupService): 备份服务依赖。
+
+    Returns:
+        ResponseBase[BackupContentResponse]: 包含配置文本内容的响应。
+    """
     backup = await service.get_backup(backup_id)
     content = await service.get_backup_content(backup_id)
 
@@ -162,7 +189,17 @@ async def backup_device(
     current_user: CurrentUser,
     request: BackupDeviceRequest | None = None,
 ) -> ResponseBase[BackupResponse]:
-    """手动备份单设备。"""
+    """立即为指定设备创建一个异步备份任务或同步执行。
+
+    Args:
+        device_id (UUID): 设备 ID。
+        service (BackupService): 备份服务依赖。
+        current_user (User): 操作者。
+        request (BackupDeviceRequest | None): 备份策略可选参数。
+
+    Returns:
+        ResponseBase[BackupResponse]: 生成的备份任务/记录信息。
+    """
     backup_type = request.backup_type if request else BackupType.MANUAL
 
     backup = await service.backup_single_device(
@@ -204,11 +241,17 @@ async def backup_devices_batch(
     service: BackupServiceDep,
     current_user: CurrentUser,
 ) -> ResponseBase[BackupBatchResult]:
-    """批量备份设备。
+    """启动一个针对多台设备的批量备份任务。
 
-    支持断点续传：
-    - 如果之前的任务因 OTP 过期中断，可以传入 `resume_task_id` 和 `skip_device_ids`
-    - 服务会跳过已成功的设备，继续备份剩余设备
+    支持断点续传场景。
+
+    Args:
+        request (BackupBatchRequest): 包含设备列表或标签，以及续传信息。
+        service (BackupService): 备份服务依赖。
+        current_user (User): 操作者。
+
+    Returns:
+        ResponseBase[BackupBatchResult]: 包含提交的任务 ID 和设备总量统计。
     """
     result = await service.backup_devices_batch(
         request=request,
@@ -235,7 +278,15 @@ async def get_backup_task_status(
     task_id: str,
     service: BackupServiceDep,
 ) -> ResponseBase[BackupTaskStatus]:
-    """查询备份任务状态。"""
+    """根据任务 ID 查询后台异步任务的处理状态和进度。
+
+    Args:
+        task_id (str): Celery 任务 ID。
+        service (BackupService): 备份服务依赖。
+
+    Returns:
+        ResponseBase[BackupTaskStatus]: 包含任务状态、进度、成功/失败数量的对象。
+    """
     status = await service.get_task_status(task_id)
 
     return ResponseBase(data=status)
@@ -255,7 +306,15 @@ async def get_device_latest_backup(
     device_id: UUID,
     service: BackupServiceDep,
 ) -> ResponseBase[BackupResponse | None]:
-    """获取设备最新备份。"""
+    """检索指定设备最后一次成功的配置备份记录。
+
+    Args:
+        device_id (UUID): 设备 ID。
+        service (BackupService): 备份服务依赖。
+
+    Returns:
+        ResponseBase[BackupResponse | None]: 最新备份详情，若无则 data 为 None。
+    """
     backup = await service.get_device_latest_backup(device_id)
 
     if not backup:
@@ -294,7 +353,17 @@ async def get_device_backup_history(
     page: int = Query(default=1, ge=1, description="页码"),
     page_size: int = Query(default=20, ge=1, le=100, description="每页数量"),
 ) -> ResponseBase[PaginatedResponse[BackupResponse]]:
-    """获取设备备份历史。"""
+    """分页获取单个设备的全部备份记录历史。
+
+    Args:
+        device_id (UUID): 设备 ID。
+        service (BackupService): 备份服务依赖。
+        page (int): 页码。
+        page_size (int): 每页数量。
+
+    Returns:
+        ResponseBase[PaginatedResponse[BackupResponse]]: 历史记录列表。
+    """
     items, total = await service.get_device_backups(
         device_id=device_id,
         page=page,
@@ -341,9 +410,14 @@ async def download_backup_content(
     backup_id: UUID,
     service: BackupServiceDep,
 ) -> StreamingResponse:
-    """下载备份配置文件。
+    """下载指定备份记录的内容为 txt 文件。
 
-    返回文件名格式：{设备名称}_{备份时间}.txt
+    Args:
+        backup_id (UUID): 备份记录 ID。
+        service (BackupService): 备份服务依赖。
+
+    Returns:
+        StreamingResponse: 包含配置文件内容的 HTTP 流响应。
     """
     # 获取备份信息
     backup = await service.get_backup(backup_id)
@@ -383,13 +457,22 @@ async def delete_backup(
     service: BackupServiceDep,
     current_user: CurrentUser,
 ) -> ResponseBase[dict]:
-    """删除备份（软删除）。
+    """标记删除指定的备份记录。
 
-    Note:
-        - 需要 backup:delete 权限
-        - 执行软删除，数据库记录不会物理删除
+    Args:
+        backup_id (UUID): 备份记录 ID。
+        service (BackupService): 备份服务依赖。
+        current_user (User): 操作者。
+
+    Returns:
+        ResponseBase[dict]: 包含被删除 ID 的确认对象。
     """
     await service.delete_backup(backup_id)
+
+    return ResponseBase(
+        data={"id": str(backup_id), "deleted": True},
+        message="备份已删除",
+    )
 
     return ResponseBase(
         data={"id": str(backup_id), "deleted": True},

@@ -51,13 +51,14 @@ async def get_topology(
     db: SessionDep,
     topology_service: TopologyServiceDep,
 ) -> TopologyResponse:
-    """
-    获取完整的网络拓扑数据 (vis.js 格式)。
+    """获取完整的网络拓扑数据，用于前端 vis.js 或相关拓扑引擎渲染。
 
-    返回格式：
-    - nodes: 节点列表 (设备)
-    - edges: 边列表 (链路)
-    - stats: 统计信息
+    Args:
+        db (Session): 数据库会话。
+        topology_service (TopologyService): 拓扑服务依赖。
+
+    Returns:
+        TopologyResponse: 包含节点 (nodes)、边 (edges) 和统计数据的对象。
     """
     return await topology_service.build_topology(db)
 
@@ -73,7 +74,17 @@ async def list_topology_links(
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
 ) -> dict[str, Any]:
-    """获取所有拓扑链路 (分页)。"""
+    """分页获取所有已发现的网络链路列表。
+
+    Args:
+        db (Session): 数据库会话。
+        topology_service (TopologyService): 拓扑服务依赖。
+        page (int): 页码。
+        page_size (int): 每页条数。
+
+    Returns:
+        dict[str, Any]: 包含 links 列表和分页信息的字典。
+    """
     links, total = await topology_service.get_all_links(db, page=page, page_size=page_size)
 
     return {
@@ -108,7 +119,16 @@ async def get_device_neighbors(
     device_id: UUID,
     topology_service: TopologyServiceDep,
 ) -> DeviceNeighborsResponse:
-    """获取指定设备的所有邻居链路。"""
+    """获取指定设备的所有直接连接的邻居链路。
+
+    Args:
+        db (Session): 数据库会话。
+        device_id (UUID): 设备 ID。
+        topology_service (TopologyService): 拓扑服务依赖。
+
+    Returns:
+        DeviceNeighborsResponse: 邻居链路列表。
+    """
     return await topology_service.get_device_neighbors(db, device_id=device_id)
 
 
@@ -121,7 +141,15 @@ async def export_topology(
     db: SessionDep,
     topology_service: TopologyServiceDep,
 ) -> JSONResponse:
-    """导出拓扑数据为 JSON 格式 (可用于离线查看或备份)。"""
+    """导出全量拓扑数据为 JSON 文件。
+
+    Args:
+        db (Session): 数据库会话。
+        topology_service (TopologyService): 拓扑服务依赖。
+
+    Returns:
+        JSONResponse: 下载响应。
+    """
     data = await topology_service.export_topology(db)
 
     return JSONResponse(
@@ -145,11 +173,14 @@ async def refresh_topology(
     request: TopologyCollectRequest,
     current_user: CurrentUser,
 ) -> dict[str, Any]:
-    """
-    触发拓扑刷新任务 (采集 LLDP 信息)。
+    """触发全局或指定范围的拓扑发现任务。
 
-    - 可指定设备列表，为空则采集所有活跃设备
-    - async_mode=True 时返回任务ID
+    Args:
+        request (TopologyCollectRequest): 采集请求参数，包括指定设备列表和是否异步。
+        current_user (User): 当前操作用户。
+
+    Returns:
+        dict[str, Any]: 任务 ID 或同步执行结果。
     """
     device_ids = [str(d) for d in request.device_ids] if request.device_ids else None
 
@@ -177,7 +208,16 @@ async def collect_single_device_topology(
     current_user: CurrentUser,
     async_mode: bool = Query(True),
 ) -> dict[str, Any]:
-    """采集单个设备的 LLDP 邻居信息。"""
+    """针对单个特定设备执行 LLDP 邻居采集。
+
+    Args:
+        device_id (UUID): 设备 ID。
+        current_user (User): 当前用户。
+        async_mode (bool): 是否异步模式。
+
+    Returns:
+        dict[str, Any]: 任务 ID 或执行信息。
+    """
     if async_mode:
         task = cast(Any, collect_device_topology).delay(device_id=str(device_id))
         return {
@@ -197,7 +237,14 @@ async def collect_single_device_topology(
     dependencies=[Depends(require_permissions([PermissionCode.TOPOLOGY_VIEW.value]))],
 )
 async def get_topology_task_status(task_id: str) -> TopologyTaskStatus:
-    """查询拓扑采集任务的执行状态和结果。"""
+    """查询拓扑采集后台任务的执行实时状态。
+
+    Args:
+        task_id (str): Celery 任务 ID。
+
+    Returns:
+        TopologyTaskStatus: 任务状态和（如有）结果数据。
+    """
     result = AsyncResult(task_id)
 
     status = TopologyTaskStatus(
@@ -223,7 +270,14 @@ async def get_topology_task_status(task_id: str) -> TopologyTaskStatus:
 async def rebuild_topology_cache(
     current_user: CurrentUser,
 ) -> dict[str, Any]:
-    """手动重建拓扑缓存 (从数据库读取并缓存到 Redis)。"""
+    """强制重新从数据库构建拓扑缓存并更新到 Redis。
+
+    Args:
+        current_user (User): 当前用户。
+
+    Returns:
+        dict[str, Any]: 任务 ID 信息。
+    """
     task = cast(Any, build_topology_cache).delay()
     return {
         "task_id": task.id,

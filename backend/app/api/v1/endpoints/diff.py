@@ -29,6 +29,18 @@ async def get_device_latest_diff(
     current_user: deps.CurrentUser,
     _: deps.User = Depends(deps.require_permissions([PermissionCode.DIFF_VIEW.value])),
 ) -> ResponseBase[DiffResponse]:
+    """计算并获取指定设备最新两个备份版本之间的配置差异。
+
+    该接口会自动寻找最新的成功备份及其前一个版本进行 Diff 计算。
+
+    Args:
+        device_id (UUID): 设备 ID。
+        diff_service (DiffService): 差异计算服务依赖。
+        current_user (User): 当前登录用户。
+
+    Returns:
+        ResponseBase[DiffResponse]: 包含 Unified Diff 格式文本及版本 MD5 的响应。
+    """
     new_bak, old_bak = await diff_service.get_latest_pair(device_id)
     if not new_bak:
         return ResponseBase(data=DiffResponse(device_id=device_id, message="暂无备份记录，无法生成差异"))

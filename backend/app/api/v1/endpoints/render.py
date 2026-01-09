@@ -42,6 +42,21 @@ async def render_template(
     device_crud: DeviceCRUDDep,
     render_service: RenderServiceDep,
 ) -> ResponseBase[RenderResponse]:
+    """在下发前预览 Jinja2 模板渲染后的配置文本。
+
+    支持传入空参数或模拟设备上下文（从设备表中提取属性）进行 Dry-Run。
+
+    Args:
+        template_id (UUID): 配置模板 ID。
+        body (RenderRequest): 包含输入参数及可选设备上下文 ID 的请求。
+        template_service (TemplateService): 模板管理服务。
+        db (Session): 数据库会话。
+        device_crud (CRUDDevice): 设备 CRUD 抽象。
+        render_service (RenderService): 渲染逻辑核心服务。
+
+    Returns:
+        ResponseBase[RenderResponse]: 包含最终渲染出的配置字符串。
+    """
     template = await template_service.get_template(template_id)
 
     device = None
@@ -50,4 +65,3 @@ async def render_template(
 
     rendered = render_service.render(template, body.params, device=device)
     return ResponseBase(data=RenderResponse(rendered=rendered))
-

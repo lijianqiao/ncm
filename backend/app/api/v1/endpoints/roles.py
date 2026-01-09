@@ -280,7 +280,18 @@ async def get_role_menus(
     _: deps.User = Depends(deps.require_permissions([PermissionCode.ROLE_MENUS_LIST.value])),
     role_service: deps.RoleServiceDep,
 ) -> ResponseBase[list[UUID]]:
-    """获取角色已分配的菜单ID列表（用于编辑回显）。"""
+    """获取指定角色当前已绑定的所有菜单和权限点 ID。
+
+    用于角色编辑界面回显已勾选的权限树。
+
+    Args:
+        id (UUID): 角色 ID。
+        current_user (User): 当前登录用户。
+        role_service (RoleService): 角色服务依赖。
+
+    Returns:
+        ResponseBase[list[UUID]]: 菜单 ID 列表。
+    """
 
     menu_ids = await role_service.get_role_menu_ids(role_id=id)
     return ResponseBase(data=menu_ids)
@@ -295,7 +306,17 @@ async def set_role_menus(
     _: deps.User = Depends(deps.require_permissions([PermissionCode.ROLE_MENUS_UPDATE.value])),
     role_service: deps.RoleServiceDep,
 ) -> ResponseBase[list[UUID]]:
-    """设置角色菜单（全量覆盖，幂等）。"""
+    """全量更新角色的菜单和权限绑定关系。
+
+    Args:
+        id (UUID): 角色 ID。
+        req (RoleMenusUpdateRequest): 包含新的菜单 ID 集合。
+        current_user (User): 当前登录用户。
+        role_service (RoleService): 角色服务依赖。
+
+    Returns:
+        ResponseBase[list[UUID]]: 更新后的菜单 ID 列表。
+    """
 
     menu_ids = await role_service.set_role_menus(role_id=id, menu_ids=req.menu_ids)
     return ResponseBase(data=menu_ids, message="角色菜单设置成功")

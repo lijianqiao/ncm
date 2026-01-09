@@ -39,6 +39,19 @@ async def list_templates(
     template_type: TemplateType | None = Query(default=None),
     status: TemplateStatus | None = Query(default=None),
 ) -> ResponseBase[PaginatedResponse[TemplateResponse]]:
+    """分页获取配置模板列表。
+
+    Args:
+        service (TemplateService): 模板服务依赖。
+        page (int): 当前页码。
+        page_size (int): 每页大小（1-100）。
+        vendor (DeviceVendor | None): 按厂商过滤。
+        template_type (TemplateType | None): 按模板类型过滤。
+        status (TemplateStatus | None): 按状态过滤。
+
+    Returns:
+        ResponseBase[PaginatedResponse[TemplateResponse]]: 包含模板列表的分页响应。
+    """
     items, total = await service.get_templates_paginated(
         page=page,
         page_size=page_size,
@@ -67,6 +80,16 @@ async def create_template(
     service: TemplateServiceDep,
     user: CurrentUser,
 ) -> ResponseBase[TemplateResponse]:
+    """创建一个新的配置模板草稿。
+
+    Args:
+        data (TemplateCreate): 创建表单数据。
+        service (TemplateService): 模板服务依赖。
+        user (User): 创建者信息。
+
+    Returns:
+        ResponseBase[TemplateResponse]: 创建成功的模板信息。
+    """
     template = await service.create_template(data, creator_id=user.id)
     return ResponseBase(data=TemplateResponse.model_validate(template))
 
@@ -81,6 +104,15 @@ async def get_template(
     template_id: UUID,
     service: TemplateServiceDep,
 ) -> ResponseBase[TemplateResponse]:
+    """根据 ID 获取模板的详细定义信息。
+
+    Args:
+        template_id (UUID): 模板 ID。
+        service (TemplateService): 模板服务依赖。
+
+    Returns:
+        ResponseBase[TemplateResponse]: 模板详情。
+    """
     template = await service.get_template(template_id)
     return ResponseBase(data=TemplateResponse.model_validate(template))
 
@@ -96,6 +128,16 @@ async def update_template(
     data: TemplateUpdate,
     service: TemplateServiceDep,
 ) -> ResponseBase[TemplateResponse]:
+    """更新处于草稿或拒绝状态的模板。
+
+    Args:
+        template_id (UUID): 模板 ID。
+        data (TemplateUpdate): 要更新的字段。
+        service (TemplateService): 模板服务依赖。
+
+    Returns:
+        ResponseBase[TemplateResponse]: 更新后的模板信息。
+    """
     template = await service.update_template(template_id, data)
     return ResponseBase(data=TemplateResponse.model_validate(template))
 
@@ -111,6 +153,16 @@ async def new_version(
     body: TemplateNewVersionRequest,
     service: TemplateServiceDep,
 ) -> ResponseBase[TemplateResponse]:
+    """基于现有模板创建一个新的修订版本（初始为草稿）。
+
+    Args:
+        template_id (UUID): 源模板 ID。
+        body (TemplateNewVersionRequest): 新版本的信息描述。
+        service (TemplateService): 模板服务依赖。
+
+    Returns:
+        ResponseBase[TemplateResponse]: 新版本的模板详情。
+    """
     template = await service.new_version(template_id, name=body.name, description=body.description)
     return ResponseBase(data=TemplateResponse.model_validate(template))
 
@@ -126,6 +178,16 @@ async def submit_template(
     body: TemplateSubmitRequest,
     service: TemplateServiceDep,
 ) -> ResponseBase[TemplateResponse]:
+    """将草稿状态的模板提交至审批流程。
+
+    Args:
+        template_id (UUID): 模板 ID。
+        body (TemplateSubmitRequest): 提交备注信息。
+        service (TemplateService): 模板服务依赖。
+
+    Returns:
+        ResponseBase[TemplateResponse]: 更新状态后的模板详情。
+    """
     template = await service.submit(template_id, comment=body.comment)
     return ResponseBase(data=TemplateResponse.model_validate(template))
 
@@ -137,5 +199,14 @@ async def submit_template(
     summary="删除模板",
 )
 async def delete_template(template_id: UUID, service: TemplateServiceDep) -> ResponseBase[TemplateResponse]:
+    """删除指定的模板。
+
+    Args:
+        template_id (UUID): 模板 ID。
+        service (TemplateService): 模板服务依赖。
+
+    Returns:
+        ResponseBase[TemplateResponse]: 被删除的模板信息。
+    """
     template = await service.delete_template(template_id)
     return ResponseBase(data=TemplateResponse.model_validate(template))

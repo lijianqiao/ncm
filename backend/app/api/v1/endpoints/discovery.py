@@ -51,12 +51,16 @@ async def trigger_scan(
     request: ScanRequest,
     current_user: CurrentUser,
 ) -> dict[str, Any]:
-    """
-    触发网络扫描任务。
+    """触发针对特定网段的网络扫描任务。
 
-    - 支持 Nmap (详细扫描) 和 Masscan (快速扫描)
-    - async_mode=True 时返回任务ID，可通过 /scan/task/{task_id} 查询状态
-    - async_mode=False 时同步执行并返回结果 (仅适用于小范围扫描)
+    通过 Nmap 或 Masscan 发现网络中的在线资产，并识别其开放端口及服务横幅。
+
+    Args:
+        request (ScanRequest): 包含网段、扫描类型、端口、扫描模式（同步/异步）的请求。
+        current_user (CurrentUser): 当前操作人。
+
+    Returns:
+        dict[str, Any]: 如果是异步模式，返回包含 task_id 的字典；同步模式返回扫描结果。
     """
     if request.async_mode:
         # 异步执行
@@ -93,7 +97,14 @@ async def trigger_scan(
     dependencies=[Depends(require_permissions([PermissionCode.DISCOVERY_SCAN.value]))],
 )
 async def get_scan_task_status(task_id: str) -> ScanTaskStatus:
-    """查询扫描任务的执行状态和结果。"""
+    """查询 Celery 扫描任务的当前进度和最终发现的资产。
+
+    Args:
+        task_id (str): Celery 任务 ID。
+
+    Returns:
+        ScanTaskStatus: 包含状态 (PENDING/SUCCESS) 及匹配记录或错误的详情。
+    """
     result = AsyncResult(task_id)
 
     status = ScanTaskStatus(
@@ -128,7 +139,19 @@ async def list_discoveries(
     keyword: str | None = Query(None, description="关键词搜索"),
     scan_source: str | None = Query(None, description="扫描来源"),
 ) -> PaginatedResponse[DiscoveryResponse]:
-    """获取发现记录分页列表，支持筛选。"""
+    """获取通过网络扫描发现的所有设备记录。
+
+    Args:
+        db (Session): 数据库会话。
+        page (int): 当前页码。
+        page_size (int): 每页限制。
+        status (DiscoveryStatus | None): 状态过滤（如：NEW, IGNORED, MATCHED）。
+        keyword (str | None): 匹配 IP、MAC、主机名的搜索关键词。
+        scan_source (str | None): 识别扫描的具体来源标识。
+
+    Returns:
+        PaginatedResponse[DiscoveryResponse]: 包含发现资产详情的分页响应。
+    """
     items, total = await discovery_crud.get_multi_paginated_filtered(
         db,
         page=page,
@@ -186,7 +209,15 @@ async def get_discovery(
     db: SessionDep,
     discovery_id: UUID,
 ) -> DiscoveryResponse:
-    """获取单个发现记录的详细信息。"""
+    """获取单个扫描发现记录的完整属性。
+
+    Args:
+        db (Session): 数据库会话。
+        discovery_id (UUID): 扫描结果主键 ID。
+
+    Returns:
+        DiscoveryResponse: 发现资产及 CMDB 匹配关联信息。
+    """
     item = await discovery_crud.get(db, id=discovery_id)
     if not item:
         raise NotFoundException(message="发现记录不存在")
@@ -228,7 +259,16 @@ async def delete_discovery(
     discovery_id: UUID,
     current_user: CurrentUser,
 ) -> dict[str, str]:
-    """删除发现记录 (软删除)。"""
+    """物理删除或隐藏特定的扫描发现结果。
+
+    Args:
+        db (Session): 数据库会话。
+        discovery_id (UUID): 扫描记录 ID。
+        current_user (CurrentUser): 当前执行操作的用户。
+
+    Returns:
+        dict[str, str]: 确认删除的消息。
+    """
     result = await discovery_crud.remove(db, id=discovery_id)
     if not result:
         raise NotFoundException(message="发现记录不存在")
@@ -252,11 +292,19 @@ async def adopt_device(
     scan_service: ScanServiceDep,
     current_user: CurrentUser,
 ) -> dict[str, Any]:
-    """
-    将发现记录纳管为正式设备。
+    """将扫描结果中的在线资产直接录入为系统正式管理的设备。
 
-    - 自动创建 Device 记录
-    - 更新发现记录状态为 MATCHED
+    录入过程会预填发现的 IP、MAC、厂商等信息，并根据请求配置所属部门和凭据。
+
+    Args:
+        db (Session): 数据库会话。
+        discovery_id (UUID): 发现记录关联 ID。
+        request (AdoptDeviceRequest): 纳管配置，包含名称、分组、凭据等。
+        scan_service (ScanService): 扫描资产服务。
+        current_user (CurrentUser): 当前操作人。
+
+    Returns:
+        dict[str, Any]: 包含新设备 ID 的确认响应。
     """
     device = await scan_service.adopt_device(
         db,
@@ -296,7 +344,17 @@ async def list_shadow_assets(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
 ) -> PaginatedResponse[DiscoveryResponse]:
-    """获取影子资产列表 (未在 CMDB 中的发现设备)。"""
+    """获取所有已在线但尚未关联正式 CMDB 的网路资产。
+
+    Args:
+        db (Session): 数据库会话。
+        scan_service (ScanService): 扫描资产服务依赖。
+        page (int): 当前页码。
+        page_size (int): 每页限制。
+
+    Returns:
+        PaginatedResponse[DiscoveryResponse]: 影子资产（未知资产）列表。
+    """
     items, total = await scan_service.get_shadow_assets(db, page=page, page_size=page_size)
 
     responses = [
@@ -341,7 +399,18 @@ async def list_offline_devices(
     scan_service: ScanServiceDep,
     days_threshold: int = Query(7, ge=1, description="离线天数阈值"),
 ) -> list[OfflineDevice]:
-    """获取离线设备列表 (CMDB 中存在但长时间未扫描到)。"""
+    """获取由于长时间未能在扫描中发现而标记为离线的设备列表。
+
+    系统会将 CMDB 中的设备与最新的扫描记录比对，若超过阈值天数未出现，则视为离线。
+
+    Args:
+        db (Session): 数据库会话。
+        scan_service (ScanService): 扫描资产服务。
+        days_threshold (int): 判定离线的天数阈值（默认为 7 天）。
+
+    Returns:
+        list[OfflineDevice]: 包含设备 ID、名称及其最后一次被扫描到的时间。
+    """
     return await scan_service.detect_offline_devices(db, days_threshold=days_threshold)
 
 
@@ -358,11 +427,16 @@ async def trigger_cmdb_compare(
     current_user: CurrentUser,
     async_mode: bool = Query(True, description="是否异步执行"),
 ) -> dict[str, Any]:
-    """
-    将发现记录与 CMDB 比对。
+    """全量对比当前的扫描发现库与正式 CMDB 设备库。
 
-    - 识别影子资产 (未在 CMDB 中)
-    - 检测离线设备 (CMDB 中存在但未扫描到)
+    用于同步状态、识别影子资产和更新离线天数统计。建议在完成全网大规模扫描后执行。
+
+    Args:
+        current_user (CurrentUser): 当前操作人。
+        async_mode (bool): 是否进入 Celery 异步处理模式。
+
+    Returns:
+        dict[str, Any]: 包含任务状态或同步结果的字典。
     """
     if async_mode:
         task = cast(Any, compare_cmdb).delay()

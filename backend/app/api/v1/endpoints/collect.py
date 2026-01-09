@@ -43,7 +43,19 @@ async def collect_device(
     current_user: CurrentUser,
     request: CollectDeviceRequest | None = None,
 ) -> ResponseBase[DeviceCollectResult]:
-    """手动采集单设备。"""
+    """立即采集指定设备的 ARP/MAC 表。
+
+    手动触发针对单个设备的即时数据采集。支持选择性采集 ARP、MAC 或两者。
+
+    Args:
+        device_id (UUID): 设备的主键 ID。
+        service (CollectService): 采集服务依赖。
+        current_user (User): 当前操作人。
+        request (CollectDeviceRequest | None, optional): 采集选项，包括是否采集 ARP/MAC。默认为两者都采集。
+
+    Returns:
+        ResponseBase[DeviceCollectResult]: 包含采集结果详情的响应。
+    """
     collect_arp = request.collect_arp if request else True
     collect_mac = request.collect_mac if request else True
 
@@ -71,9 +83,18 @@ async def batch_collect(
     service: CollectServiceDep,
     current_user: CurrentUser,
 ) -> ResponseBase[CollectResult]:
-    """批量采集设备。
+    """批量同步采集多台设备的 ARP/MAC 表。
 
-    支持传入 OTP 验证码用于需要 OTP 认证的设备。
+    该接口会阻塞直到所有选定设备处理完毕。推荐在设备数量较少时使用。
+    支持通过 request 传入 OTP 验证码以应对加固设备。
+
+    Args:
+        request (CollectBatchRequest): 包含目标设备 ID 列表和采集配置的任务请求。
+        service (CollectService): 采集服务依赖。
+        current_user (User): 当前操作人。
+
+    Returns:
+        ResponseBase[CollectResult]: 包含批量采集统计信息（成功/失败计数）的响应。
     """
     result = await service.batch_collect(request)
 
@@ -94,9 +115,16 @@ async def batch_collect_async(
     request: CollectBatchRequest,
     current_user: CurrentUser,
 ) -> ResponseBase[CollectTaskStatus]:
-    """异步批量采集（通过 Celery）。
+    """通过 Celery 提交异步批量采集任务。
 
-    返回任务ID，可通过 /collect/task/{task_id} 查询进度。
+    适用于大规模设备采集。接口立即返回任务 ID，客户端可通过查询接口实时获取进度。
+
+    Args:
+        request (CollectBatchRequest): 包含目标设备列表和选项。
+        current_user (User): 当前操作人。
+
+    Returns:
+        ResponseBase[CollectTaskStatus]: 包含 Celery 任务 ID 的响应结构。
     """
     from app.celery.tasks.collect import batch_collect_tables
 
@@ -129,7 +157,16 @@ async def batch_collect_async(
     description="查询 Celery 异步采集任务的执行状态。",
 )
 async def get_task_status(task_id: str) -> ResponseBase[CollectTaskStatus]:
-    """查询采集任务状态。"""
+    """根据任务 ID 查询 Celery 异步任务的当前状态和结果。
+
+    如果在任务完成后调用，将返回详细的采集结果或错误信息。
+
+    Args:
+        task_id (str): Celery 任务的唯一标识符。
+
+    Returns:
+        ResponseBase[CollectTaskStatus]: 包含状态、进度及最终结果（如有）的响应。
+    """
     from celery.result import AsyncResult
 
     from app.celery.app import celery_app
@@ -165,7 +202,15 @@ async def get_device_arp(
     device_id: UUID,
     service: CollectServiceDep,
 ) -> ResponseBase[ARPTableResponse]:
-    """获取设备 ARP 表缓存。"""
+    """获取指定设备最近一次采集成功的 ARP 表缓存数据。
+
+    Args:
+        device_id (UUID): 设备的主键 ID。
+        service (CollectService): 采集服务依赖。
+
+    Returns:
+        ResponseBase[ARPTableResponse]: 包含 ARP 条目列表及缓存时间的响应。
+    """
     result = await service.get_cached_arp(device_id)
 
     message = f"共 {result.total} 条记录"
@@ -188,7 +233,15 @@ async def get_device_mac(
     device_id: UUID,
     service: CollectServiceDep,
 ) -> ResponseBase[MACTableResponse]:
-    """获取设备 MAC 表缓存。"""
+    """获取指定设备最近一次采集成功的 MAC 地址表缓存数据。
+
+    Args:
+        device_id (UUID): 设备的主键 ID。
+        service (CollectService): 采集服务依赖。
+
+    Returns:
+        ResponseBase[MACTableResponse]: 包含 MAC 条目列表及缓存时间的响应。
+    """
     result = await service.get_cached_mac(device_id)
 
     message = f"共 {result.total} 条记录"
@@ -214,12 +267,16 @@ async def locate_by_ip(
     ip_address: str,
     service: CollectServiceDep,
 ) -> ResponseBase[LocateResponse]:
-    """IP 地址精准定位。
+    """根据 IP 地址在全网 ARP 表缓存中进行精准定位。
 
-    从所有设备的 ARP 缓存中搜索匹配的 IP 地址，返回设备和端口信息。
+    通过匹配 IP 地址，找到该 IP 出现的具体设备及其对应的物理接口。
 
-    Example:
-        GET /collect/locate/ip/192.168.1.100
+    Args:
+        ip_address (str): 要搜索的 IP 地址。
+        service (CollectService): 采集服务依赖。
+
+    Returns:
+        ResponseBase[LocateResponse]: 包含匹配到的设备 ID、名称和端口信息的响应。
     """
     result = await service.locate_by_ip(ip_address)
 
@@ -242,14 +299,16 @@ async def locate_by_mac(
     mac_address: str,
     service: CollectServiceDep,
 ) -> ResponseBase[LocateResponse]:
-    """MAC 地址精准定位。
+    """根据 MAC 地址在全网 ARP/MAC 缓存中进行精准定位。
 
-    从所有设备的 ARP 和 MAC 缓存中搜索匹配的 MAC 地址，返回设备和端口信息。
-    支持多种 MAC 格式（如 00:11:22:33:44:55、00-11-22-33-44-55、0011.2233.4455）。
+    系统会自动格式化输入的 MAC 地址，并搜索全库。
 
-    Example:
-        GET /collect/locate/mac/00:11:22:33:44:55
-        GET /collect/locate/mac/0011-2233-4455
+    Args:
+        mac_address (str): 要搜索的 MAC 地址（支持多种常见格式）。
+        service (CollectService): 采集服务依赖。
+
+    Returns:
+        ResponseBase[LocateResponse]: 包含匹配到的物理位置信息的响应。
     """
     result = await service.locate_by_mac(mac_address)
 

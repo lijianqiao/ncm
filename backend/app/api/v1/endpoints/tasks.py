@@ -44,10 +44,16 @@ class TaskTriggerRequest(BaseModel):
 
 @router.get("/{task_id}", response_model=TaskResponse)
 async def get_task_status(task_id: str, _: SuperuserDep) -> TaskResponse:
-    """
-    查询任务执行状态。
+    """查询 Celery 任务的执行状态和结果。
 
-    仅限超级管理员访问。
+    仅限超级管理员访问。能够返回 PENDING, STARTED, SUCCESS, FAILURE 等状态，并在任务完成时返回结果或错误。
+
+    Args:
+        task_id (str): Celery 任务的唯一 ID。
+        _ (User): 超级管理员权限验证。
+
+    Returns:
+        TaskResponse: 包含任务 ID、状态、以及（如有）执行结果或错误的对象。
     """
     result = AsyncResult(task_id, app=celery_app)
 
@@ -69,10 +75,16 @@ async def get_task_status(task_id: str, _: SuperuserDep) -> TaskResponse:
 
 @router.delete("/{task_id}")
 async def revoke_task(task_id: str, _: SuperuserDep) -> dict:
-    """
-    撤销/终止正在执行的任务。
+    """撤销或强制终止正在执行的任务。
 
     仅限超级管理员访问。
+
+    Args:
+        task_id (str): 要撤销的任务 ID。
+        _ (User): 超级管理员权限验证。
+
+    Returns:
+        dict: 操作确认信息。
     """
     celery_app.control.revoke(task_id, terminate=True)
     return {"message": f"任务 {task_id} 已被撤销"}
@@ -83,11 +95,16 @@ async def revoke_task(task_id: str, _: SuperuserDep) -> dict:
 
 @router.post("/test/ping", response_model=TaskResponse)
 async def trigger_ping(_: SuperuserDep) -> TaskResponse:
-    """
-    触发 Ping 测试任务。
+    """触发 Ping 测试异步任务。
 
-    用于验证 Celery Worker 是否正常运行。
+    用于回归测试或验证 Celery 分片和 Worker 是否正常运行。
     仅限超级管理员访问。
+
+    Args:
+        _ (User): 超级管理员权限验证。
+
+    Returns:
+        TaskResponse: 返回生成的任务 ID，状态为 PENDING。
     """
     from app.celery.tasks.example import ping
 
@@ -97,10 +114,17 @@ async def trigger_ping(_: SuperuserDep) -> TaskResponse:
 
 @router.post("/test/add", response_model=TaskResponse)
 async def trigger_add(_: SuperuserDep, x: int = 1, y: int = 2) -> TaskResponse:
-    """
-    触发加法测试任务。
+    """触发一个简单的加法异步测试任务。
 
     仅限超级管理员访问。
+
+    Args:
+        _ (User): 超级管理员权限验证。
+        x (int): 第一个操作数。
+        y (int): 第二个操作数。
+
+    Returns:
+        TaskResponse: 生成的任务 ID。
     """
     from app.celery.tasks.example import add
 
@@ -110,13 +134,19 @@ async def trigger_add(_: SuperuserDep, x: int = 1, y: int = 2) -> TaskResponse:
 
 @router.post("/test/long-running", response_model=TaskResponse)
 async def trigger_long_running(_: SuperuserDep, duration: int = 10) -> TaskResponse:
-    """
-    触发长时间运行测试任务。
+    """触发一个耗时模拟任务，用于测试进度反馈和超时处理。
 
-    仅限超级管理员访问。
+    仅限超级管理员访问。设置较长的 duration 可以测试撤销任务接口。
 
     Args:
-        duration: 任务持续时间（秒），默认 10 秒
+        _ (User): 超级管理员权限验证。
+        duration (int): 模拟运行时长（秒），默认 10s，由于是测试任务，限额 300s。
+
+    Returns:
+        TaskResponse: 生成的任务 ID。
+
+    Raises:
+        HTTPException: 当 duration 超过 300s 时。
     """
     if duration > 300:
         raise HTTPException(status_code=400, detail="测试任务持续时间不能超过 300 秒")
@@ -132,10 +162,15 @@ async def trigger_long_running(_: SuperuserDep, duration: int = 10) -> TaskRespo
 
 @router.get("/workers/stats")
 async def get_worker_stats(_: SuperuserDep) -> dict:
-    """
-    获取 Celery Worker 状态统计。
+    """实时获取当前已注册的所有 Celery Worker 节点的统计状态。
 
-    仅限超级管理员访问。
+    仅限超级管理员访问。返回包括并发设置、已完成任务数、运行中的任务等。
+
+    Args:
+        _ (User): 超级管理员权限验证。
+
+    Returns:
+        dict: 包含 workers 列表、stats 统计和活动任务详情。
     """
     inspect = celery_app.control.inspect()
 
