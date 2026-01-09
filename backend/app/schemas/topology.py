@@ -11,7 +11,6 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
-
 # ===== 拓扑链路 CRUD =====
 
 
@@ -98,6 +97,8 @@ class TopologyEdge(BaseModel):
     source_interface: str | None = Field(default=None, description="源接口")
     target_interface: str | None = Field(default=None, description="目标接口")
     link_type: str | None = Field(default=None, description="链路类型")
+
+    model_config = {"populate_by_name": True}
 
 
 class TopologyStats(BaseModel):

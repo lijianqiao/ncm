@@ -6,7 +6,6 @@
 @Docs: 网络拓扑 (Topology) CRUD 操作。
 """
 
-from datetime import datetime
 from uuid import UUID
 
 from sqlalchemy import and_, delete, func, or_, select
@@ -90,9 +89,7 @@ class CRUDTopology(CRUDBase[TopologyLink, TopologyLinkCreate, TopologyLinkRespon
             await db.refresh(db_obj)
             return db_obj
 
-    async def get_device_neighbors(
-        self, db: AsyncSession, *, device_id: UUID
-    ) -> list[TopologyLink]:
+    async def get_device_neighbors(self, db: AsyncSession, *, device_id: UUID) -> list[TopologyLink]:
         """
         获取设备的所有邻居链路。
 
@@ -116,9 +113,7 @@ class CRUDTopology(CRUDBase[TopologyLink, TopologyLinkCreate, TopologyLinkRespon
         result = await db.execute(query)
         return list(result.scalars().all())
 
-    async def get_all_links(
-        self, db: AsyncSession, *, skip: int = 0, limit: int = 1000
-    ) -> list[TopologyLink]:
+    async def get_all_links(self, db: AsyncSession, *, skip: int = 0, limit: int = 1000) -> list[TopologyLink]:
         """
         获取所有拓扑链路。
 
@@ -147,15 +142,11 @@ class CRUDTopology(CRUDBase[TopologyLink, TopologyLinkCreate, TopologyLinkRespon
         Returns:
             链路总数
         """
-        query = select(func.count()).select_from(self.model).where(
-            self.model.is_deleted.is_(False)
-        )
+        query = select(func.count()).select_from(self.model).where(self.model.is_deleted.is_(False))
         result = await db.execute(query)
         return result.scalar() or 0
 
-    async def delete_device_links(
-        self, db: AsyncSession, *, device_id: UUID, hard_delete: bool = False
-    ) -> int:
+    async def delete_device_links(self, db: AsyncSession, *, device_id: UUID, hard_delete: bool = False) -> int:
         """
         删除设备的所有链路 (用于刷新拓扑前)。
 

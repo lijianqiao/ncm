@@ -17,12 +17,11 @@ from sqlalchemy import select
 from app.celery.app import celery_app
 from app.celery.base import BaseTask
 from app.core.command_policy import normalize_rendered_config, validate_commands
+from app.core.db import AsyncSessionLocal
 from app.core.enums import AuthType, BackupStatus, BackupType, DeviceStatus, TaskStatus, TaskType
 from app.core.exceptions import OTPRequiredException
 from app.core.logger import logger
 from app.core.otp_service import otp_service
-from app.core.db import AsyncSessionLocal
-from app.crud.crud_backup import backup as backup_crud
 from app.crud.crud_credential import credential as credential_crud
 from app.models.backup import Backup
 from app.models.device import Device
@@ -30,8 +29,8 @@ from app.models.task import Task
 from app.models.template import Template
 from app.network.nornir_config import init_nornir
 from app.network.nornir_tasks import aggregate_results, backup_config, deploy_from_host_data
-from app.services.render_service import RenderService
 from app.network.platform_config import get_platform_for_vendor
+from app.services.render_service import RenderService
 
 
 def _run_async(coro):
@@ -142,11 +141,7 @@ async def _deploy_task_async(self, task_id: str) -> dict[str, Any]:
         device_ids = []
         if task.target_devices and isinstance(task.target_devices, dict):
             device_ids = task.target_devices.get("device_ids", []) or []
-        devices = (
-            (await db.execute(select(Device).where(Device.id.in_([UUID(x) for x in device_ids]))))
-            .scalars()
-            .all()
-        )
+        devices = (await db.execute(select(Device).where(Device.id.in_([UUID(x) for x in device_ids])))).scalars().all()
         devices = [d for d in devices if d.status == DeviceStatus.ACTIVE.value]
 
         if not devices:
@@ -299,11 +294,7 @@ async def _rollback_task_async(self, task_id: str) -> dict[str, Any]:
             return {"status": "failed", "error": "任务未记录变更前备份，无法回滚"}
 
         device_ids = (task.target_devices or {}).get("device_ids", []) if isinstance(task.target_devices, dict) else []
-        devices = (
-            (await db.execute(select(Device).where(Device.id.in_([UUID(x) for x in device_ids]))))
-            .scalars()
-            .all()
-        )
+        devices = (await db.execute(select(Device).where(Device.id.in_([UUID(x) for x in device_ids])))).scalars().all()
 
         hosts_data: list[dict[str, Any]] = []
         verify_expected_md5: dict[str, str] = {}
@@ -366,4 +357,3 @@ async def _rollback_task_async(self, task_id: str) -> dict[str, Any]:
         await db.flush()
         await db.commit()
         return {"status": "success", "deploy_summary": deploy_summary, "verify": verify}
-

@@ -15,11 +15,11 @@ from sqlalchemy import func, select
 
 from app.celery.app import celery_app
 from app.celery.base import BaseTask
-from app.core.enums import DiscoveryStatus, InventoryAuditStatus
-from app.core.logger import logger
 from app.core.db import AsyncSessionLocal
-from app.crud.crud_discovery import discovery_crud
+from app.core.enums import InventoryAuditStatus
+from app.core.logger import logger
 from app.crud.crud_device import device as device_crud
+from app.crud.crud_discovery import discovery_crud
 from app.models.device import Device
 from app.models.discovery import Discovery
 from app.models.inventory_audit import InventoryAudit
@@ -80,9 +80,7 @@ async def _run_inventory_audit_async(self, audit_id: str) -> dict[str, Any]:
         try:
             targets: list[str] = []
             if dept_id:
-                rows = (
-                    await db.execute(select(Device.ip_address).where(Device.dept_id == UUID(str(dept_id))))
-                ).all()
+                rows = (await db.execute(select(Device.ip_address).where(Device.dept_id == UUID(str(dept_id))))).all()
                 targets.extend([f"{ip}/32" for (ip,) in rows if ip])
             if device_ids:
                 ids = [UUID(str(x)) for x in device_ids]
@@ -101,7 +99,9 @@ async def _run_inventory_audit_async(self, audit_id: str) -> dict[str, Any]:
         for subnet in subnets:
             try:
                 scan_result = await service.nmap_scan(subnet=subnet, ports=ports)
-                processed_hosts += await service.process_scan_result(db=db, scan_result=scan_result, scan_task_id=str(audit.id))
+                processed_hosts += await service.process_scan_result(
+                    db=db, scan_result=scan_result, scan_task_id=str(audit.id)
+                )
             except Exception as e:
                 scan_errors.append(f"{subnet}: {e}")
 
@@ -141,4 +141,3 @@ async def _run_inventory_audit_async(self, audit_id: str) -> dict[str, Any]:
         await db.commit()
 
         return {"status": audit.status, "result": result}
-

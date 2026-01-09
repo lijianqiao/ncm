@@ -93,8 +93,6 @@ def validate_commands(
                 violations.append(cmd)
 
     if violations:
-        sample = violations[:10]
         raise BadRequestException(
             message="命令安全策略校验失败，存在危险/不允许的命令",
         )
-

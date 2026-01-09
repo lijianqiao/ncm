@@ -6,6 +6,9 @@
 @Docs: Task CRUD。
 """
 
+from typing import Any
+
+from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -13,7 +16,27 @@ from app.crud.base import CRUDBase
 from app.models.task import Task
 
 
-class CRUDTask(CRUDBase[Task, dict, dict]):
+class TaskCreateSchema(BaseModel):
+    """Task 创建 Schema（CRUD 内部使用）。"""
+
+    task_type: str | None = None
+    status: str | None = None
+    extra: dict[str, Any] | None = None
+
+    model_config = {"extra": "allow"}
+
+
+class TaskUpdateSchema(BaseModel):
+    """Task 更新 Schema（CRUD 内部使用）。"""
+
+    task_type: str | None = None
+    status: str | None = None
+    extra: dict[str, Any] | None = None
+
+    model_config = {"extra": "allow"}
+
+
+class CRUDTask(CRUDBase[Task, TaskCreateSchema, TaskUpdateSchema]):
     async def get_multi_paginated_filtered(
         self,
         db: AsyncSession,
@@ -40,4 +63,3 @@ class CRUDTask(CRUDBase[Task, dict, dict]):
 
 
 task_crud = CRUDTask(Task)
-

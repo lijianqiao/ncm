@@ -18,7 +18,7 @@ from app.crud.crud_task import CRUDTask
 from app.crud.crud_task_approval import CRUDTaskApprovalStep
 from app.models.task import Task
 from app.models.task_approval import TaskApprovalStep
-from app.schemas.deploy import DeployCreateRequest, DeployPlan
+from app.schemas.deploy import DeployCreateRequest
 
 
 class DeployService:
@@ -148,7 +148,9 @@ class DeployService:
         return task
 
     @transactional()
-    async def mark_finished(self, task_id: UUID, *, success: bool, result: dict | None = None, error: str | None = None):
+    async def mark_finished(
+        self, task_id: UUID, *, success: bool, result: dict | None = None, error: str | None = None
+    ):
         task = await self.get_task(task_id)
         task.status = TaskStatus.SUCCESS.value if success else TaskStatus.FAILED.value
         task.finished_at = datetime.now(UTC)
@@ -157,4 +159,3 @@ class DeployService:
         await self.db.flush()
         await self.db.refresh(task)
         return task
-

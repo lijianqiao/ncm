@@ -28,10 +28,10 @@ from app.core.db import AsyncSessionLocal
 from app.core.exceptions import ForbiddenException, NotFoundException, UnauthorizedException
 from app.core.logger import logger
 from app.core.token_store import get_user_revoked_after
-from app.crud.crud_backup import CRUDBackup
-from app.crud.crud_backup import backup as backup_instance
 from app.crud.crud_alert import CRUDAlert
 from app.crud.crud_alert import alert_crud as alert_instance
+from app.crud.crud_backup import CRUDBackup
+from app.crud.crud_backup import backup as backup_instance
 from app.crud.crud_credential import CRUDCredential
 from app.crud.crud_credential import credential as credential_instance
 from app.crud.crud_dept import CRUDDept
@@ -39,6 +39,8 @@ from app.crud.crud_device import CRUDDevice
 from app.crud.crud_device import device as device_instance
 from app.crud.crud_discovery import CRUDDiscovery
 from app.crud.crud_discovery import discovery_crud as discovery_instance
+from app.crud.crud_inventory_audit import CRUDInventoryAudit
+from app.crud.crud_inventory_audit import inventory_audit_crud as inventory_audit_crud_instance
 from app.crud.crud_log import CRUDLoginLog, CRUDOperationLog
 from app.crud.crud_log import login_log as login_log_crud_global
 from app.crud.crud_log import operation_log as operation_log_crud_global
@@ -46,42 +48,40 @@ from app.crud.crud_menu import CRUDMenu
 from app.crud.crud_menu import menu as menu_crud_global
 from app.crud.crud_role import CRUDRole
 from app.crud.crud_role import role as role_crud_global
-from app.crud.crud_topology import CRUDTopology
-from app.crud.crud_topology import topology_crud as topology_instance
-from app.crud.crud_template import CRUDTemplate
-from app.crud.crud_template import template as template_instance
 from app.crud.crud_task import CRUDTask
 from app.crud.crud_task import task_crud as task_crud_instance
 from app.crud.crud_task_approval import CRUDTaskApprovalStep
 from app.crud.crud_task_approval import task_approval_crud as task_approval_crud_instance
+from app.crud.crud_template import CRUDTemplate
+from app.crud.crud_template import template as template_instance
+from app.crud.crud_topology import CRUDTopology
+from app.crud.crud_topology import topology_crud as topology_instance
 from app.crud.crud_user import CRUDUser
 from app.crud.crud_user import user as user_crud_global
-from app.crud.crud_inventory_audit import CRUDInventoryAudit
-from app.crud.crud_inventory_audit import inventory_audit_crud as inventory_audit_crud_instance
 from app.models.dept import Department
 from app.models.rbac import Role
 from app.models.user import User
 from app.schemas.token import TokenPayload
-from app.services.auth_service import AuthService
 from app.services.alert_service import AlertService
+from app.services.auth_service import AuthService
 from app.services.backup_service import BackupService
 from app.services.credential_service import CredentialService
 from app.services.dashboard_service import DashboardService
+from app.services.deploy_service import DeployService
 from app.services.dept_service import DeptService
-from app.services.diff_service import DiffService
 from app.services.device_service import DeviceService
+from app.services.diff_service import DiffService
+from app.services.inventory_audit_service import InventoryAuditService
 from app.services.log_service import LogService
 from app.services.menu_service import MenuService
 from app.services.permission_service import PermissionService
+from app.services.render_service import RenderService
 from app.services.role_service import RoleService
 from app.services.scan_service import ScanService
 from app.services.session_service import SessionService
 from app.services.template_service import TemplateService
 from app.services.topology_service import TopologyService
 from app.services.user_service import UserService
-from app.services.render_service import RenderService
-from app.services.deploy_service import DeployService
-from app.services.inventory_audit_service import InventoryAuditService
 
 # -----------------------
 

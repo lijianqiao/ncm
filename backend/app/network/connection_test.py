@@ -17,7 +17,6 @@ from scrapli.exceptions import ScrapliAuthenticationFailed, ScrapliConnectionErr
 
 from app.core.logger import logger
 from app.network.platform_config import (
-    SCRAPLI_DEFAULTS,
     detect_vendor_from_version,
     get_command,
     get_platform_for_vendor,
@@ -127,7 +126,7 @@ async def test_device_connection(
         )
         return ConnectionTestResult(
             success=False,
-            message=f"认证失败: 用户名或密码错误",
+            message="认证失败: 用户名或密码错误",
             error_type="auth_failed",
         )
 

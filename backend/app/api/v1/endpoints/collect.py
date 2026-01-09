@@ -113,7 +113,7 @@ async def batch_collect_async(
     from app.celery.tasks.collect import batch_collect_tables
 
     # 提交 Celery 任务
-    task = batch_collect_tables.delay(
+    task = batch_collect_tables.delay(  # type: ignore[attr-defined]
         device_ids=[str(did) for did in request.device_ids],
         collect_arp=request.collect_arp,
         collect_mac=request.collect_mac,

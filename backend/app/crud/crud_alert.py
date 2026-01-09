@@ -9,7 +9,7 @@
 from datetime import datetime, timedelta
 from uuid import UUID
 
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import ColumnElement, and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -54,7 +54,7 @@ class CRUDAlert(CRUDBase[Alert, AlertCreate, AlertUpdate]):
         if page_size > 100:
             page_size = 100
 
-        conditions = [self.model.is_deleted.is_(False)]
+        conditions: list[ColumnElement[bool]] = [self.model.is_deleted.is_(False)]
 
         if alert_type:
             conditions.append(self.model.alert_type == alert_type)
@@ -152,4 +152,3 @@ class CRUDAlert(CRUDBase[Alert, AlertCreate, AlertUpdate]):
 
 
 alert_crud = CRUDAlert(Alert)
-

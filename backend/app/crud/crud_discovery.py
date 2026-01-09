@@ -9,7 +9,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import ColumnElement, and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.enums import DiscoveryStatus
@@ -99,9 +99,7 @@ class CRUDDiscovery(CRUDBase[Discovery, DiscoveryCreate, DiscoveryUpdate]):
             await db.refresh(db_obj)
             return db_obj
 
-    async def get_shadow_assets(
-        self, db: AsyncSession, *, skip: int = 0, limit: int = 100
-    ) -> list[Discovery]:
+    async def get_shadow_assets(self, db: AsyncSession, *, skip: int = 0, limit: int = 100) -> list[Discovery]:
         """
         获取影子资产列表 (未在 CMDB 中的发现设备)。
 
@@ -183,7 +181,7 @@ class CRUDDiscovery(CRUDBase[Discovery, DiscoveryCreate, DiscoveryUpdate]):
             (items, total): 数据列表和总数
         """
         # 基础查询条件
-        conditions = [self.model.is_deleted.is_(False)]
+        conditions: list[ColumnElement[bool]] = [self.model.is_deleted.is_(False)]
 
         # 状态筛选
         if status:
@@ -220,9 +218,7 @@ class CRUDDiscovery(CRUDBase[Discovery, DiscoveryCreate, DiscoveryUpdate]):
 
         return items, total
 
-    async def update_status(
-        self, db: AsyncSession, *, id: UUID, status: DiscoveryStatus
-    ) -> Discovery | None:
+    async def update_status(self, db: AsyncSession, *, id: UUID, status: DiscoveryStatus) -> Discovery | None:
         """
         更新发现记录状态。
 
@@ -242,9 +238,7 @@ class CRUDDiscovery(CRUDBase[Discovery, DiscoveryCreate, DiscoveryUpdate]):
             await db.refresh(obj)
         return obj
 
-    async def set_matched_device(
-        self, db: AsyncSession, *, id: UUID, device_id: UUID
-    ) -> Discovery | None:
+    async def set_matched_device(self, db: AsyncSession, *, id: UUID, device_id: UUID) -> Discovery | None:
         """
         设置发现记录的匹配设备。
 

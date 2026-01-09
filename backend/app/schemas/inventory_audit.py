@@ -7,7 +7,6 @@
 """
 
 from datetime import datetime
-from typing import Any
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -114,4 +113,3 @@ class InventoryAuditListQuery(BaseModel):
     page: int = Field(default=1, ge=1)
     page_size: int = Field(default=20, ge=1, le=100)
     status: InventoryAuditStatus | None = None
-

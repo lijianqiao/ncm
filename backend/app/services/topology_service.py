@@ -8,7 +8,6 @@
 提供 LLDP 拓扑采集、拓扑构建和 vis.js 格式数据输出。
 """
 
-import json
 from datetime import datetime, timedelta
 from typing import Any
 from uuid import UUID
@@ -16,7 +15,6 @@ from uuid import UUID
 import redis.asyncio as redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.cache import redis_client
 from app.core.config import settings
 from app.core.decorator import transactional
 from app.core.enums import DeviceStatus
@@ -25,7 +23,7 @@ from app.crud.crud_device import CRUDDevice
 from app.crud.crud_topology import CRUDTopology
 from app.models.device import Device
 from app.models.topology import TopologyLink
-from app.network.nornir_config import create_nornir_inventory
+from app.network.nornir_config import init_nornir
 from app.network.nornir_tasks import aggregate_results, get_lldp_neighbors
 from app.schemas.topology import (
     DeviceLLDPResult,
@@ -38,7 +36,6 @@ from app.schemas.topology import (
     TopologyResponse,
     TopologyStats,
 )
-
 
 # 拓扑缓存键
 TOPOLOGY_CACHE_KEY = "ncm:topology:data"
@@ -107,14 +104,14 @@ class TopologyService:
                     "hostname": device.ip_address,
                     "port": device.ssh_port or 22,
                     "username": device.username or "",
-                    "password": device.password or "",
+                    "password": "",  # 密码需要通过凭据服务获取
                     "platform": self._get_platform(device.vendor),
                 }
                 hosts_data.append(host_data)
                 device_map[device.ip_address] = device
 
             # 创建 Nornir 实例并执行采集
-            nr = create_nornir_inventory(hosts_data)
+            nr = init_nornir(hosts_data)
             nornir_results = nr.run(task=get_lldp_neighbors)
             aggregated = aggregate_results(nornir_results)
 
@@ -140,9 +137,7 @@ class TopologyService:
                     device_result.neighbors_count = len(neighbors)
 
                     # 保存拓扑链路
-                    saved_count = await self._save_device_topology(
-                        db, device=device, neighbors=neighbors
-                    )
+                    saved_count = await self._save_device_topology(db, device=device, neighbors=neighbors)
                     total_links += saved_count
                 else:
                     result.failed_count += 1
@@ -334,18 +329,17 @@ class TopologyService:
             if link.target_interface:
                 edge_label += f" → {link.target_interface}"
 
-            edges.append(
-                TopologyEdge(
-                    id=str(link.id),
-                    **{"from": str(link.source_device_id)},
-                    to=target_id,
-                    label=edge_label,
-                    title=f"Type: {link.link_type}",
-                    source_interface=link.source_interface,
-                    target_interface=link.target_interface,
-                    link_type=link.link_type,
-                )
-            )
+            edge_data = {
+                "id": str(link.id),
+                "from": str(link.source_device_id),
+                "to": target_id,
+                "label": edge_label,
+                "title": f"Type: {link.link_type}",
+                "source_interface": link.source_interface,
+                "target_interface": link.target_interface,
+                "link_type": link.link_type,
+            }
+            edges.append(TopologyEdge.model_validate(edge_data))
 
         # 统计信息
         cmdb_count = sum(1 for n in nodes if n.in_cmdb)
@@ -399,14 +393,12 @@ class TopologyService:
             color=color_map.get(group),
             ip=device.ip_address,
             vendor=device.vendor,
-            device_type=device.device_type,
+            device_type=None,  # Device 模型无 device_type 字段
             device_group=group,
             in_cmdb=True,
         )
 
-    async def get_device_neighbors(
-        self, db: AsyncSession, device_id: UUID
-    ) -> DeviceNeighborsResponse:
+    async def get_device_neighbors(self, db: AsyncSession, device_id: UUID) -> DeviceNeighborsResponse:
         """
         获取设备邻居列表。
 

@@ -12,7 +12,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.core.enums import ApprovalStatus, TaskStatus
+from app.core.enums import TaskStatus
 
 
 class DeployPlan(BaseModel):
@@ -82,4 +82,3 @@ class DeployRollbackResponse(BaseModel):
     task_id: UUID
     celery_task_id: str
     status: TaskStatus
-

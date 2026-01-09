@@ -41,7 +41,6 @@ from app.schemas.collect import (
     MACTableResponse,
 )
 
-
 # Redis 键前缀
 ARP_CACHE_PREFIX = "ncm:arp"
 MAC_CACHE_PREFIX = "ncm:mac"
@@ -192,14 +191,14 @@ class CollectService:
             )
 
         # 连接设备并采集
-        platform = get_platform_for_vendor(device.vendor.value if device.vendor else "h3c")
+        platform = get_platform_for_vendor(device.vendor if device.vendor else "h3c")
         scrapli_options = get_scrapli_options(platform)
 
         device_config = {
             "host": device.ip_address,
             "auth_username": credential["username"],
             "auth_password": credential["password"],
-            "port": device.port or 22,
+            "port": device.ssh_port or 22,
             "platform": platform,
             **scrapli_options,
         }
@@ -244,9 +243,7 @@ class CollectService:
             )
 
         duration_ms = int((time.time() - start_time) * 1000)
-        logger.info(
-            f"采集完成: device={device.name}, arp={arp_count}, mac={mac_count}, duration={duration_ms}ms"
-        )
+        logger.info(f"采集完成: device={device.name}, arp={arp_count}, mac={mac_count}, duration={duration_ms}ms")
 
         return DeviceCollectResult(
             device_id=device_id,
@@ -311,7 +308,7 @@ class CollectService:
                     )
                 )
                 failed_count += 1
-            else:
+            elif isinstance(result, DeviceCollectResult):
                 device_results.append(result)
                 if result.success:
                     success_count += 1
@@ -319,9 +316,7 @@ class CollectService:
                     failed_count += 1
 
         completed_at = datetime.now()
-        logger.info(
-            f"批量采集完成: total={len(request.device_ids)}, success={success_count}, failed={failed_count}"
-        )
+        logger.info(f"批量采集完成: total={len(request.device_ids)}, success={success_count}, failed={failed_count}")
 
         return CollectResult(
             total_devices=len(request.device_ids),
@@ -382,24 +377,30 @@ class CollectService:
         if not device.username:
             raise BadRequestException(message="设备未配置用户名")
 
-        auth_type = device.auth_type or AuthType.STATIC
+        auth_type_str = device.auth_type or AuthType.STATIC.value
+        # 将字符串转换为枚举
+        try:
+            auth_type = AuthType(auth_type_str)
+        except ValueError:
+            auth_type = AuthType.STATIC
 
         if auth_type == AuthType.STATIC:
             # 静态密码
-            if not device.encrypted_password:
+            if not device.password_encrypted:
                 raise BadRequestException(message="设备未配置密码")
             from app.core.encryption import decrypt_password
-            password = decrypt_password(device.encrypted_password)
+
+            password = decrypt_password(device.password_encrypted)
             return {"username": device.username, "password": password}
 
         elif auth_type == AuthType.OTP_SEED:
-            # 自动生成 OTP
-            if not device.encrypted_otp_seed:
-                raise BadRequestException(message="设备未配置 OTP 种子")
-            credential = await otp_service.get_device_credential(
-                auth_type=auth_type,
+            # 自动生成 OTP - 需要从 DeviceGroupCredential 获取
+            if not device.dept_id or not device.device_group:
+                raise BadRequestException(message="OTP_SEED 认证需要配置部门和设备组")
+            credential = await otp_service.get_credential_for_otp_manual_device(
                 username=device.username,
-                password_or_seed=device.encrypted_otp_seed,
+                dept_id=device.dept_id,
+                device_group=device.device_group,
             )
             return {"username": credential.username, "password": credential.password}
 
@@ -412,12 +413,11 @@ class CollectService:
             if not device.dept_id or not device.device_group:
                 raise BadRequestException(message="设备未配置部门或设备组")
 
-            credential = await otp_service.get_device_credential(
-                auth_type=auth_type,
+            credential = await otp_service.get_credential_for_otp_manual_device(
                 username=device.username,
                 dept_id=device.dept_id,
                 device_group=device.device_group,
-                failed_devices=[{"device_id": str(device.id), "device_name": device.name}],
+                failed_devices=[str(device.id)],
             )
             return {"username": credential.username, "password": credential.password}
 
@@ -435,15 +435,17 @@ class CollectService:
         # 规范化条目
         normalized_entries = []
         for entry in entries:
-            normalized_entries.append({
-                "ip_address": entry.get("ip_address", entry.get("address", "")),
-                "mac_address": entry.get("mac_address", entry.get("mac", "")),
-                "vlan_id": entry.get("vlan_id", entry.get("vlan", "")),
-                "interface": entry.get("interface", entry.get("port", "")),
-                "age": entry.get("age", entry.get("aging", "")),
-                "entry_type": entry.get("type", entry.get("entry_type", "")),
-                "updated_at": now.isoformat(),
-            })
+            normalized_entries.append(
+                {
+                    "ip_address": entry.get("ip_address", entry.get("address", "")),
+                    "mac_address": entry.get("mac_address", entry.get("mac", "")),
+                    "vlan_id": entry.get("vlan_id", entry.get("vlan", "")),
+                    "interface": entry.get("interface", entry.get("port", "")),
+                    "age": entry.get("age", entry.get("aging", "")),
+                    "entry_type": entry.get("type", entry.get("entry_type", "")),
+                    "updated_at": now.isoformat(),
+                }
+            )
 
         cache_data = {
             "entries": normalized_entries,
@@ -470,14 +472,16 @@ class CollectService:
         # 规范化条目
         normalized_entries = []
         for entry in entries:
-            normalized_entries.append({
-                "mac_address": entry.get("mac_address", entry.get("destination_address", entry.get("mac", ""))),
-                "vlan_id": entry.get("vlan_id", entry.get("vlan", "")),
-                "interface": entry.get("interface", entry.get("port", entry.get("destination_port", ""))),
-                "entry_type": entry.get("type", entry.get("entry_type", "")),
-                "state": entry.get("state", ""),
-                "updated_at": now.isoformat(),
-            })
+            normalized_entries.append(
+                {
+                    "mac_address": entry.get("mac_address", entry.get("destination_address", entry.get("mac", ""))),
+                    "vlan_id": entry.get("vlan_id", entry.get("vlan", "")),
+                    "interface": entry.get("interface", entry.get("port", entry.get("destination_port", ""))),
+                    "entry_type": entry.get("type", entry.get("entry_type", "")),
+                    "state": entry.get("state", ""),
+                    "updated_at": now.isoformat(),
+                }
+            )
 
         cache_data = {
             "entries": normalized_entries,
@@ -565,16 +569,18 @@ class CollectService:
                 # 搜索匹配的 IP
                 for entry in entries:
                     if entry.get("ip_address", "").lower() == ip_address.lower():
-                        matches.append(LocateMatch(
-                            device_id=UUID(device_id),
-                            device_name=device.name if device else None,
-                            device_ip=device.ip_address if device else None,
-                            interface=entry.get("interface"),
-                            vlan_id=entry.get("vlan_id"),
-                            mac_address=entry.get("mac_address"),
-                            entry_type=entry.get("entry_type"),
-                            cached_at=cached_at,
-                        ))
+                        matches.append(
+                            LocateMatch(
+                                device_id=UUID(device_id),
+                                device_name=device.name if device else None,
+                                device_ip=device.ip_address if device else None,
+                                interface=entry.get("interface"),
+                                vlan_id=entry.get("vlan_id"),
+                                mac_address=entry.get("mac_address"),
+                                entry_type=entry.get("entry_type"),
+                                cached_at=cached_at,
+                            )
+                        )
 
         except Exception as e:
             logger.error(f"IP 定位查询失败: {e}")
@@ -664,17 +670,19 @@ class CollectService:
                         location_key = f"{device_id}:{entry.get('interface', '')}"
                         if location_key not in found_locations:
                             found_locations.add(location_key)
-                            matches.append(LocateMatch(
-                                device_id=UUID(device_id),
-                                device_name=device.name if device else None,
-                                device_ip=device.ip_address if device else None,
-                                interface=entry.get("interface"),
-                                vlan_id=entry.get("vlan_id"),
-                                ip_address=entry.get("ip_address"),
-                                mac_address=entry.get("mac_address"),
-                                entry_type=entry.get("entry_type"),
-                                cached_at=cached_at,
-                            ))
+                            matches.append(
+                                LocateMatch(
+                                    device_id=UUID(device_id),
+                                    device_name=device.name if device else None,
+                                    device_ip=device.ip_address if device else None,
+                                    interface=entry.get("interface"),
+                                    vlan_id=entry.get("vlan_id"),
+                                    ip_address=entry.get("ip_address"),
+                                    mac_address=entry.get("mac_address"),
+                                    entry_type=entry.get("entry_type"),
+                                    cached_at=cached_at,
+                                )
+                            )
 
             # 2. 搜索 MAC 缓存（可能有更精确的端口信息）
             async for key in redis_client.scan_iter(match=f"{MAC_CACHE_PREFIX}:*"):
@@ -694,16 +702,18 @@ class CollectService:
                         location_key = f"{device_id}:{entry.get('interface', '')}"
                         if location_key not in found_locations:
                             found_locations.add(location_key)
-                            matches.append(LocateMatch(
-                                device_id=UUID(device_id),
-                                device_name=device.name if device else None,
-                                device_ip=device.ip_address if device else None,
-                                interface=entry.get("interface"),
-                                vlan_id=entry.get("vlan_id"),
-                                mac_address=entry.get("mac_address"),
-                                entry_type=entry.get("entry_type") or entry.get("state"),
-                                cached_at=cached_at,
-                            ))
+                            matches.append(
+                                LocateMatch(
+                                    device_id=UUID(device_id),
+                                    device_name=device.name if device else None,
+                                    device_ip=device.ip_address if device else None,
+                                    interface=entry.get("interface"),
+                                    vlan_id=entry.get("vlan_id"),
+                                    mac_address=entry.get("mac_address"),
+                                    entry_type=entry.get("entry_type") or entry.get("state"),
+                                    cached_at=cached_at,
+                                )
+                            )
 
         except Exception as e:
             logger.error(f"MAC 定位查询失败: {e}")
