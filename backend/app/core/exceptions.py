@@ -7,6 +7,7 @@
 """
 
 from typing import Any
+from uuid import UUID
 
 
 class CustomException(Exception):
@@ -68,3 +69,47 @@ class DomainValidationException(CustomException):
 
 # 向后兼容：旧代码可能仍引用 ValidationError（不推荐继续使用）。
 ValidationError = DomainValidationException
+
+
+# ===== NCM 网络设备管理相关异常 =====
+
+
+class OTPRequiredException(CustomException):
+    """
+    需要用户输入 OTP 验证码异常。
+
+    当设备认证类型为 otp_manual 且 Redis 缓存中没有有效的 OTP 时抛出。
+    用于支持断点续传：任务暂停等待用户输入新的 OTP 后继续执行。
+    """
+
+    def __init__(
+        self,
+        dept_id: UUID,
+        device_group: str,
+        failed_devices: list[str] | None = None,
+        message: str = "需要输入 OTP 验证码",
+    ):
+        self.dept_id = dept_id
+        self.device_group = device_group
+        self.failed_devices = failed_devices or []
+        super().__init__(
+            code=428,  # Precondition Required
+            message=message,
+            details={
+                "dept_id": str(dept_id),
+                "device_group": device_group,
+                "failed_devices": self.failed_devices,
+            },
+        )
+
+
+class DeviceCredentialNotFoundException(NotFoundException):
+    """
+    设备凭据未找到异常。
+
+    当设备的部门+设备分组组合没有对应的凭据配置时抛出。
+    """
+
+    def __init__(self, dept_id: UUID | None, device_group: str):
+        message = f"未找到凭据配置: dept_id={dept_id}, device_group={device_group}"
+        super().__init__(message=message)
