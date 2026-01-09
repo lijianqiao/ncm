@@ -28,7 +28,11 @@ from app.core.db import AsyncSessionLocal
 from app.core.exceptions import ForbiddenException, NotFoundException, UnauthorizedException
 from app.core.logger import logger
 from app.core.token_store import get_user_revoked_after
+from app.crud.crud_credential import CRUDCredential
+from app.crud.crud_credential import credential as credential_crud_global
 from app.crud.crud_dept import CRUDDept
+from app.crud.crud_device import CRUDDevice
+from app.crud.crud_device import device as device_crud_global
 from app.crud.crud_log import CRUDLoginLog, CRUDOperationLog
 from app.crud.crud_log import login_log as login_log_crud_global
 from app.crud.crud_log import operation_log as operation_log_crud_global
@@ -43,8 +47,10 @@ from app.models.rbac import Role
 from app.models.user import User
 from app.schemas.token import TokenPayload
 from app.services.auth_service import AuthService
+from app.services.credential_service import CredentialService
 from app.services.dashboard_service import DashboardService
 from app.services.dept_service import DeptService
+from app.services.device_service import DeviceService
 from app.services.log_service import LogService
 from app.services.menu_service import MenuService
 from app.services.permission_service import PermissionService
@@ -376,3 +382,30 @@ def get_dept_service(
 
 
 DeptServiceDep = Annotated[DeptService, Depends(get_dept_service)]
+
+
+def get_device_crud() -> CRUDDevice:
+    return device_crud_global
+
+
+def get_credential_crud() -> CRUDCredential:
+    return credential_crud_global
+
+
+def get_device_service(
+    db: SessionDep,
+    device_crud: Annotated[CRUDDevice, Depends(get_device_crud)],
+    credential_crud: Annotated[CRUDCredential, Depends(get_credential_crud)],
+) -> DeviceService:
+    return DeviceService(db, device_crud, credential_crud)
+
+
+def get_credential_service(
+    db: SessionDep,
+    credential_crud: Annotated[CRUDCredential, Depends(get_credential_crud)],
+) -> CredentialService:
+    return CredentialService(db, credential_crud)
+
+
+DeviceServiceDep = Annotated[DeviceService, Depends(get_device_service)]
+CredentialServiceDep = Annotated[CredentialService, Depends(get_credential_service)]

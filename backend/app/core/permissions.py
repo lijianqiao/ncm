@@ -58,6 +58,21 @@ class PermissionCode(str, Enum):
     DEPT_RECYCLE = "dept:recycle"
     DEPT_RESTORE = "dept:restore"
 
+    # NCM 设备权限
+    DEVICE_LIST = "device:list"
+    DEVICE_CREATE = "device:create"
+    DEVICE_UPDATE = "device:update"
+    DEVICE_DELETE = "device:delete"
+    DEVICE_RECYCLE = "device:recycle"
+    DEVICE_RESTORE = "device:restore"
+
+    # NCM 凭据权限
+    CREDENTIAL_LIST = "credential:list"
+    CREDENTIAL_CREATE = "credential:create"
+    CREDENTIAL_UPDATE = "credential:update"
+    CREDENTIAL_DELETE = "credential:delete"
+    CREDENTIAL_USE = "credential:use"
+
 
 @dataclass(frozen=True, slots=True)
 class PermissionDef:
@@ -101,6 +116,19 @@ PERMISSION_DEFS: tuple[PermissionDef, ...] = (
     PermissionDef(PermissionCode.DEPT_DELETE, "部门-删除"),
     PermissionDef(PermissionCode.DEPT_RECYCLE, "部门-回收站"),
     PermissionDef(PermissionCode.DEPT_RESTORE, "部门-恢复"),
+    # NCM 设备权限
+    PermissionDef(PermissionCode.DEVICE_LIST, "设备-列表"),
+    PermissionDef(PermissionCode.DEVICE_CREATE, "设备-创建"),
+    PermissionDef(PermissionCode.DEVICE_UPDATE, "设备-更新"),
+    PermissionDef(PermissionCode.DEVICE_DELETE, "设备-删除"),
+    PermissionDef(PermissionCode.DEVICE_RECYCLE, "设备-回收站"),
+    PermissionDef(PermissionCode.DEVICE_RESTORE, "设备-恢复"),
+    # NCM 凭据权限
+    PermissionDef(PermissionCode.CREDENTIAL_LIST, "凭据-列表"),
+    PermissionDef(PermissionCode.CREDENTIAL_CREATE, "凭据-创建"),
+    PermissionDef(PermissionCode.CREDENTIAL_UPDATE, "凭据-更新"),
+    PermissionDef(PermissionCode.CREDENTIAL_DELETE, "凭据-删除"),
+    PermissionDef(PermissionCode.CREDENTIAL_USE, "凭据-使用", "缓存和使用 OTP 验证码"),
 )
 
 

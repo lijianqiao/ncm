@@ -645,6 +645,194 @@ is_hidden = true
 permission = "dept:restore"
 parent_key = "depts"
 
+# ---- NCM 网络管理菜单 ----
+
+[[menus]]
+key = "ncm"
+title = "网络管理"
+name = "NCM"
+path = "/ncm"
+component = "Layout"
+icon = "GitNetworkOutline"
+sort = 200
+type = "CATALOG"
+is_hidden = false
+permission = ""
+parent_key = ""
+
+[[menus]]
+key = "devices"
+title = "设备管理"
+name = "DeviceMgmt"
+path = "/ncm/devices"
+component = "/views/ncm/devices/index.vue"
+icon = "HardwareChipOutline"
+sort = 201
+type = "MENU"
+is_hidden = false
+permission = ""
+parent_key = "ncm"
+
+[[menus]]
+key = "credentials"
+title = "凭据管理"
+name = "CredentialMgmt"
+path = "/ncm/credentials"
+component = "/views/ncm/credentials/index.vue"
+icon = "KeyOutline"
+sort = 202
+type = "MENU"
+is_hidden = false
+permission = ""
+parent_key = "ncm"
+
+# ---- 设备权限点（device:*）----
+
+[[menus]]
+key = "perm_device_list"
+title = "设备-列表"
+name = "PermDeviceList"
+path = ""
+component = ""
+icon = "KeyOutline"
+sort = 2011
+type = "PERMISSION"
+is_hidden = true
+permission = "device:list"
+parent_key = "devices"
+
+[[menus]]
+key = "perm_device_create"
+title = "设备-创建"
+name = "PermDeviceCreate"
+path = ""
+component = ""
+icon = "KeyOutline"
+sort = 2012
+type = "PERMISSION"
+is_hidden = true
+permission = "device:create"
+parent_key = "devices"
+
+[[menus]]
+key = "perm_device_update"
+title = "设备-更新"
+name = "PermDeviceUpdate"
+path = ""
+component = ""
+icon = "KeyOutline"
+sort = 2013
+type = "PERMISSION"
+is_hidden = true
+permission = "device:update"
+parent_key = "devices"
+
+[[menus]]
+key = "perm_device_delete"
+title = "设备-删除"
+name = "PermDeviceDelete"
+path = ""
+component = ""
+icon = "KeyOutline"
+sort = 2014
+type = "PERMISSION"
+is_hidden = true
+permission = "device:delete"
+parent_key = "devices"
+
+[[menus]]
+key = "perm_device_recycle"
+title = "设备-回收站"
+name = "PermDeviceRecycle"
+path = ""
+component = ""
+icon = "KeyOutline"
+sort = 2015
+type = "PERMISSION"
+is_hidden = true
+permission = "device:recycle"
+parent_key = "devices"
+
+[[menus]]
+key = "perm_device_restore"
+title = "设备-恢复"
+name = "PermDeviceRestore"
+path = ""
+component = ""
+icon = "KeyOutline"
+sort = 2016
+type = "PERMISSION"
+is_hidden = true
+permission = "device:restore"
+parent_key = "devices"
+
+# ---- 凭据权限点（credential:*）----
+
+[[menus]]
+key = "perm_credential_list"
+title = "凭据-列表"
+name = "PermCredentialList"
+path = ""
+component = ""
+icon = "KeyOutline"
+sort = 2021
+type = "PERMISSION"
+is_hidden = true
+permission = "credential:list"
+parent_key = "credentials"
+
+[[menus]]
+key = "perm_credential_create"
+title = "凭据-创建"
+name = "PermCredentialCreate"
+path = ""
+component = ""
+icon = "KeyOutline"
+sort = 2022
+type = "PERMISSION"
+is_hidden = true
+permission = "credential:create"
+parent_key = "credentials"
+
+[[menus]]
+key = "perm_credential_update"
+title = "凭据-更新"
+name = "PermCredentialUpdate"
+path = ""
+component = ""
+icon = "KeyOutline"
+sort = 2023
+type = "PERMISSION"
+is_hidden = true
+permission = "credential:update"
+parent_key = "credentials"
+
+[[menus]]
+key = "perm_credential_delete"
+title = "凭据-删除"
+name = "PermCredentialDelete"
+path = ""
+component = ""
+icon = "KeyOutline"
+sort = 2024
+type = "PERMISSION"
+is_hidden = true
+permission = "credential:delete"
+parent_key = "credentials"
+
+[[menus]]
+key = "perm_credential_use"
+title = "凭据-使用"
+name = "PermCredentialUse"
+path = ""
+component = ""
+icon = "KeyOutline"
+sort = 2025
+type = "PERMISSION"
+is_hidden = true
+permission = "credential:use"
+parent_key = "credentials"
+
 # 角色数据：permissions 会映射到上面菜单的 permission 字段，并绑定到角色 menus。
 
 [[roles]]
@@ -687,6 +875,17 @@ permissions = [
   "dept:delete",
   "dept:recycle",
   "dept:restore",
+  "device:list",
+  "device:create",
+  "device:update",
+  "device:delete",
+  "device:recycle",
+  "device:restore",
+  "credential:list",
+  "credential:create",
+  "credential:update",
+  "credential:delete",
+  "credential:use",
 ]
 
 [[roles]]
