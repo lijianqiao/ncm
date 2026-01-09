@@ -7,6 +7,7 @@
 """
 
 from celery import Celery
+from celery.schedules import crontab
 
 from app.core.config import settings
 
@@ -49,8 +50,30 @@ def create_celery_app() -> Celery:
             "app.celery.tasks.discovery.*": {"queue": "discovery"},
             "app.celery.tasks.topology.*": {"queue": "topology"},
         },
-        # 定时任务调度（后续配置）
-        beat_schedule={},
+        # 定时任务调度 (Celery Beat)
+        beat_schedule={
+            # 每日定时全量配置备份
+            "daily-backup-all": {
+                "task": "app.celery.tasks.backup.scheduled_backup_all",
+                "schedule": crontab(
+                    hour=settings.CELERY_BEAT_BACKUP_HOUR,
+                    minute=settings.CELERY_BEAT_BACKUP_MINUTE,
+                ),
+                "options": {"queue": "backup"},
+            },
+            # 定时增量配置检查（检测配置变更）
+            "incremental-backup-check": {
+                "task": "app.celery.tasks.backup.incremental_backup_check",
+                "schedule": crontab(
+                    minute=0,
+                    hour=settings.CELERY_BEAT_INCREMENTAL_HOURS,
+                ),
+                "options": {"queue": "backup"},
+            },
+        },
+        # Beat 调度器配置
+        beat_scheduler="celery.beat:PersistentScheduler",
+        beat_schedule_filename="celerybeat-schedule",
     )
 
     # 自动发现任务模块

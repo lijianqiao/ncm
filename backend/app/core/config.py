@@ -95,6 +95,15 @@ class Settings(BaseSettings):
     CELERY_BROKER_DB: int = 1  # Celery Broker 使用 Redis DB 1
     CELERY_RESULT_DB: int = 2  # Celery 结果存储使用 Redis DB 2
 
+    # Flower 监控配置
+    FLOWER_PORT: int = 5555  # Flower Web UI 端口
+    FLOWER_BASIC_AUTH: str | None = None  # HTTP Basic Auth, 格式: "user:password"
+
+    # Celery Beat 定时任务配置
+    CELERY_BEAT_BACKUP_HOUR: int = 2  # 每日全量备份时间（小时，0-23）
+    CELERY_BEAT_BACKUP_MINUTE: int = 0  # 每日全量备份时间（分钟，0-59）
+    CELERY_BEAT_INCREMENTAL_HOURS: str = "*/4"  # 增量检查间隔（cron 格式）
+
     @computed_field
     @property
     def CELERY_BROKER_URL(self) -> RedisDsn:
