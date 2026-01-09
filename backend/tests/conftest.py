@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from app.api.deps import get_db
 from app.core.config import settings
+from app.core.enums import BackupStatus, BackupType, DeviceGroup, DeviceStatus, DeviceVendor
 from app.core.rate_limiter import limiter
 from app.core.security import get_password_hash
 from app.crud.crud_log import login_log, operation_log
@@ -24,7 +25,9 @@ from app.crud.crud_menu import menu as menu_crud
 from app.crud.crud_role import role as role_crud
 from app.crud.crud_user import user as user_crud
 from app.main import app
+from app.models.backup import Backup
 from app.models.base import Base
+from app.models.device import Device
 from app.models.user import User
 from app.services.dashboard_service import DashboardService
 
@@ -176,3 +179,43 @@ def dashboard_service(db_session: AsyncSession) -> DashboardService:
         login_log_crud=login_log,
         operation_log_crud=operation_log,
     )
+
+
+@pytest_asyncio.fixture(scope="function")
+async def test_device(db_session: AsyncSession) -> Device:
+    """
+    创建测试设备。
+    """
+    device = Device(
+        name="test-switch-01",
+        ip_address="192.168.1.1",
+        vendor=DeviceVendor.H3C,
+        device_group=DeviceGroup.CORE,
+        status=DeviceStatus.IN_USE,
+        ssh_port=22,
+        platform="s5500",
+        location="测试机房A区",
+    )
+    db_session.add(device)
+    await db_session.commit()
+    await db_session.refresh(device)
+    return device
+
+
+@pytest_asyncio.fixture(scope="function")
+async def test_backup(db_session: AsyncSession, test_device: Device) -> Backup:
+    """
+    创建测试备份。
+    """
+    backup = Backup(
+        device_id=test_device.id,
+        backup_type=BackupType.MANUAL,
+        status=BackupStatus.SUCCESS,
+        content="!Test configuration\nhostname test-device\ninterface GigabitEthernet0/0\n",
+        content_size=60,
+        md5_hash="d41d8cd98f00b204e9800998ecf8427e",
+    )
+    db_session.add(backup)
+    await db_session.commit()
+    await db_session.refresh(backup)
+    return backup

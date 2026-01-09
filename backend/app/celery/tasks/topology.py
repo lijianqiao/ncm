@@ -5,14 +5,14 @@
 @DateTime: 2026-01-09 23:55:00
 @Docs: 网络拓扑 Celery 任务 (Topology Tasks).
 
-包含 LLDP 拓扑采集、拓扑刷新等异步任务�?
+包含 LLDP 拓扑采集、拓扑刷新等异步任务。
 """
 
 from typing import Any
 from uuid import UUID
 
 from app.celery.app import celery_app
-from app.celery.base import BaseTask
+from app.celery.base import BaseTask, run_async
 from app.core.cache import redis_client
 from app.core.db import AsyncSessionLocal
 from app.core.logger import logger
@@ -32,15 +32,14 @@ def collect_topology(
     device_ids: list[str] | None = None,
 ) -> dict[str, Any]:
     """
-    采集网络拓扑 (LLDP) �?Celery 任务�?
+    采集网络拓扑 (LLDP) - Celery 任务。
 
     Args:
-        device_ids: 指定设备ID列表 (为空则采集所�?
+        device_ids: 指定设备ID列表 (为空则采集所有)
 
     Returns:
         采集结果
     """
-    import asyncio
 
     async def _collect():
         async with AsyncSessionLocal() as db:
@@ -67,7 +66,7 @@ def collect_topology(
 
             return result.model_dump()
 
-    return asyncio.run(_collect())
+    return run_async(_collect())
 
 
 @celery_app.task(
@@ -78,7 +77,7 @@ def collect_topology(
 )
 def collect_device_topology(self, device_id: str) -> dict[str, Any]:
     """
-    采集单个设备拓扑�?Celery 任务�?
+    采集单个设备拓扑 - Celery 任务。
 
     Args:
         device_id: 设备ID
@@ -86,7 +85,6 @@ def collect_device_topology(self, device_id: str) -> dict[str, Any]:
     Returns:
         采集结果
     """
-    import asyncio
 
     async def _collect_single():
         async with AsyncSessionLocal() as db:
@@ -99,7 +97,7 @@ def collect_device_topology(self, device_id: str) -> dict[str, Any]:
             result = await topology_service.collect_lldp_all(db, device_ids=[UUID(device_id)])
             result.task_id = self.request.id
 
-            # 返回单设备结�?
+            # 返回单设备结果
             device_result = result.results[0] if result.results else None
 
             return {
@@ -111,7 +109,7 @@ def collect_device_topology(self, device_id: str) -> dict[str, Any]:
                 "error": device_result.error if device_result else "Device not found",
             }
 
-    return asyncio.run(_collect_single())
+    return run_async(_collect_single())
 
 
 @celery_app.task(
@@ -122,14 +120,13 @@ def collect_device_topology(self, device_id: str) -> dict[str, Any]:
 )
 def scheduled_topology_refresh(self) -> dict[str, Any]:
     """
-    定时拓扑刷新任务 (�?Celery Beat 调度)�?
+    定时拓扑刷新任务 (由 Celery Beat 调度)。
 
-    采集所有活跃设备的 LLDP 信息并更新拓扑数据�?
+    采集所有活跃设备的 LLDP 信息并更新拓扑数据。
 
     Returns:
         刷新结果
     """
-    import asyncio
 
     async def _refresh():
         async with AsyncSessionLocal() as db:
@@ -139,7 +136,7 @@ def scheduled_topology_refresh(self) -> dict[str, Any]:
                 redis_client=redis_client,
             )
 
-            # 采集所有设�?
+            # 采集所有设备
             result = await topology_service.collect_lldp_all(db)
             result.task_id = self.request.id
 
@@ -153,7 +150,7 @@ def scheduled_topology_refresh(self) -> dict[str, Any]:
 
             return result.model_dump()
 
-    return asyncio.run(_refresh())
+    return run_async(_refresh())
 
 
 @celery_app.task(
@@ -164,14 +161,13 @@ def scheduled_topology_refresh(self) -> dict[str, Any]:
 )
 def build_topology_cache(self) -> dict[str, Any]:
     """
-    构建拓扑缓存�?Celery 任务�?
+    构建拓扑缓存 - Celery 任务。
 
-    从数据库构建 vis.js 格式的拓扑数据并缓存�?Redis�?
+    从数据库构建 vis.js 格式的拓扑数据并缓存到 Redis。
 
     Returns:
         构建结果
     """
-    import asyncio
 
     async def _build_cache():
         async with AsyncSessionLocal() as db:
@@ -197,4 +193,4 @@ def build_topology_cache(self) -> dict[str, Any]:
                 "unknown_devices": topology.stats.unknown_devices,
             }
 
-    return asyncio.run(_build_cache())
+    return run_async(_build_cache())

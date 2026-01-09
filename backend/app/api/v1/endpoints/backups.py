@@ -68,7 +68,8 @@ async def get_backups(
             error_message=backup.error_message,
             created_at=backup.created_at,
             updated_at=backup.updated_at,
-            has_content=bool(backup.content or backup.content_path),
+            content=backup.content,
+            content_path=backup.content_path,
         )
         backup_responses.append(resp)
 
@@ -110,7 +111,8 @@ async def get_backup(
             error_message=backup.error_message,
             created_at=backup.created_at,
             updated_at=backup.updated_at,
-            has_content=bool(backup.content or backup.content_path),
+            content=backup.content,
+            content_path=backup.content_path,
         )
     )
 
@@ -180,7 +182,8 @@ async def backup_device(
             error_message=backup.error_message,
             created_at=backup.created_at,
             updated_at=backup.updated_at,
-            has_content=bool(backup.content or backup.content_path),
+            content=backup.content,
+            content_path=backup.content_path,
         ),
         message="备份任务已完成",
     )
@@ -269,7 +272,8 @@ async def get_device_latest_backup(
             error_message=backup.error_message,
             created_at=backup.created_at,
             updated_at=backup.updated_at,
-            has_content=bool(backup.content or backup.content_path),
+            content=backup.content,
+            content_path=backup.content_path,
         )
     )
 
@@ -308,7 +312,8 @@ async def get_device_backup_history(
             error_message=backup.error_message,
             created_at=backup.created_at,
             updated_at=backup.updated_at,
-            has_content=bool(backup.content or backup.content_path),
+            content=backup.content,
+            content_path=backup.content_path,
         )
         for backup in items
     ]
