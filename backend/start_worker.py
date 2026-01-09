@@ -73,7 +73,7 @@ def main() -> int:
             "-m",
             "celery",
             "-A",
-            "app.core.celery_app:celery_app",
+            "app.celery.app:celery_app",
             "flower",
             f"--port={args.flower_port}",
         ]
@@ -81,7 +81,7 @@ def main() -> int:
         return subprocess.call(flower_cmd)
     else:
         # 导入 Celery 应用 (延迟导入，避免在解析参数时就加载配置)
-        from app.core.celery_app import celery_app
+        from app.celery.app import celery_app
 
         # 启动 Worker
         worker_args = [

@@ -13,7 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from app.api.deps import get_current_active_superuser
-from app.core.celery_app import celery_app
+from app.celery.app import celery_app
 from app.models.user import User
 
 router = APIRouter()
@@ -89,7 +89,7 @@ async def trigger_ping(_: SuperuserDep) -> TaskResponse:
     用于验证 Celery Worker 是否正常运行。
     仅限超级管理员访问。
     """
-    from app.tasks.example import ping
+    from app.celery.tasks.example import ping
 
     result = ping.delay()  # type: ignore[attr-defined]
     return TaskResponse(task_id=result.id, status="PENDING")
@@ -102,7 +102,7 @@ async def trigger_add(_: SuperuserDep, x: int = 1, y: int = 2) -> TaskResponse:
 
     仅限超级管理员访问。
     """
-    from app.tasks.example import add
+    from app.celery.tasks.example import add
 
     result = add.delay(x, y)  # type: ignore[attr-defined]
     return TaskResponse(task_id=result.id, status="PENDING")
@@ -121,7 +121,7 @@ async def trigger_long_running(_: SuperuserDep, duration: int = 10) -> TaskRespo
     if duration > 300:
         raise HTTPException(status_code=400, detail="测试任务持续时间不能超过 300 秒")
 
-    from app.tasks.example import long_running
+    from app.celery.tasks.example import long_running
 
     result = long_running.delay(duration)  # type: ignore[attr-defined]
     return TaskResponse(task_id=result.id, status="PENDING")

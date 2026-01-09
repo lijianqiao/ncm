@@ -1,7 +1,7 @@
 """
 @Author: li
 @Email: lijianqiao2906@live.com
-@FileName: celery_app.py
+@FileName: app.py
 @DateTime: 2026-01-09 11:45:00
 @Docs: Celery 应用配置 (Celery Application Configuration).
 """
@@ -45,16 +45,16 @@ def create_celery_app() -> Celery:
         worker_concurrency=4,  # 默认并发数，可通过启动参数覆盖
         # 任务路由
         task_routes={
-            "app.tasks.backup.*": {"queue": "backup"},
-            "app.tasks.discovery.*": {"queue": "discovery"},
-            "app.tasks.topology.*": {"queue": "topology"},
+            "app.celery.tasks.backup.*": {"queue": "backup"},
+            "app.celery.tasks.discovery.*": {"queue": "discovery"},
+            "app.celery.tasks.topology.*": {"queue": "topology"},
         },
         # 定时任务调度（后续配置）
         beat_schedule={},
     )
 
     # 自动发现任务模块
-    celery_app.autodiscover_tasks(["app.tasks"])
+    celery_app.autodiscover_tasks(["app.celery.tasks"])
 
     return celery_app
 

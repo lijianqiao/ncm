@@ -8,12 +8,12 @@
 
 import time
 
-from app.core.celery_app import celery_app
+from app.celery.app import celery_app
+from app.celery.base import BaseTask
 from app.core.logger import logger
-from app.tasks.base import BaseTask
 
 
-@celery_app.task(base=BaseTask, bind=True, name="app.tasks.example.ping")
+@celery_app.task(base=BaseTask, bind=True, name="app.celery.tasks.example.ping")
 def ping(self) -> dict:
     """
     简单的 Ping 任务，用于验证 Celery 连接。
@@ -25,7 +25,7 @@ def ping(self) -> dict:
     return {"status": "pong", "message": "Celery 连接正常"}
 
 
-@celery_app.task(base=BaseTask, bind=True, name="app.tasks.example.add")
+@celery_app.task(base=BaseTask, bind=True, name="app.celery.tasks.example.add")
 def add(self, x: int, y: int) -> int:
     """
     简单的加法任务，用于测试参数传递。
@@ -42,7 +42,7 @@ def add(self, x: int, y: int) -> int:
     return result
 
 
-@celery_app.task(base=BaseTask, bind=True, name="app.tasks.example.long_running")
+@celery_app.task(base=BaseTask, bind=True, name="app.celery.tasks.example.long_running")
 def long_running(self, duration: int = 10) -> dict:
     """
     长时间运行的任务，用于测试任务状态追踪。
