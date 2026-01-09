@@ -47,7 +47,9 @@ def create_celery_app() -> Celery:
         # 任务路由
         task_routes={
             "app.celery.tasks.backup.*": {"queue": "backup"},
+            "app.celery.tasks.deploy.*": {"queue": "deploy"},
             "app.celery.tasks.collect.*": {"queue": "discovery"},
+                   "app.celery.tasks.inventory_audit.*": {"queue": "discovery"},
             "app.celery.tasks.discovery.*": {"queue": "discovery"},
             "app.celery.tasks.alerts.*": {"queue": "discovery"},
             "app.celery.tasks.topology.*": {"queue": "topology"},

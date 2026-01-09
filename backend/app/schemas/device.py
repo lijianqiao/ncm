@@ -159,3 +159,26 @@ class DeviceBatchResult(BaseModel):
     success_count: int = Field(..., description="成功数量")
     failed_count: int = Field(..., description="失败数量")
     failed_items: list[dict] = Field(default_factory=list, description="失败项详情")
+
+
+class DeviceStatusTransitionRequest(BaseModel):
+    """设备状态流转请求体。"""
+
+    to_status: DeviceStatus = Field(..., description="目标状态")
+    reason: str | None = Field(default=None, max_length=500, description="流转原因(可选)")
+
+
+class DeviceStatusBatchTransitionRequest(BaseModel):
+    """批量状态流转请求体。"""
+
+    ids: list[UUID] = Field(..., min_length=1, max_length=500, description="设备ID列表")
+    to_status: DeviceStatus = Field(..., description="目标状态")
+    reason: str | None = Field(default=None, max_length=500, description="流转原因(可选)")
+
+
+class DeviceLifecycleStatsResponse(BaseModel):
+    """设备生命周期统计响应。"""
+
+    by_status: dict[str, int] = Field(default_factory=dict, description="按状态统计")
+    by_vendor: dict[str, int] = Field(default_factory=dict, description="按厂商统计")
+    by_dept: dict[str, int] = Field(default_factory=dict, description="按部门统计（dept_id 字符串）")

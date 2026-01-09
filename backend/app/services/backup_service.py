@@ -7,6 +7,7 @@
 """
 
 import hashlib
+from datetime import UTC, datetime
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,6 +17,7 @@ from app.core.decorator import transactional
 from app.core.enums import AuthType, BackupStatus, BackupType, DeviceStatus
 from app.core.exceptions import BadRequestException, NotFoundException, OTPRequiredException
 from app.core.logger import logger
+from app.core.minio_client import delete_object, get_text, put_text
 from app.core.otp_service import otp_service
 from app.crud.crud_backup import CRUDBackup
 from app.crud.crud_credential import CRUDCredential
@@ -146,6 +148,17 @@ class BackupService:
         Raises:
             NotFoundException: 备份不存在
         """
+        backup = await self.backup_crud.get(self.db, id=backup_id)
+        if not backup:
+            raise NotFoundException(message="备份不存在")
+
+        # 先删对象存储（尽力而为），再删 DB 记录
+        if backup.content_path:
+            try:
+                await delete_object(backup.content_path)
+            except Exception as e:
+                logger.warning(f"MinIO 删除对象失败: path={backup.content_path}, error={e}")
+
         backup = await self.backup_crud.remove(self.db, id=backup_id)
         if not backup:
             raise NotFoundException(message="备份不存在")
@@ -198,10 +211,10 @@ class BackupService:
         Note:
             MinIO 集成需要后续实现
         """
-        # TODO: 实现 MinIO 内容获取
-        # from app.core.minio import minio_client
-        # return await minio_client.get_object(content_path)
-        raise BadRequestException(message=f"MinIO 存储暂未实现，路径: {content_path}")
+        try:
+            return await get_text(content_path)
+        except Exception as e:
+            raise BadRequestException(message=f"从 MinIO 获取备份内容失败: {e}") from e
 
     # ===== 设备凭据获取 =====
 
@@ -442,17 +455,9 @@ class BackupService:
         Note:
             MinIO 集成需要后续实现
         """
-        # TODO: 实现 MinIO 内容存储
-        # from datetime import datetime
-        # from app.core.minio import minio_client
-        #
-        # path = f"backups/{device_id}/{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
-        # await minio_client.put_object(path, config_content.encode("utf-8"))
-        # return path
-
-        # 临时方案：仍存储到 DB（会超过字段限制，但不报错）
-        logger.warning(f"MinIO 未实现，大配置 ({len(config_content)} bytes) 仍存 DB")
-        return ""
+        object_name = f"backups/{device_id}/{datetime.now(UTC).strftime('%Y%m%d_%H%M%S')}.txt"
+        await put_text(object_name, config_content)
+        return object_name
 
     # ===== 批量备份 =====
 

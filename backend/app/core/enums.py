@@ -121,6 +121,18 @@ class TaskStatus(str, Enum):
     ROLLBACK = "rollback"  # 已回滚
 
 
+# ===== Phase 5 盘点相关枚举 =====
+
+
+class InventoryAuditStatus(str, Enum):
+    """盘点任务状态。"""
+
+    PENDING = "pending"
+    RUNNING = "running"
+    SUCCESS = "success"
+    FAILED = "failed"
+
+
 class ApprovalStatus(str, Enum):
     """审批状态。"""
 

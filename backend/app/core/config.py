@@ -135,6 +135,13 @@ class Settings(BaseSettings):
     ALERT_EMAIL_FROM: str = ""
     ALERT_EMAIL_TO: str = ""
 
+    # MinIO（大配置文件存储）
+    MINIO_ENDPOINT: str = "localhost:9000"
+    MINIO_ACCESS_KEY: str = "minioadmin"
+    MINIO_SECRET_KEY: str = "minioadmin"
+    MINIO_BUCKET: str = "ncm"
+    MINIO_SECURE: bool = False
+
     @computed_field
     @property
     def CELERY_BROKER_URL(self) -> RedisDsn:

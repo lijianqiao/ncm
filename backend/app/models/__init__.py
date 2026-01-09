@@ -1,14 +1,32 @@
-from .backup import Backup, BackupStatus, BackupType
+from app.core.enums import (
+    ApprovalStatus,
+    AuthType,
+    BackupStatus,
+    BackupType,
+    DeviceGroup,
+    DeviceStatus,
+    DeviceType,
+    DeviceVendor,
+    DiscoveryStatus,
+    TaskStatus,
+    TaskType,
+    TemplateStatus,
+    TemplateType,
+)
+
+from .alert import Alert
+from .backup import Backup
 from .base import AuditableModel, Base
 from .credential import DeviceGroupCredential
 from .dept import Department
-from .device import AuthType, Device, DeviceGroup, DeviceStatus, DeviceVendor
-from .discovery import Discovery, DiscoveryStatus
-from .alert import Alert
+from .device import Device
+from .discovery import Discovery
+from .inventory_audit import InventoryAudit
 from .log import LoginLog, OperationLog
 from .rbac import Menu, Role, RoleMenu, UserRole
-from .task import ApprovalStatus, Task, TaskStatus, TaskType
-from .template import DeviceType, Template, TemplateStatus, TemplateType
+from .task import Task
+from .task_approval import TaskApprovalStep
+from .template import Template
 from .topology import TopologyLink
 from .user import User
 
@@ -43,6 +61,7 @@ __all__ = [
     "TaskType",
     "TaskStatus",
     "ApprovalStatus",
+    "TaskApprovalStep",
     # 配置模板
     "Template",
     "TemplateType",
@@ -51,6 +70,8 @@ __all__ = [
     # 设备发现
     "Discovery",
     "DiscoveryStatus",
+    # 资产盘点
+    "InventoryAudit",
     # 告警
     "Alert",
     # 网络拓扑

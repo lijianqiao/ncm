@@ -699,6 +699,45 @@ is_hidden = false
 permission = ""
 parent_key = "ncm"
 
+[[menus]]
+key = "templates"
+title = "模板库"
+name = "TemplateMgmt"
+path = "/ncm/templates"
+component = "/views/ncm/templates/index.vue"
+icon = "CodeOutline"
+sort = 204
+type = "MENU"
+is_hidden = false
+permission = ""
+parent_key = "ncm"
+
+[[menus]]
+key = "deploy"
+title = "安全下发"
+name = "DeployMgmt"
+path = "/ncm/deploy"
+component = "/views/ncm/deploy/index.vue"
+icon = "CloudUploadOutline"
+sort = 205
+type = "MENU"
+is_hidden = false
+permission = ""
+parent_key = "ncm"
+
+[[menus]]
+key = "inventory_audit"
+title = "资产盘点"
+name = "InventoryAudit"
+path = "/ncm/inventory-audit"
+component = "/views/ncm/inventory_audit/index.vue"
+icon = "ClipboardOutline"
+sort = 206
+type = "MENU"
+is_hidden = false
+permission = ""
+parent_key = "ncm"
+
 # ---- 设备权限点（device:*）----
 
 [[menus]]
@@ -777,6 +816,32 @@ sort = 2016
 type = "PERMISSION"
 is_hidden = true
 permission = "device:restore"
+parent_key = "devices"
+
+[[menus]]
+key = "perm_device_status_transition"
+title = "设备-状态流转"
+name = "PermDeviceStatusTransition"
+path = ""
+component = ""
+icon = "KeyOutline"
+sort = 2017
+type = "PERMISSION"
+is_hidden = true
+permission = "device:status:transition"
+parent_key = "devices"
+
+[[menus]]
+key = "perm_device_stats_view"
+title = "设备-统计-查看"
+name = "PermDeviceStatsView"
+path = ""
+component = ""
+icon = "KeyOutline"
+sort = 2018
+type = "PERMISSION"
+is_hidden = true
+permission = "device:stats:view"
 parent_key = "devices"
 
 # ---- 凭据权限点（credential:*）----
@@ -886,6 +951,179 @@ type = "PERMISSION"
 is_hidden = true
 permission = "backup:delete"
 parent_key = "backups"
+
+# ---- 模板权限点（template:*）----
+
+[[menus]]
+key = "perm_template_list"
+title = "模板-列表"
+name = "PermTemplateList"
+path = ""
+component = ""
+icon = "KeyOutline"
+sort = 2041
+type = "PERMISSION"
+is_hidden = true
+permission = "template:list"
+parent_key = "templates"
+
+[[menus]]
+key = "perm_template_create"
+title = "模板-创建"
+name = "PermTemplateCreate"
+path = ""
+component = ""
+icon = "KeyOutline"
+sort = 2042
+type = "PERMISSION"
+is_hidden = true
+permission = "template:create"
+parent_key = "templates"
+
+[[menus]]
+key = "perm_template_update"
+title = "模板-更新"
+name = "PermTemplateUpdate"
+path = ""
+component = ""
+icon = "KeyOutline"
+sort = 2043
+type = "PERMISSION"
+is_hidden = true
+permission = "template:update"
+parent_key = "templates"
+
+[[menus]]
+key = "perm_template_delete"
+title = "模板-删除"
+name = "PermTemplateDelete"
+path = ""
+component = ""
+icon = "KeyOutline"
+sort = 2044
+type = "PERMISSION"
+is_hidden = true
+permission = "template:delete"
+parent_key = "templates"
+
+[[menus]]
+key = "perm_template_submit"
+title = "模板-提交审批"
+name = "PermTemplateSubmit"
+path = ""
+component = ""
+icon = "KeyOutline"
+sort = 2045
+type = "PERMISSION"
+is_hidden = true
+permission = "template:submit"
+parent_key = "templates"
+
+[[menus]]
+key = "perm_render_view"
+title = "渲染-预览"
+name = "PermRenderView"
+path = ""
+component = ""
+icon = "KeyOutline"
+sort = 2046
+type = "PERMISSION"
+is_hidden = true
+permission = "render:view"
+parent_key = "templates"
+
+# ---- 下发权限点（deploy:*）----
+
+[[menus]]
+key = "perm_deploy_view"
+title = "下发-查看"
+name = "PermDeployView"
+path = ""
+component = ""
+icon = "KeyOutline"
+sort = 2051
+type = "PERMISSION"
+is_hidden = true
+permission = "deploy:view"
+parent_key = "deploy"
+
+[[menus]]
+key = "perm_deploy_create"
+title = "下发-创建"
+name = "PermDeployCreate"
+path = ""
+component = ""
+icon = "KeyOutline"
+sort = 2052
+type = "PERMISSION"
+is_hidden = true
+permission = "deploy:create"
+parent_key = "deploy"
+
+[[menus]]
+key = "perm_deploy_approve"
+title = "下发-审批"
+name = "PermDeployApprove"
+path = ""
+component = ""
+icon = "KeyOutline"
+sort = 2053
+type = "PERMISSION"
+is_hidden = true
+permission = "deploy:approve"
+parent_key = "deploy"
+
+[[menus]]
+key = "perm_deploy_execute"
+title = "下发-执行"
+name = "PermDeployExecute"
+path = ""
+component = ""
+icon = "KeyOutline"
+sort = 2054
+type = "PERMISSION"
+is_hidden = true
+permission = "deploy:execute"
+parent_key = "deploy"
+
+[[menus]]
+key = "perm_deploy_rollback"
+title = "下发-回滚"
+name = "PermDeployRollback"
+path = ""
+component = ""
+icon = "KeyOutline"
+sort = 2055
+type = "PERMISSION"
+is_hidden = true
+permission = "deploy:rollback"
+parent_key = "deploy"
+
+[[menus]]
+key = "perm_inventory_audit_create"
+title = "盘点-创建"
+name = "PermInventoryAuditCreate"
+path = ""
+component = ""
+icon = "KeyOutline"
+sort = 2061
+type = "PERMISSION"
+is_hidden = true
+permission = "inventory_audit:create"
+parent_key = "inventory_audit"
+
+[[menus]]
+key = "perm_inventory_audit_view"
+title = "盘点-查看"
+name = "PermInventoryAuditView"
+path = ""
+component = ""
+icon = "KeyOutline"
+sort = 2062
+type = "PERMISSION"
+is_hidden = true
+permission = "inventory_audit:view"
+parent_key = "inventory_audit"
 
 # ---- 采集菜单（collect）----
 
@@ -1171,6 +1409,8 @@ permissions = [
   "device:delete",
   "device:recycle",
   "device:restore",
+  "device:status:transition",
+  "device:stats:view",
   "credential:list",
   "credential:create",
   "credential:update",
@@ -1191,6 +1431,19 @@ permissions = [
   "alert:list",
   "alert:ack",
   "alert:close",
+  "template:list",
+  "template:create",
+  "template:update",
+  "template:delete",
+  "template:submit",
+  "render:view",
+  "deploy:view",
+  "deploy:create",
+  "deploy:approve",
+  "deploy:execute",
+  "deploy:rollback",
+  "inventory_audit:create",
+  "inventory_audit:view",
 ]
 
 [[roles]]

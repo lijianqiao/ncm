@@ -48,8 +48,16 @@ from app.crud.crud_role import CRUDRole
 from app.crud.crud_role import role as role_crud_global
 from app.crud.crud_topology import CRUDTopology
 from app.crud.crud_topology import topology_crud as topology_instance
+from app.crud.crud_template import CRUDTemplate
+from app.crud.crud_template import template as template_instance
+from app.crud.crud_task import CRUDTask
+from app.crud.crud_task import task_crud as task_crud_instance
+from app.crud.crud_task_approval import CRUDTaskApprovalStep
+from app.crud.crud_task_approval import task_approval_crud as task_approval_crud_instance
 from app.crud.crud_user import CRUDUser
 from app.crud.crud_user import user as user_crud_global
+from app.crud.crud_inventory_audit import CRUDInventoryAudit
+from app.crud.crud_inventory_audit import inventory_audit_crud as inventory_audit_crud_instance
 from app.models.dept import Department
 from app.models.rbac import Role
 from app.models.user import User
@@ -68,8 +76,12 @@ from app.services.permission_service import PermissionService
 from app.services.role_service import RoleService
 from app.services.scan_service import ScanService
 from app.services.session_service import SessionService
+from app.services.template_service import TemplateService
 from app.services.topology_service import TopologyService
 from app.services.user_service import UserService
+from app.services.render_service import RenderService
+from app.services.deploy_service import DeployService
+from app.services.inventory_audit_service import InventoryAuditService
 
 # -----------------------
 
@@ -405,6 +417,9 @@ def get_credential_crud() -> CRUDCredential:
     return credential_instance
 
 
+DeviceCRUDDep = Annotated[CRUDDevice, Depends(get_device_crud)]
+
+
 def get_device_service(
     db: SessionDep,
     device_crud: Annotated[CRUDDevice, Depends(get_device_crud)],
@@ -420,8 +435,54 @@ def get_credential_service(
     return CredentialService(db, credential_crud)
 
 
+def get_template_crud() -> CRUDTemplate:
+    return template_instance
+
+
+def get_template_service(
+    db: SessionDep,
+    template_crud: Annotated[CRUDTemplate, Depends(get_template_crud)],
+) -> TemplateService:
+    return TemplateService(db, template_crud)
+
+
+def get_render_service() -> RenderService:
+    return RenderService()
+
+
+def get_task_crud() -> CRUDTask:
+    return task_crud_instance
+
+
+def get_task_approval_crud() -> CRUDTaskApprovalStep:
+    return task_approval_crud_instance
+
+
+def get_deploy_service(
+    db: SessionDep,
+    task_crud: Annotated[CRUDTask, Depends(get_task_crud)],
+    task_approval_crud: Annotated[CRUDTaskApprovalStep, Depends(get_task_approval_crud)],
+) -> DeployService:
+    return DeployService(db, task_crud, task_approval_crud)
+
+
+def get_inventory_audit_crud() -> CRUDInventoryAudit:
+    return inventory_audit_crud_instance
+
+
+def get_inventory_audit_service(
+    db: SessionDep,
+    inventory_audit_crud: Annotated[CRUDInventoryAudit, Depends(get_inventory_audit_crud)],
+) -> InventoryAuditService:
+    return InventoryAuditService(db, inventory_audit_crud)
+
+
 DeviceServiceDep = Annotated[DeviceService, Depends(get_device_service)]
 CredentialServiceDep = Annotated[CredentialService, Depends(get_credential_service)]
+TemplateServiceDep = Annotated[TemplateService, Depends(get_template_service)]
+RenderServiceDep = Annotated[RenderService, Depends(get_render_service)]
+DeployServiceDep = Annotated[DeployService, Depends(get_deploy_service)]
+InventoryAuditServiceDep = Annotated[InventoryAuditService, Depends(get_inventory_audit_service)]
 
 
 # ----- 备份依赖 -----

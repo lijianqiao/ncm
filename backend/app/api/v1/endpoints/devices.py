@@ -20,8 +20,11 @@ from app.schemas.device import (
     DeviceBatchDeleteRequest,
     DeviceBatchResult,
     DeviceCreate,
+    DeviceLifecycleStatsResponse,
     DeviceListQuery,
     DeviceResponse,
+    DeviceStatusBatchTransitionRequest,
+    DeviceStatusTransitionRequest,
     DeviceUpdate,
 )
 
@@ -214,3 +217,67 @@ async def restore_device(
     """
     device = await device_service.restore_device(device_id)
     return ResponseBase(data=DeviceResponse.model_validate(device), message="设备恢复成功")
+
+
+@router.post(
+    "/{device_id}/status/transition",
+    response_model=ResponseBase[DeviceResponse],
+    summary="设备状态流转",
+)
+async def transition_device_status(
+    device_id: UUID,
+    body: DeviceStatusTransitionRequest,
+    device_service: deps.DeviceServiceDep,
+    current_user: deps.CurrentUser,
+    _: deps.User = Depends(deps.require_permissions([PermissionCode.DEVICE_STATUS_TRANSITION.value])),
+) -> Any:
+    device = await device_service.transition_status(
+        device_id,
+        to_status=body.to_status,
+        reason=body.reason,
+        operator_id=current_user.id,
+    )
+    return ResponseBase(data=DeviceResponse.model_validate(device), message="状态流转成功")
+
+
+@router.post(
+    "/status/transition/batch",
+    response_model=ResponseBase[DeviceBatchResult],
+    summary="批量设备状态流转",
+)
+async def batch_transition_device_status(
+    body: DeviceStatusBatchTransitionRequest,
+    device_service: deps.DeviceServiceDep,
+    current_user: deps.CurrentUser,
+    _: deps.User = Depends(deps.require_permissions([PermissionCode.DEVICE_STATUS_TRANSITION.value])),
+) -> Any:
+    success_count, failed_items = await device_service.batch_transition_status(
+        body.ids,
+        to_status=body.to_status,
+        reason=body.reason,
+        operator_id=current_user.id,
+    )
+    return ResponseBase(
+        data=DeviceBatchResult(
+            success_count=success_count,
+            failed_count=len(failed_items),
+            failed_items=failed_items,
+        ),
+        message=f"批量状态流转完成：成功 {success_count}，失败 {len(failed_items)}",
+    )
+
+
+@router.get(
+    "/lifecycle/stats",
+    response_model=ResponseBase[DeviceLifecycleStatsResponse],
+    summary="设备生命周期统计",
+)
+async def lifecycle_stats(
+    device_service: deps.DeviceServiceDep,
+    current_user: deps.CurrentUser,
+    _: deps.User = Depends(deps.require_permissions([PermissionCode.DEVICE_STATS_VIEW.value])),
+    dept_id: UUID | None = Query(default=None, description="部门筛选"),
+    vendor: DeviceVendor | None = Query(default=None, description="厂商筛选"),
+) -> Any:
+    data = await device_service.get_lifecycle_stats(dept_id=dept_id, vendor=vendor.value if vendor else None)
+    return ResponseBase(data=DeviceLifecycleStatsResponse(**data))

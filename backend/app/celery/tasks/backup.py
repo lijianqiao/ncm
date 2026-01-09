@@ -17,15 +17,14 @@ from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.celery.app import celery_app
 from app.celery.base import BaseTask
 from app.core.db import AsyncSessionLocal
-from app.core.enums import AuthType, BackupStatus, BackupType, DeviceStatus
+from app.core.enums import AlertSeverity, AlertType, AuthType, BackupStatus, BackupType, DeviceStatus
 from app.core.logger import logger
+from app.core.minio_client import put_text
 from app.core.otp_service import otp_service
-from app.core.enums import AlertSeverity, AlertType
 from app.crud.crud_alert import alert_crud
 from app.crud.crud_backup import backup as backup_crud
 from app.crud.crud_credential import credential as credential_crud
@@ -52,6 +51,7 @@ def _run_async(coro):
     if loop and loop.is_running():
         # 如果已有事件循环运行，创建新循环
         import concurrent.futures
+
         with concurrent.futures.ThreadPoolExecutor() as pool:
             future = pool.submit(asyncio.run, coro)
             return future.result()
@@ -198,12 +198,19 @@ async def _save_backup_results(hosts_data: list[dict], summary: dict) -> None:
                 if content_size < CONTENT_SIZE_THRESHOLD:
                     content = config_content
                 else:
-                    # TODO: 存储到 MinIO
-                    content = config_content  # 临时：仍存 DB
-                    logger.warning(f"大配置 ({content_size} bytes) 临时存 DB，MinIO 待实现")
+                    # 存储到 MinIO
+                    try:
+                        object_name = f"backups/{device_id}/{datetime.now(UTC).strftime('%Y%m%d_%H%M%S')}.txt"
+                        await put_text(object_name, config_content)
+                        content_path = object_name
+                    except Exception as e:
+                        # MinIO 不可用时降级存 DB（尽力而为）
+                        content = config_content
+                        logger.warning(f"大配置存 MinIO 失败，降级存 DB: {e}")
 
             try:
                 from uuid import UUID
+
                 backup_data = BackupCreate(
                     device_id=UUID(device_id),
                     backup_type=BackupType.MANUAL,
@@ -422,11 +429,7 @@ async def _get_devices_for_scheduled_backup() -> tuple[list[dict], list[str]]:
 
     async with AsyncSessionLocal() as db:
         # 获取所有活跃设备
-        query = (
-            select(Device)
-            .where(Device.status == DeviceStatus.ACTIVE.value)
-            .where(Device.is_deleted.is_(False))
-        )
+        query = select(Device).where(Device.status == DeviceStatus.ACTIVE.value).where(Device.is_deleted.is_(False))
         result = await db.execute(query)
         devices = result.scalars().all()
 
@@ -441,6 +444,10 @@ async def _get_devices_for_scheduled_backup() -> tuple[list[dict], list[str]]:
             try:
                 # 获取凭据
                 if auth_type == AuthType.STATIC:
+                    if not device.username or not device.password_encrypted:
+                        logger.warning(f"设备 {device.name} 缺少用户名或密码配置，跳过")
+                        skipped_devices.append(device.name)
+                        continue
                     credential = await otp_service.get_credential_for_static_device(
                         username=device.username,
                         encrypted_password=device.password_encrypted,
@@ -452,9 +459,7 @@ async def _get_devices_for_scheduled_backup() -> tuple[list[dict], list[str]]:
                         skipped_devices.append(device.name)
                         continue
 
-                    cred = await credential_crud.get_by_dept_and_group(
-                        db, device.dept_id, device.device_group
-                    )
+                    cred = await credential_crud.get_by_dept_and_group(db, device.dept_id, device.device_group)
                     if not cred or not cred.otp_seed_encrypted:
                         logger.warning(f"设备 {device.name} 的凭据未配置 OTP 种子，跳过")
                         skipped_devices.append(device.name)
@@ -468,15 +473,17 @@ async def _get_devices_for_scheduled_backup() -> tuple[list[dict], list[str]]:
                     skipped_devices.append(device.name)
                     continue
 
-                hosts_data.append({
-                    "name": device.name,
-                    "hostname": device.ip_address,
-                    "platform": device.vendor,
-                    "username": credential.username,
-                    "password": credential.password,
-                    "port": device.ssh_port,
-                    "device_id": str(device.id),
-                })
+                hosts_data.append(
+                    {
+                        "name": device.name,
+                        "hostname": device.ip_address,
+                        "platform": device.vendor,
+                        "username": credential.username,
+                        "password": credential.password,
+                        "port": device.ssh_port,
+                        "device_id": str(device.id),
+                    }
+                )
 
             except Exception as e:
                 logger.error(f"设备 {device.name} 凭据获取失败: {e}")
@@ -595,7 +602,7 @@ async def _perform_incremental_check(task) -> dict[str, Any]:
     # 分批检查配置变更（避免大量并发连接）
     batch_size = 10
     for i in range(0, len(hosts_data), batch_size):
-        batch = hosts_data[i:i + batch_size]
+        batch = hosts_data[i : i + batch_size]
 
         task.update_state(
             state="PROGRESS",
@@ -634,12 +641,14 @@ async def _perform_incremental_check(task) -> dict[str, Any]:
 
             if old_md5 != new_md5:
                 changed_count += 1
-                changed_devices.append({
-                    "device_id": device_id,
-                    "device_name": name,
-                    "old_md5": old_md5,
-                    "new_md5": new_md5,
-                })
+                changed_devices.append(
+                    {
+                        "device_id": device_id,
+                        "device_name": name,
+                        "old_md5": old_md5,
+                        "new_md5": new_md5,
+                    }
+                )
 
                 # 保存新备份
                 async with AsyncSessionLocal() as db:

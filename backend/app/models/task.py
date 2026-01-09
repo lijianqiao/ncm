@@ -12,15 +12,16 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING, Optional
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.dialects.postgresql import JSON
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.core.enums import ApprovalStatus, TaskStatus, TaskType
+from app.core.enums import ApprovalStatus, TaskStatus
 from app.models.base import AuditableModel
 
 if TYPE_CHECKING:
     from app.models.backup import Backup
+    from app.models.task_approval import TaskApprovalStep
     from app.models.user import User
 
 
@@ -35,9 +36,7 @@ class Task(AuditableModel):
     description: Mapped[str | None] = mapped_column(Text, nullable=True, comment="任务描述")
 
     # Celery 任务 ID
-    celery_task_id: Mapped[str | None] = mapped_column(
-        String(100), nullable=True, index=True, comment="Celery 任务ID"
-    )
+    celery_task_id: Mapped[str | None] = mapped_column(String(100), nullable=True, index=True, comment="Celery 任务ID")
 
     # 任务状态
     status: Mapped[str] = mapped_column(
@@ -65,9 +64,7 @@ class Task(AuditableModel):
         nullable=True,
         comment="模板ID",
     )
-    template_params: Mapped[dict | None] = mapped_column(
-        JSON, nullable=True, comment="模板参数(JSON)"
-    )
+    template_params: Mapped[dict | None] = mapped_column(JSON, nullable=True, comment="模板参数(JSON)")
 
     # 审批信息
     approval_status: Mapped[str] = mapped_column(
@@ -90,10 +87,19 @@ class Task(AuditableModel):
         nullable=True,
         comment="审批人ID",
     )
-    approved_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True, comment="审批时间"
-    )
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, comment="审批时间")
     approval_comment: Mapped[str | None] = mapped_column(Text, nullable=True, comment="审批意见")
+
+    # Phase 4: 三级审批扩展（最小字段）
+    approval_required: Mapped[bool] = mapped_column(
+        Boolean, default=True, nullable=False, comment="是否需要审批(下发任务默认需要)"
+    )
+    current_approval_level: Mapped[int] = mapped_column(
+        Integer, default=0, nullable=False, comment="当前已通过的审批级别(0-3)"
+    )
+
+    # 下发计划/灰度参数（JSON）
+    deploy_plan: Mapped[dict | None] = mapped_column(JSON, nullable=True, comment="下发计划(JSON)")
 
     # 执行时间
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, comment="开始执行时间")
@@ -107,13 +113,12 @@ class Task(AuditableModel):
     )
 
     # 关联关系
-    submitter: Mapped[Optional["User"]] = relationship(
-        "User", foreign_keys=[submitter_id], lazy="selectin"
-    )
-    approver: Mapped[Optional["User"]] = relationship(
-        "User", foreign_keys=[approver_id], lazy="selectin"
-    )
+    submitter: Mapped[Optional["User"]] = relationship("User", foreign_keys=[submitter_id], lazy="selectin")
+    approver: Mapped[Optional["User"]] = relationship("User", foreign_keys=[approver_id], lazy="selectin")
     rollback_backup: Mapped[Optional["Backup"]] = relationship("Backup", lazy="selectin")
+    approval_steps: Mapped[list["TaskApprovalStep"]] = relationship(
+        "TaskApprovalStep", back_populates="task", lazy="selectin", cascade="all, delete-orphan"
+    )
 
     def __repr__(self) -> str:
         return f"<Task(name={self.name}, type={self.task_type}, status={self.status})>"

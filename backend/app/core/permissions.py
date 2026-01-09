@@ -65,6 +65,8 @@ class PermissionCode(str, Enum):
     DEVICE_DELETE = "device:delete"
     DEVICE_RECYCLE = "device:recycle"
     DEVICE_RESTORE = "device:restore"
+    DEVICE_STATUS_TRANSITION = "device:status:transition"
+    DEVICE_STATS_VIEW = "device:stats:view"
 
     # NCM 凭据权限
     CREDENTIAL_LIST = "credential:list"
@@ -97,6 +99,25 @@ class PermissionCode(str, Enum):
     ALERT_LIST = "alert:list"
     ALERT_ACK = "alert:ack"
     ALERT_CLOSE = "alert:close"
+
+    # Phase 4: 模板/渲染/下发
+    TEMPLATE_LIST = "template:list"
+    TEMPLATE_CREATE = "template:create"
+    TEMPLATE_UPDATE = "template:update"
+    TEMPLATE_DELETE = "template:delete"
+    TEMPLATE_SUBMIT = "template:submit"
+
+    RENDER_VIEW = "render:view"
+
+    DEPLOY_VIEW = "deploy:view"
+    DEPLOY_CREATE = "deploy:create"
+    DEPLOY_APPROVE = "deploy:approve"
+    DEPLOY_EXECUTE = "deploy:execute"
+    DEPLOY_ROLLBACK = "deploy:rollback"
+
+    # Phase 5: 资产盘点
+    INVENTORY_AUDIT_CREATE = "inventory_audit:create"
+    INVENTORY_AUDIT_VIEW = "inventory_audit:view"
 
 
 @dataclass(frozen=True, slots=True)
@@ -148,6 +169,8 @@ PERMISSION_DEFS: tuple[PermissionDef, ...] = (
     PermissionDef(PermissionCode.DEVICE_DELETE, "设备-删除"),
     PermissionDef(PermissionCode.DEVICE_RECYCLE, "设备-回收站"),
     PermissionDef(PermissionCode.DEVICE_RESTORE, "设备-恢复"),
+    PermissionDef(PermissionCode.DEVICE_STATUS_TRANSITION, "设备-状态流转", "设备生命周期状态流转"),
+    PermissionDef(PermissionCode.DEVICE_STATS_VIEW, "设备-统计-查看", "设备生命周期统计"),
     # NCM 凭据权限
     PermissionDef(PermissionCode.CREDENTIAL_LIST, "凭据-列表"),
     PermissionDef(PermissionCode.CREDENTIAL_CREATE, "凭据-创建"),
@@ -174,6 +197,21 @@ PERMISSION_DEFS: tuple[PermissionDef, ...] = (
     PermissionDef(PermissionCode.ALERT_LIST, "告警-列表", "查看告警列表"),
     PermissionDef(PermissionCode.ALERT_ACK, "告警-确认", "确认告警"),
     PermissionDef(PermissionCode.ALERT_CLOSE, "告警-关闭", "关闭告警"),
+    # Phase 4: 模板/渲染/下发
+    PermissionDef(PermissionCode.TEMPLATE_LIST, "模板-列表"),
+    PermissionDef(PermissionCode.TEMPLATE_CREATE, "模板-创建"),
+    PermissionDef(PermissionCode.TEMPLATE_UPDATE, "模板-更新"),
+    PermissionDef(PermissionCode.TEMPLATE_DELETE, "模板-删除"),
+    PermissionDef(PermissionCode.TEMPLATE_SUBMIT, "模板-提交审批"),
+    PermissionDef(PermissionCode.RENDER_VIEW, "渲染-预览", "模板渲染预览(Dry-Run)"),
+    PermissionDef(PermissionCode.DEPLOY_VIEW, "下发-查看", "查看下发任务与执行结果"),
+    PermissionDef(PermissionCode.DEPLOY_CREATE, "下发-创建", "创建下发任务"),
+    PermissionDef(PermissionCode.DEPLOY_APPROVE, "下发-审批", "审批下发任务"),
+    PermissionDef(PermissionCode.DEPLOY_EXECUTE, "下发-执行", "执行下发任务"),
+    PermissionDef(PermissionCode.DEPLOY_ROLLBACK, "下发-回滚", "回滚下发任务"),
+    # Phase 5: 资产盘点
+    PermissionDef(PermissionCode.INVENTORY_AUDIT_CREATE, "盘点-创建", "创建资产盘点任务"),
+    PermissionDef(PermissionCode.INVENTORY_AUDIT_VIEW, "盘点-查看", "查看资产盘点任务与报告"),
 )
 
 

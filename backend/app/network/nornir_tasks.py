@@ -12,7 +12,7 @@ from typing import Any
 
 from nornir.core import Nornir
 from nornir.core.task import AggregatedResult, MultiResult, Result, Task
-from nornir_scrapli.tasks import send_command, send_commands
+from nornir_scrapli.tasks import send_command, send_commands, send_configs
 
 from app.core.logger import logger
 from app.network.textfsm_parser import parse_command_output
@@ -103,6 +103,16 @@ def execute_commands(task: Task, commands: list[str]) -> Result:
         result=result.result,
         changed=False,
     )
+
+
+def deploy_from_host_data(task: Task) -> Result:
+    """根据 host.data['deploy_configs'] 下发配置（用于每台设备不同配置内容）。"""
+    configs: list[str] = task.host.data.get("deploy_configs", [])  # type: ignore[assignment]
+    if not configs:
+        return Result(host=task.host, result={"status": "skipped", "message": "no deploy configs"}, changed=False)
+
+    result = task.run(task=send_configs, configs=configs)
+    return Result(host=task.host, result=result.result, changed=True)
 
 
 def get_arp_table(task: Task) -> MultiResult:

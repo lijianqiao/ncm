@@ -6,14 +6,19 @@
 @Docs: 设备服务业务逻辑 (Device Service Logic).
 """
 
+import hashlib
+import json
 from uuid import UUID
 
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.cache import redis_client
 from app.core.decorator import transactional
 from app.core.encryption import encrypt_password
-from app.core.enums import AuthType
+from app.core.enums import AuthType, DeviceStatus
 from app.core.exceptions import BadRequestException, NotFoundException
+from app.core.lifecycle import validate_transition
 from app.crud.crud_credential import CRUDCredential
 from app.crud.crud_device import CRUDDevice
 from app.models.device import Device
@@ -258,6 +263,134 @@ class DeviceService:
             (items, total): 设备列表和总数
         """
         return await self.device_crud.get_recycle_bin(self.db, page=page, page_size=page_size)
+
+    @transactional()
+    async def transition_status(
+        self,
+        device_id: UUID,
+        *,
+        to_status: DeviceStatus,
+        reason: str | None = None,
+        operator_id: UUID | None = None,
+    ) -> Device:
+        """设备状态流转（生命周期状态机）。"""
+        device = await self.device_crud.get(self.db, id=device_id)
+        if not device:
+            raise NotFoundException(message="设备不存在")
+
+        from_status = str(device.status)
+        to_value = to_status.value
+        validate_transition(from_status, to_value)
+
+        device.status = to_value
+
+        # 补充关键时间字段（最小化）
+        if to_status == DeviceStatus.RETIRED:
+            from datetime import UTC, datetime
+
+            device.retired_at = datetime.now(UTC)
+
+        self.db.add(device)
+        await self.db.flush()
+        await self.db.refresh(device)
+
+        # 缓存失效（统计缓存）
+        await self._invalidate_lifecycle_cache()
+        return device
+
+    @transactional()
+    async def batch_transition_status(
+        self,
+        ids: list[UUID],
+        *,
+        to_status: DeviceStatus,
+        reason: str | None = None,
+        operator_id: UUID | None = None,
+    ) -> tuple[int, list[dict]]:
+        """批量状态流转。返回 (success_count, failed_items)。"""
+        success = 0
+        failed: list[dict] = []
+
+        for device_id in ids:
+            try:
+                await self.transition_status(device_id, to_status=to_status, reason=reason, operator_id=operator_id)
+                success += 1
+            except Exception as e:
+                failed.append({"id": str(device_id), "reason": str(e)})
+
+        return success, failed
+
+    async def _invalidate_lifecycle_cache(self) -> None:
+        if redis_client is None:
+            return
+        try:
+            # 简化：删除所有 stats key（规模小可接受）
+            # key 规范：v1:ncm:device:lifecycle:stats:{hash}
+            keys = await redis_client.keys("v1:ncm:device:lifecycle:stats:*")
+            if keys:
+                await redis_client.delete(*keys)
+        except Exception:
+            return
+
+    async def get_lifecycle_stats(
+        self,
+        *,
+        dept_id: UUID | None = None,
+        vendor: str | None = None,
+    ) -> dict[str, dict[str, int]]:
+        """生命周期统计（按状态/厂商/部门）。支持 60 秒缓存。"""
+        cache_key = None
+        if redis_client is not None:
+            key_obj = {"dept_id": str(dept_id) if dept_id else None, "vendor": vendor}
+            cache_hash = hashlib.md5(json.dumps(key_obj, sort_keys=True).encode("utf-8")).hexdigest()
+            cache_key = f"v1:ncm:device:lifecycle:stats:{cache_hash}"
+            try:
+                cached = await redis_client.get(cache_key)
+                if cached:
+                    return json.loads(cached)
+            except Exception:
+                cache_key = None
+
+        base = select(Device)
+        if dept_id:
+            base = base.where(Device.dept_id == dept_id)
+        if vendor:
+            base = base.where(Device.vendor == vendor)
+
+        # 按状态
+        status_stmt = select(Device.status, func.count(Device.id)).select_from(Device)
+        if dept_id:
+            status_stmt = status_stmt.where(Device.dept_id == dept_id)
+        if vendor:
+            status_stmt = status_stmt.where(Device.vendor == vendor)
+        status_stmt = status_stmt.group_by(Device.status)
+
+        vendor_stmt = select(Device.vendor, func.count(Device.id)).select_from(Device)
+        if dept_id:
+            vendor_stmt = vendor_stmt.where(Device.dept_id == dept_id)
+        vendor_stmt = vendor_stmt.group_by(Device.vendor)
+
+        dept_stmt = select(Device.dept_id, func.count(Device.id)).select_from(Device)
+        if vendor:
+            dept_stmt = dept_stmt.where(Device.vendor == vendor)
+        dept_stmt = dept_stmt.group_by(Device.dept_id)
+
+        status_rows = (await self.db.execute(status_stmt)).all()
+        vendor_rows = (await self.db.execute(vendor_stmt)).all()
+        dept_rows = (await self.db.execute(dept_stmt)).all()
+
+        data = {
+            "by_status": {str(k): int(v) for k, v in status_rows},
+            "by_vendor": {str(k): int(v) for k, v in vendor_rows},
+            "by_dept": {str(k) if k else "null": int(v) for k, v in dept_rows},
+        }
+
+        if redis_client is not None and cache_key:
+            try:
+                await redis_client.setex(cache_key, 60, json.dumps(data, ensure_ascii=False))
+            except Exception:
+                pass
+        return data
 
     @transactional()
     async def restore_device(self, device_id: UUID) -> Device:
