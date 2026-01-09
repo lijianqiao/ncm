@@ -686,6 +686,19 @@ is_hidden = false
 permission = ""
 parent_key = "ncm"
 
+[[menus]]
+key = "backups"
+title = "配置备份"
+name = "BackupMgmt"
+path = "/ncm/backups"
+component = "/views/ncm/backups/index.vue"
+icon = "CloudDownloadOutline"
+sort = 203
+type = "MENU"
+is_hidden = false
+permission = ""
+parent_key = "ncm"
+
 # ---- 设备权限点（device:*）----
 
 [[menus]]
@@ -833,6 +846,34 @@ is_hidden = true
 permission = "credential:use"
 parent_key = "credentials"
 
+# ---- 备份权限点（backup:*）----
+
+[[menus]]
+key = "perm_backup_list"
+title = "备份-列表"
+name = "PermBackupList"
+path = ""
+component = ""
+icon = "KeyOutline"
+sort = 2031
+type = "PERMISSION"
+is_hidden = true
+permission = "backup:list"
+parent_key = "backups"
+
+[[menus]]
+key = "perm_backup_create"
+title = "备份-创建"
+name = "PermBackupCreate"
+path = ""
+component = ""
+icon = "KeyOutline"
+sort = 2032
+type = "PERMISSION"
+is_hidden = true
+permission = "backup:create"
+parent_key = "backups"
+
 # 角色数据：permissions 会映射到上面菜单的 permission 字段，并绑定到角色 menus。
 
 [[roles]]
@@ -886,6 +927,8 @@ permissions = [
   "credential:update",
   "credential:delete",
   "credential:use",
+  "backup:list",
+  "backup:create",
 ]
 
 [[roles]]

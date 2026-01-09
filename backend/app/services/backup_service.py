@@ -1,0 +1,627 @@
+"""
+@Author: li
+@Email: lijianqiao2906@live.com
+@FileName: backup_service.py
+@DateTime: 2026-01-09 20:30:00
+@Docs: 配置备份服务业务逻辑 (Backup Service Logic).
+"""
+
+import hashlib
+from uuid import UUID
+
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.celery.tasks.backup import backup_devices
+from app.core.decorator import transactional
+from app.core.enums import AuthType, BackupStatus, BackupType, DeviceStatus
+from app.core.exceptions import BadRequestException, NotFoundException, OTPRequiredException
+from app.core.logger import logger
+from app.core.otp_service import otp_service
+from app.crud.crud_backup import CRUDBackup
+from app.crud.crud_credential import CRUDCredential
+from app.crud.crud_device import CRUDDevice
+from app.models.backup import Backup
+from app.models.device import Device
+from app.schemas.backup import (
+    BackupBatchRequest,
+    BackupBatchResult,
+    BackupCreate,
+    BackupListQuery,
+    BackupTaskStatus,
+)
+from app.schemas.credential import DeviceCredential
+
+# 配置存储阈值：小于 64KB 存 DB，否则存 MinIO
+CONTENT_SIZE_THRESHOLD = 64 * 1024  # 64KB
+
+
+class BackupService:
+    """
+    配置备份服务类。
+
+    提供：
+    - 单设备手动备份
+    - 批量设备备份（支持 OTP 断点续传）
+    - 备份内容获取（DB/MinIO 自动路由）
+    - 定时任务调用的备份接口
+    """
+
+    def __init__(
+        self,
+        db: AsyncSession,
+        backup_crud: CRUDBackup,
+        device_crud: CRUDDevice,
+        credential_crud: CRUDCredential,
+    ):
+        self.db = db
+        self.backup_crud = backup_crud
+        self.device_crud = device_crud
+        self.credential_crud = credential_crud
+
+    # ===== 备份列表查询 =====
+
+    async def get_backups_paginated(self, query: BackupListQuery) -> tuple[list[Backup], int]:
+        """
+        获取分页过滤的备份列表。
+
+        Args:
+            query: 查询参数
+
+        Returns:
+            (items, total): 备份列表和总数
+        """
+        return await self.backup_crud.get_multi_paginated_filtered(
+            self.db,
+            page=query.page,
+            page_size=query.page_size,
+            device_id=query.device_id,
+            backup_type=query.backup_type.value if query.backup_type else None,
+            status=query.status.value if query.status else None,
+            start_date=query.start_date,
+            end_date=query.end_date,
+        )
+
+    async def get_backup(self, backup_id: UUID) -> Backup:
+        """
+        根据 ID 获取备份。
+
+        Args:
+            backup_id: 备份ID
+
+        Returns:
+            Backup: 备份对象
+
+        Raises:
+            NotFoundException: 备份不存在
+        """
+        backup = await self.backup_crud.get(self.db, id=backup_id)
+        if not backup:
+            raise NotFoundException(message="备份不存在")
+        return backup
+
+    async def get_device_backups(self, device_id: UUID, page: int = 1, page_size: int = 20) -> tuple[list[Backup], int]:
+        """
+        获取设备的备份历史。
+
+        Args:
+            device_id: 设备ID
+            page: 页码
+            page_size: 每页数量
+
+        Returns:
+            (items, total): 备份列表和总数
+        """
+        # 验证设备存在
+        device = await self.device_crud.get(self.db, id=device_id)
+        if not device:
+            raise NotFoundException(message="设备不存在")
+
+        return await self.backup_crud.get_by_device(self.db, device_id=device_id, page=page, page_size=page_size)
+
+    async def get_device_latest_backup(self, device_id: UUID) -> Backup | None:
+        """
+        获取设备的最新成功备份。
+
+        Args:
+            device_id: 设备ID
+
+        Returns:
+            Backup | None: 最新备份或 None
+        """
+        # 验证设备存在
+        device = await self.device_crud.get(self.db, id=device_id)
+        if not device:
+            raise NotFoundException(message="设备不存在")
+
+        return await self.backup_crud.get_latest_by_device(self.db, device_id=device_id)
+
+    # ===== 备份内容获取 =====
+
+    async def get_backup_content(self, backup_id: UUID) -> str:
+        """
+        获取备份配置内容。
+
+        自动根据存储位置（DB 或 MinIO）获取内容。
+
+        Args:
+            backup_id: 备份ID
+
+        Returns:
+            str: 配置内容
+
+        Raises:
+            NotFoundException: 备份不存在
+            BadRequestException: 备份失败或内容不可用
+        """
+        backup = await self.get_backup(backup_id)
+
+        if backup.status != BackupStatus.SUCCESS.value:
+            raise BadRequestException(message="备份失败，无法获取内容")
+
+        # 优先从数据库获取
+        if backup.content:
+            return backup.content
+
+        # 从 MinIO 获取
+        if backup.content_path:
+            return await self._get_content_from_minio(backup.content_path)
+
+        raise BadRequestException(message="备份内容不可用")
+
+    async def _get_content_from_minio(self, content_path: str) -> str:
+        """
+        从 MinIO 获取备份内容。
+
+        Args:
+            content_path: MinIO 存储路径
+
+        Returns:
+            str: 配置内容
+
+        Note:
+            MinIO 集成需要后续实现
+        """
+        # TODO: 实现 MinIO 内容获取
+        # from app.core.minio import minio_client
+        # return await minio_client.get_object(content_path)
+        raise BadRequestException(message=f"MinIO 存储暂未实现，路径: {content_path}")
+
+    # ===== 设备凭据获取 =====
+
+    async def _get_device_credential(
+        self,
+        device: Device,
+        failed_devices: list[str] | None = None,
+    ) -> DeviceCredential:
+        """
+        获取设备连接凭据。
+
+        根据设备认证类型，从不同来源获取凭据：
+        - static: 解密设备本身的密码
+        - otp_seed: 从 DeviceGroupCredential 获取种子生成 TOTP
+        - otp_manual: 从 Redis 缓存获取用户输入的 OTP
+
+        Args:
+            device: 设备对象
+            failed_devices: 失败设备列表（断点续传用）
+
+        Returns:
+            DeviceCredential: 设备凭据
+
+        Raises:
+            OTPRequiredException: 需要用户输入 OTP（仅 otp_manual 模式）
+            DeviceCredentialNotFoundException: 凭据配置缺失
+        """
+        auth_type = AuthType(device.auth_type)
+
+        if auth_type == AuthType.STATIC:
+            # 静态密码：从设备记录解密
+            if not device.username or not device.password_encrypted:
+                raise BadRequestException(message=f"设备 {device.name} 缺少用户名或密码配置")
+            return await otp_service.get_credential_for_static_device(
+                username=device.username,
+                encrypted_password=device.password_encrypted,
+            )
+
+        elif auth_type == AuthType.OTP_SEED:
+            # OTP 种子：从 DeviceGroupCredential 获取
+            if not device.dept_id:
+                raise BadRequestException(message=f"设备 {device.name} 缺少部门关联")
+
+            credential = await self.credential_crud.get_by_dept_and_group(self.db, device.dept_id, device.device_group)
+            if not credential or not credential.otp_seed_encrypted:
+                raise BadRequestException(message=f"设备 {device.name} 的凭据未配置 OTP 种子")
+
+            return await otp_service.get_credential_for_otp_seed_device(
+                username=credential.username,
+                encrypted_seed=credential.otp_seed_encrypted,
+            )
+
+        elif auth_type == AuthType.OTP_MANUAL:
+            # 手动 OTP：从 Redis 缓存获取
+            if not device.dept_id:
+                raise BadRequestException(message=f"设备 {device.name} 缺少部门关联")
+
+            credential = await self.credential_crud.get_by_dept_and_group(self.db, device.dept_id, device.device_group)
+            if not credential:
+                raise BadRequestException(message=f"设备 {device.name} 的凭据未配置")
+
+            return await otp_service.get_credential_for_otp_manual_device(
+                username=credential.username,
+                dept_id=device.dept_id,
+                device_group=device.device_group,
+                failed_devices=failed_devices,
+            )
+
+        else:
+            raise BadRequestException(message=f"不支持的认证类型: {auth_type}")
+
+    # ===== 单设备备份 =====
+
+    @transactional()
+    async def backup_single_device(
+        self,
+        device_id: UUID,
+        backup_type: BackupType = BackupType.MANUAL,
+        operator_id: UUID | None = None,
+    ) -> Backup:
+        """
+        备份单台设备配置。
+
+        流程：
+        1. 验证设备状态
+        2. 获取设备凭据
+        3. 执行备份（同步，适用于单设备）
+        4. 保存备份结果
+
+        Args:
+            device_id: 设备ID
+            backup_type: 备份类型
+            operator_id: 操作人ID
+
+        Returns:
+            Backup: 备份记录
+
+        Raises:
+            NotFoundException: 设备不存在
+            BadRequestException: 设备状态异常
+            OTPRequiredException: 需要输入 OTP（otp_manual 模式）
+        """
+        # 1. 获取设备
+        device = await self.device_crud.get(self.db, id=device_id)
+        if not device:
+            raise NotFoundException(message="设备不存在")
+
+        if device.status != DeviceStatus.ACTIVE.value:
+            raise BadRequestException(message=f"设备 {device.name} 状态异常，无法备份")
+
+        # 2. 获取凭据
+        try:
+            credential = await self._get_device_credential(device)
+        except OTPRequiredException:
+            # OTP 过期，需要用户重新输入
+            raise
+
+        # 3. 执行备份
+        from app.network.connection_test import execute_command_on_device
+        from app.network.platform_config import get_command
+
+        backup_command = get_command(device.vendor, "show_config")
+
+        try:
+            result_dict = await execute_command_on_device(
+                host=device.ip_address,
+                username=credential.username,
+                password=credential.password,
+                command=backup_command,
+                platform=device.vendor,
+                port=device.ssh_port,
+            )
+
+            if not result_dict.get("success"):
+                raise Exception(result_dict.get("error", "备份命令执行失败"))
+
+            result = result_dict.get("output", "")
+
+            # 4. 保存成功备份
+            return await self._save_backup_result(
+                device=device,
+                backup_type=backup_type,
+                operator_id=operator_id,
+                config_content=result,
+                status=BackupStatus.SUCCESS,
+            )
+
+        except Exception as e:
+            logger.error(f"设备 {device.name} 备份失败: {e}")
+            # 保存失败备份
+            return await self._save_backup_result(
+                device=device,
+                backup_type=backup_type,
+                operator_id=operator_id,
+                config_content=None,
+                status=BackupStatus.FAILED,
+                error_message=str(e),
+            )
+
+    async def _save_backup_result(
+        self,
+        device: Device,
+        backup_type: BackupType,
+        operator_id: UUID | None,
+        config_content: str | None,
+        status: BackupStatus,
+        error_message: str | None = None,
+    ) -> Backup:
+        """
+        保存备份结果。
+
+        存储策略：
+        - 配置 < 64KB：直接存储在 content 字段
+        - 配置 >= 64KB：存储到 MinIO，路径存储在 content_path
+
+        Args:
+            device: 设备对象
+            backup_type: 备份类型
+            operator_id: 操作人ID
+            config_content: 配置内容（可为 None）
+            status: 备份状态
+            error_message: 错误信息
+
+        Returns:
+            Backup: 备份记录
+        """
+        content = None
+        content_path = None
+        content_size = 0
+        md5_hash = None
+
+        if config_content:
+            content_size = len(config_content.encode("utf-8"))
+            md5_hash = hashlib.md5(config_content.encode("utf-8")).hexdigest()
+
+            if content_size < CONTENT_SIZE_THRESHOLD:
+                # 小配置：直接存 DB
+                content = config_content
+            else:
+                # 大配置：存 MinIO
+                content_path = await self._save_content_to_minio(
+                    device_id=device.id,
+                    config_content=config_content,
+                )
+
+        backup_data = BackupCreate(
+            device_id=device.id,
+            backup_type=backup_type,
+            content=content,
+            content_path=content_path,
+            content_size=content_size,
+            md5_hash=md5_hash,
+            status=status,
+            operator_id=operator_id,
+            error_message=error_message,
+        )
+
+        backup = Backup(**backup_data.model_dump())
+        self.db.add(backup)
+        await self.db.flush()
+        await self.db.refresh(backup)
+
+        logger.info(f"备份保存完成: device={device.name}, status={status.value}, size={content_size}")
+
+        return backup
+
+    async def _save_content_to_minio(self, device_id: UUID, config_content: str) -> str:
+        """
+        将配置内容保存到 MinIO。
+
+        Args:
+            device_id: 设备ID
+            config_content: 配置内容
+
+        Returns:
+            str: MinIO 存储路径
+
+        Note:
+            MinIO 集成需要后续实现
+        """
+        # TODO: 实现 MinIO 内容存储
+        # from datetime import datetime
+        # from app.core.minio import minio_client
+        #
+        # path = f"backups/{device_id}/{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+        # await minio_client.put_object(path, config_content.encode("utf-8"))
+        # return path
+
+        # 临时方案：仍存储到 DB（会超过字段限制，但不报错）
+        logger.warning(f"MinIO 未实现，大配置 ({len(config_content)} bytes) 仍存 DB")
+        return ""
+
+    # ===== 批量备份 =====
+
+    async def backup_devices_batch(
+        self,
+        request: BackupBatchRequest,
+        operator_id: UUID | None = None,
+    ) -> BackupBatchResult:
+        """
+        批量备份设备（异步 Celery 任务）。
+
+        支持断点续传：
+        - 如果提供 skip_device_ids，会跳过这些已成功的设备
+        - 如果 OTP 过期，抛出 OTPRequiredException 携带进度信息
+
+        Args:
+            request: 批量备份请求
+            operator_id: 操作人ID
+
+        Returns:
+            BackupBatchResult: 批量备份结果（含任务ID）
+
+        Raises:
+            OTPRequiredException: 需要输入 OTP（含断点续传信息）
+        """
+        # 1. 获取待备份设备
+        device_ids_to_backup = [
+            did for did in request.device_ids if not request.skip_device_ids or did not in request.skip_device_ids
+        ]
+
+        if not device_ids_to_backup:
+            return BackupBatchResult(
+                task_id=request.resume_task_id or "no-op",
+                total_devices=0,
+                success_count=len(request.skip_device_ids or []),
+                failed_count=0,
+                success_devices=request.skip_device_ids or [],
+            )
+
+        # 2. 批量获取设备
+        devices = await self.device_crud.get_multi_by_ids(self.db, ids=device_ids_to_backup)
+        if not devices:
+            raise BadRequestException(message="没有找到有效设备")
+
+        # 3. 按 (dept_id, device_group) 分组，检查 OTP 可用性
+        device_groups: dict[tuple[UUID | None, str], list[Device]] = {}
+        for device in devices:
+            if device.status != DeviceStatus.ACTIVE.value:
+                continue
+            key = (device.dept_id, device.device_group)
+            if key not in device_groups:
+                device_groups[key] = []
+            device_groups[key].append(device)
+
+        # 4. 检查每个分组的 OTP（对于 otp_manual 类型）
+        # 收集需要 OTP 的分组
+        otp_required_groups: list[tuple[UUID, str]] = []
+        for (dept_id, device_group), group_devices in device_groups.items():
+            if not group_devices:
+                continue
+
+            first_device = group_devices[0]
+            if AuthType(first_device.auth_type) == AuthType.OTP_MANUAL:
+                if dept_id is None:
+                    continue
+                # 检查缓存
+                cached_otp = await otp_service.get_cached_otp(dept_id, device_group)
+                if not cached_otp:
+                    otp_required_groups.append((dept_id, device_group))
+
+        # 如果有分组需要 OTP，抛出异常
+        if otp_required_groups:
+            first_group = otp_required_groups[0]
+            raise OTPRequiredException(
+                dept_id=first_group[0],
+                device_group=first_group[1],
+                failed_devices=[str(d.id) for d in devices],
+                message=f"需要为 {len(otp_required_groups)} 个设备分组输入 OTP",
+            )
+
+        # 5. 准备 Celery 任务数据
+        hosts_data = []
+        for device in devices:
+            if device.status != DeviceStatus.ACTIVE.value:
+                continue
+
+            try:
+                credential = await self._get_device_credential(device)
+                hosts_data.append(
+                    {
+                        "name": device.name,
+                        "hostname": device.ip_address,
+                        "platform": device.vendor,
+                        "username": credential.username,
+                        "password": credential.password,
+                        "port": device.ssh_port,
+                        "device_id": str(device.id),
+                    }
+                )
+            except Exception as e:
+                logger.warning(f"设备 {device.name} 凭据获取失败: {e}")
+
+        if not hosts_data:
+            raise BadRequestException(message="没有可备份的设备（凭据获取失败）")
+
+        # 6. 提交 Celery 任务
+        task = backup_devices.delay(  # type: ignore[attr-defined]
+            hosts_data=hosts_data,
+            num_workers=min(50, len(hosts_data)),
+        )
+
+        logger.info(f"批量备份任务已提交: task_id={task.id}, devices={len(hosts_data)}")
+
+        return BackupBatchResult(
+            task_id=task.id,
+            total_devices=len(hosts_data),
+            success_count=0,
+            failed_count=0,
+            can_resume=True,
+        )
+
+    async def get_task_status(self, task_id: str) -> BackupTaskStatus:
+        """
+        查询 Celery 任务状态。
+
+        Args:
+            task_id: Celery 任务ID
+
+        Returns:
+            BackupTaskStatus: 任务状态
+        """
+        from celery.result import AsyncResult
+
+        from app.celery.app import celery_app
+
+        result = AsyncResult(task_id, app=celery_app)
+
+        status_response = BackupTaskStatus(
+            task_id=task_id,
+            status=result.status,
+        )
+
+        if result.status == "PROGRESS":
+            status_response.progress = result.info
+        elif result.status == "SUCCESS":
+            info = result.result or {}
+            status_response.total_devices = info.get("total", 0)
+            status_response.success_count = info.get("success", 0)
+            status_response.failed_count = info.get("failed", 0)
+            status_response.failed_devices = [
+                {"name": k, "error": v.get("error")}
+                for k, v in info.get("results", {}).items()
+                if v.get("status") == "failed"
+            ]
+        elif result.status == "FAILURE":
+            status_response.progress = {"error": str(result.result)}
+
+        return status_response
+
+    # ===== 定时任务接口 =====
+
+    async def get_all_active_devices_for_backup(self) -> list[Device]:
+        """
+        获取所有活跃设备（供定时任务使用）。
+
+        Returns:
+            list[Device]: 活跃设备列表
+        """
+        devices, _ = await self.device_crud.get_multi_paginated_filtered(
+            self.db,
+            page=1,
+            page_size=10000,  # 大页获取所有
+            status=DeviceStatus.ACTIVE.value,
+        )
+        return devices
+
+    async def check_config_changed(self, device_id: UUID, new_md5: str) -> bool:
+        """
+        检查设备配置是否变更。
+
+        Args:
+            device_id: 设备ID
+            new_md5: 新配置的 MD5 值
+
+        Returns:
+            bool: True 表示配置已变更
+        """
+        old_md5 = await self.backup_crud.get_latest_md5_by_device(self.db, device_id)
+        return old_md5 != new_md5

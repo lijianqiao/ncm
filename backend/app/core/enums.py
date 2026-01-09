@@ -60,6 +60,7 @@ class DeviceStatus(str, Enum):
 
     IN_STOCK = "in_stock"  # 在库
     IN_USE = "in_use"  # 在用
+    ACTIVE = "active"  # 活跃（可自动备份）
     MAINTENANCE = "maintenance"  # 维修中
     RETIRED = "retired"  # 报废
 
@@ -82,6 +83,7 @@ class BackupType(str, Enum):
     SCHEDULED = "scheduled"  # 定时备份
     MANUAL = "manual"  # 手动备份
     PRE_CHANGE = "pre_change"  # 变更前备份
+    INCREMENTAL = "incremental"  # 增量备份（配置变更检测触发）
 
 
 class BackupStatus(str, Enum):

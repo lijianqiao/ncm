@@ -73,6 +73,10 @@ class PermissionCode(str, Enum):
     CREDENTIAL_DELETE = "credential:delete"
     CREDENTIAL_USE = "credential:use"
 
+    # NCM 备份权限
+    BACKUP_LIST = "backup:list"
+    BACKUP_CREATE = "backup:create"
+
 
 @dataclass(frozen=True, slots=True)
 class PermissionDef:
@@ -129,6 +133,9 @@ PERMISSION_DEFS: tuple[PermissionDef, ...] = (
     PermissionDef(PermissionCode.CREDENTIAL_UPDATE, "凭据-更新"),
     PermissionDef(PermissionCode.CREDENTIAL_DELETE, "凭据-删除"),
     PermissionDef(PermissionCode.CREDENTIAL_USE, "凭据-使用", "缓存和使用 OTP 验证码"),
+    # NCM 备份权限
+    PermissionDef(PermissionCode.BACKUP_LIST, "备份-列表"),
+    PermissionDef(PermissionCode.BACKUP_CREATE, "备份-创建"),
 )
 
 

@@ -28,6 +28,8 @@ from app.core.db import AsyncSessionLocal
 from app.core.exceptions import ForbiddenException, NotFoundException, UnauthorizedException
 from app.core.logger import logger
 from app.core.token_store import get_user_revoked_after
+from app.crud.crud_backup import CRUDBackup
+from app.crud.crud_backup import backup as backup_crud_global
 from app.crud.crud_credential import CRUDCredential
 from app.crud.crud_credential import credential as credential_crud_global
 from app.crud.crud_dept import CRUDDept
@@ -47,6 +49,7 @@ from app.models.rbac import Role
 from app.models.user import User
 from app.schemas.token import TokenPayload
 from app.services.auth_service import AuthService
+from app.services.backup_service import BackupService
 from app.services.credential_service import CredentialService
 from app.services.dashboard_service import DashboardService
 from app.services.dept_service import DeptService
@@ -409,3 +412,22 @@ def get_credential_service(
 
 DeviceServiceDep = Annotated[DeviceService, Depends(get_device_service)]
 CredentialServiceDep = Annotated[CredentialService, Depends(get_credential_service)]
+
+
+# ----- 备份依赖 -----
+
+
+def get_backup_crud() -> CRUDBackup:
+    return backup_crud_global
+
+
+def get_backup_service(
+    db: SessionDep,
+    backup_crud: Annotated[CRUDBackup, Depends(get_backup_crud)],
+    device_crud: Annotated[CRUDDevice, Depends(get_device_crud)],
+    credential_crud: Annotated[CRUDCredential, Depends(get_credential_crud)],
+) -> BackupService:
+    return BackupService(db, backup_crud, device_crud, credential_crud)
+
+
+BackupServiceDep = Annotated[BackupService, Depends(get_backup_service)]

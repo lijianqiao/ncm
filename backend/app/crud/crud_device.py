@@ -201,6 +201,31 @@ class CRUDDevice(CRUDBase[Device, DeviceCreate, DeviceUpdate]):
 
         return created_devices, failed_items
 
+    async def get_multi_by_ids(
+        self, db: AsyncSession, *, ids: list[UUID]
+    ) -> list[Device]:
+        """
+        通过 ID 列表批量获取设备。
+
+        Args:
+            db: 数据库会话
+            ids: 设备ID列表
+
+        Returns:
+            list[Device]: 设备列表
+        """
+        if not ids:
+            return []
+
+        query = (
+            select(self.model)
+            .options(selectinload(Device.dept))
+            .where(self.model.id.in_(ids))
+            .where(self.model.is_deleted.is_(False))
+        )
+        result = await db.execute(query)
+        return list(result.scalars().all())
+
     async def get_recycle_bin(
         self, db: AsyncSession, *, page: int = 1, page_size: int = 20
     ) -> tuple[list[Device], int]:
