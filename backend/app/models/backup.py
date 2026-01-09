@@ -9,7 +9,7 @@
 import uuid
 from typing import TYPE_CHECKING, Optional
 
-from sqlalchemy import BigInteger, ForeignKey, String, Text
+from sqlalchemy import BigInteger, ForeignKey, Index, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.enums import BackupStatus, BackupType
@@ -24,6 +24,10 @@ class Backup(AuditableModel):
     """配置备份模型。"""
 
     __tablename__ = "ncm_backup"
+    __table_args__ = (
+        Index("ix_ncm_backup_device_time", "device_id", "created_at"),
+        {"comment": "配置备份表"},
+    )
 
     # 关联设备
     device_id: Mapped[uuid.UUID] = mapped_column(
@@ -35,9 +39,7 @@ class Backup(AuditableModel):
 
     # 备份内容
     content: Mapped[str | None] = mapped_column(Text, nullable=True, comment="配置内容(小配置直接存储)")
-    content_path: Mapped[str | None] = mapped_column(
-        String(500), nullable=True, comment="MinIO 存储路径(大配置)"
-    )
+    content_path: Mapped[str | None] = mapped_column(String(500), nullable=True, comment="MinIO 存储路径(大配置)")
     content_size: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False, comment="配置大小(字节)")
 
     # 备份元信息

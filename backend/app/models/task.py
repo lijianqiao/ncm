@@ -12,7 +12,7 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING, Optional
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.dialects.postgresql import JSON
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -29,6 +29,10 @@ class Task(AuditableModel):
     """任务模型。"""
 
     __tablename__ = "ncm_task"
+    __table_args__ = (
+        Index("ix_ncm_task_created_at", "created_at"),
+        {"comment": "任务表"},
+    )
 
     # 任务基本信息
     name: Mapped[str] = mapped_column(String(200), nullable=False, comment="任务名称")

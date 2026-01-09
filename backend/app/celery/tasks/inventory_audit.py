@@ -6,7 +6,6 @@
 @Docs: 资产盘点 Celery 任务。
 """
 
-import asyncio
 from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
@@ -14,7 +13,7 @@ from uuid import UUID
 from sqlalchemy import func, select
 
 from app.celery.app import celery_app
-from app.celery.base import BaseTask
+from app.celery.base import BaseTask, run_async
 from app.core.db import AsyncSessionLocal
 from app.core.enums import InventoryAuditStatus
 from app.core.logger import logger
@@ -26,22 +25,6 @@ from app.models.inventory_audit import InventoryAudit
 from app.services.scan_service import ScanService
 
 
-def _run_async(coro):
-    """在同步 Celery 任务中运行异步代码。"""
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        loop = None
-
-    if loop and loop.is_running():
-        import concurrent.futures
-
-        with concurrent.futures.ThreadPoolExecutor() as pool:
-            future = pool.submit(asyncio.run, coro)
-            return future.result()
-    return asyncio.run(coro)
-
-
 @celery_app.task(
     base=BaseTask,
     bind=True,
@@ -51,7 +34,7 @@ def _run_async(coro):
 def run_inventory_audit(self, audit_id: str) -> dict[str, Any]:
     """执行资产盘点任务（复用 Nmap 扫描 + Discovery/CMDB 比对）。"""
     logger.info("开始资产盘点任务", task_id=self.request.id, audit_id=audit_id)
-    return _run_async(_run_inventory_audit_async(self, audit_id))
+    return run_async(_run_inventory_audit_async(self, audit_id))
 
 
 async def _run_inventory_audit_async(self, audit_id: str) -> dict[str, Any]:

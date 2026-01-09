@@ -8,14 +8,13 @@
 包含离线设备与影子资产的定时告警扫描。
 """
 
-import asyncio
 from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import select
 
 from app.celery.app import celery_app
-from app.celery.base import BaseTask
+from app.celery.base import BaseTask, run_async
 from app.core.config import settings
 from app.core.db import AsyncSessionLocal
 from app.core.enums import AlertSeverity, AlertType, DiscoveryStatus
@@ -25,22 +24,6 @@ from app.models.discovery import Discovery
 from app.schemas.alert import AlertCreate
 from app.services.alert_service import AlertService
 from app.services.notification_service import NotificationService
-
-
-def _run_async(coro):
-    """在同步 Celery 任务中运行异步代码。"""
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        loop = None
-
-    if loop and loop.is_running():
-        import concurrent.futures
-
-        with concurrent.futures.ThreadPoolExecutor() as pool:
-            future = pool.submit(asyncio.run, coro)
-            return future.result()
-    return asyncio.run(coro)
 
 
 @celery_app.task(
@@ -144,7 +127,7 @@ def scheduled_offline_alerts(self) -> dict[str, Any]:
         }
 
     try:
-        result = _run_async(_scan())
+        result = run_async(_scan())
         ended_at = datetime.now(UTC)
         logger.info(
             "告警扫描完成",

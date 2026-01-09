@@ -6,9 +6,51 @@
 @Docs: Celery 基础任务类 (Base Celery Task).
 """
 
+import asyncio
+import concurrent.futures
+from collections.abc import Coroutine
+from typing import Any, TypeVar
+
 from celery import Task
 
 from app.core.logger import logger
+
+T = TypeVar("T")
+
+
+def run_async[T](coro: Coroutine[Any, Any, T]) -> T:
+    """在同步 Celery 任务中运行异步代码。
+
+    智能检测当前是否已有事件循环运行：
+    - 无运行中的事件循环：直接使用 asyncio.run()
+    - 已有事件循环运行：在线程池中执行，避免嵌套循环
+
+    Args:
+        coro: 要执行的异步协程
+
+    Returns:
+        协程的返回值
+
+    Example:
+        @celery_app.task(base=BaseTask)
+        def my_task():
+            async def _async_work():
+                async with AsyncSessionLocal() as db:
+                    return await some_service.do_something(db)
+            return run_async(_async_work())
+    """
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+
+    if loop and loop.is_running():
+        # 已有事件循环运行，在线程池中执行
+        with concurrent.futures.ThreadPoolExecutor() as pool:
+            future = pool.submit(asyncio.run, coro)
+            return future.result()
+    else:
+        return asyncio.run(coro)
 
 
 class BaseTask(Task):

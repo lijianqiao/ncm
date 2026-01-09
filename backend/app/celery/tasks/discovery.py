@@ -5,7 +5,7 @@
 @DateTime: 2026-01-09 23:50:00
 @Docs: 设备发现 Celery 任务 (Discovery Tasks).
 
-包含网络扫描、CMDB 比对等异步任务。
+包含网络扫描、CMDB 比对等异步任务�?
 """
 
 from typing import Any
@@ -32,7 +32,7 @@ def scan_subnet(
     ports: str | None = None,
 ) -> dict[str, Any]:
     """
-    扫描单个网段的 Celery 任务。
+    扫描单个网段�?Celery 任务�?
 
     Args:
         subnet: 网段 (CIDR 格式)
@@ -86,7 +86,7 @@ def scan_subnets_batch(
     ports: str | None = None,
 ) -> dict[str, Any]:
     """
-    批量扫描多个网段。
+    批量扫描多个网段�?
 
     Args:
         subnets: 网段列表
@@ -158,7 +158,7 @@ def scan_subnets_batch(
 )
 def compare_cmdb(self) -> dict[str, Any]:
     """
-    将扫描发现与 CMDB 比对的 Celery 任务。
+    将扫描发现与 CMDB 比对�?Celery 任务�?
 
     Returns:
         比对结果
@@ -195,22 +195,22 @@ def compare_cmdb(self) -> dict[str, Any]:
 )
 def scheduled_network_scan(self) -> dict[str, Any]:
     """
-    定时网络扫描任务 (由 Celery Beat 调度)。
+    定时网络扫描任务 (�?Celery Beat 调度)�?
 
-    扫描预配置的网段列表，并与 CMDB 比对。
+    扫描预配置的网段列表，并�?CMDB 比对�?
 
     Returns:
-        扫描和比对结果
+        扫描和比对结�?
     """
     import asyncio
 
     async def _scheduled_scan():
         # TODO: 从配置或数据库获取待扫描网段列表
-        # 这里先返回空结果，实际使用时应配置网段
+        # 这里先返回空结果，实际使用时应配置网�?
         subnets: list[str] = []
 
         if not subnets:
-            logger.warning("定时扫描：未配置待扫描网段")
+            logger.warning("定时扫描：未配置待扫描网�?)
             return {
                 "task_id": self.request.id,
                 "message": "未配置待扫描网段",
@@ -270,7 +270,7 @@ def scheduled_network_scan(self) -> dict[str, Any]:
 )
 def increment_offline_days(self) -> dict[str, Any]:
     """
-    增加发现记录的离线天数 (每日执行一次)。
+    增加发现记录的离线天�?(每日执行一�?�?
 
     Returns:
         更新结果

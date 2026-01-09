@@ -6,7 +6,6 @@
 @Docs: 安全批量下发 Celery 任务。
 """
 
-import asyncio
 import hashlib
 from datetime import UTC, datetime
 from typing import Any
@@ -15,7 +14,7 @@ from uuid import UUID
 from sqlalchemy import select
 
 from app.celery.app import celery_app
-from app.celery.base import BaseTask
+from app.celery.base import BaseTask, run_async
 from app.core.command_policy import normalize_rendered_config, validate_commands
 from app.core.db import AsyncSessionLocal
 from app.core.enums import AuthType, BackupStatus, BackupType, DeviceStatus, TaskStatus, TaskType
@@ -31,22 +30,6 @@ from app.network.nornir_config import init_nornir
 from app.network.nornir_tasks import aggregate_results, backup_config, deploy_from_host_data
 from app.network.platform_config import get_platform_for_vendor
 from app.services.render_service import RenderService
-
-
-def _run_async(coro):
-    """在同步 Celery 任务中运行异步代码。"""
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        loop = None
-
-    if loop and loop.is_running():
-        import concurrent.futures
-
-        with concurrent.futures.ThreadPoolExecutor() as pool:
-            future = pool.submit(asyncio.run, coro)
-            return future.result()
-    return asyncio.run(coro)
 
 
 async def _get_device_credential(db, device: Device, failed_devices: list[str] | None = None):
@@ -109,7 +92,7 @@ def deploy_task(self, task_id: str) -> dict[str, Any]:
     logger.info("开始下发任务", task_id=self.request.id, deploy_task_id=task_id)
     self.update_state(state="PROGRESS", meta={"stage": "initializing"})
 
-    return _run_async(_deploy_task_async(self, task_id))
+    return run_async(_deploy_task_async(self, task_id))
 
 
 async def _deploy_task_async(self, task_id: str) -> dict[str, Any]:
@@ -270,7 +253,7 @@ async def _deploy_task_async(self, task_id: str) -> dict[str, Any]:
 def rollback_task(self, task_id: str) -> dict[str, Any]:
     """回滚下发任务（best-effort，先限定 H3C）。"""
     logger.info("开始回滚任务", task_id=self.request.id, deploy_task_id=task_id)
-    return _run_async(_rollback_task_async(self, task_id))
+    return run_async(_rollback_task_async(self, task_id))
 
 
 async def _rollback_task_async(self, task_id: str) -> dict[str, Any]:

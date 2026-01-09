@@ -10,7 +10,7 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING, Optional
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.enums import AuthType, DeviceGroup, DeviceStatus, DeviceVendor
@@ -25,6 +25,10 @@ class Device(AuditableModel):
     """网络设备模型。"""
 
     __tablename__ = "ncm_device"
+    __table_args__ = (
+        Index("ix_ncm_device_dept_group", "dept_id", "device_group"),
+        {"comment": "网络设备表"},
+    )
 
     # 基础信息
     name: Mapped[str] = mapped_column(String(100), nullable=False, comment="设备名称/主机名")
@@ -54,7 +58,11 @@ class Device(AuditableModel):
         ForeignKey("sys_dept.id"), nullable=True, index=True, comment="所属部门ID(区域)"
     )
     device_group: Mapped[str] = mapped_column(
-        String(20), default=DeviceGroup.ACCESS.value, nullable=False, index=True, comment="设备分组(core/distribution/access)"
+        String(20),
+        default=DeviceGroup.ACCESS.value,
+        nullable=False,
+        index=True,
+        comment="设备分组(core/distribution/access)",
     )
 
     # 生命周期
@@ -68,12 +76,17 @@ class Device(AuditableModel):
     # 扩展信息
     serial_number: Mapped[str | None] = mapped_column(String(100), nullable=True, comment="序列号")
     os_version: Mapped[str | None] = mapped_column(String(100), nullable=True, comment="操作系统版本")
-    last_backup_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, comment="最后备份时间")
-    last_online_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, comment="最后在线时间")
+    last_backup_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, comment="最后备份时间"
+    )
+    last_online_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, comment="最后在线时间"
+    )
 
     # 关联关系
     dept: Mapped[Optional["Department"]] = relationship("Department", lazy="selectin")
-    backups: Mapped[list["Backup"]] = relationship("Backup", back_populates="device", lazy="selectin")
+    # backups 使用 lazy="raise" 避免意外加载大量备份，需要时显式 selectinload
+    backups: Mapped[list["Backup"]] = relationship("Backup", back_populates="device", lazy="raise")
 
     def __repr__(self) -> str:
         return f"<Device(name={self.name}, ip={self.ip_address}, vendor={self.vendor})>"

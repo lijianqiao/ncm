@@ -10,7 +10,6 @@
 - Beat 调度的定时备份任务
 """
 
-import asyncio
 import difflib
 import hashlib
 from datetime import UTC, datetime
@@ -19,7 +18,7 @@ from typing import Any
 from sqlalchemy import select
 
 from app.celery.app import celery_app
-from app.celery.base import BaseTask
+from app.celery.base import BaseTask, run_async
 from app.core.db import AsyncSessionLocal
 from app.core.enums import AlertSeverity, AlertType, AuthType, BackupStatus, BackupType, DeviceStatus
 from app.core.logger import logger
@@ -39,24 +38,6 @@ from app.services.notification_service import NotificationService
 
 # 存储阈值：小于 64KB 存 DB
 CONTENT_SIZE_THRESHOLD = 64 * 1024
-
-
-def _run_async(coro):
-    """在同步 Celery 任务中运行异步代码。"""
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        loop = None
-
-    if loop and loop.is_running():
-        # 如果已有事件循环运行，创建新循环
-        import concurrent.futures
-
-        with concurrent.futures.ThreadPoolExecutor() as pool:
-            future = pool.submit(asyncio.run, coro)
-            return future.result()
-    else:
-        return asyncio.run(coro)
 
 
 def _normalize_lines(text: str) -> list[str]:
@@ -142,7 +123,7 @@ def backup_devices(self, hosts_data: list[dict[str, Any]], num_workers: int = 50
         summary = aggregate_results(results)
 
         # 保存备份结果到数据库
-        _run_async(_save_backup_results(hosts_data, summary))
+        run_async(_save_backup_results(hosts_data, summary))
 
         self.update_state(
             state="PROGRESS",
@@ -345,7 +326,7 @@ def scheduled_backup_all(self) -> dict[str, Any]:
 
     try:
         # 从数据库获取设备并准备备份数据
-        hosts_data, skipped_devices = _run_async(_get_devices_for_scheduled_backup())
+        hosts_data, skipped_devices = run_async(_get_devices_for_scheduled_backup())
 
         if not hosts_data:
             result = {
@@ -378,7 +359,7 @@ def scheduled_backup_all(self) -> dict[str, Any]:
         summary = aggregate_results(results)
 
         # 保存备份结果
-        _run_async(_save_scheduled_backup_results(hosts_data, summary))
+        run_async(_save_scheduled_backup_results(hosts_data, summary))
 
         end_time = datetime.now(UTC)
         result = {
@@ -534,7 +515,7 @@ def incremental_backup_check(self) -> dict[str, Any]:
 
     try:
         # 执行增量检查
-        check_result = _run_async(_perform_incremental_check(self))
+        check_result = run_async(_perform_incremental_check(self))
 
         end_time = datetime.now(UTC)
         result = {

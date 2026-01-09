@@ -8,6 +8,7 @@
 基于备份内容生成 unified diff，用于配置变更告警与差异查看。
 """
 
+import asyncio
 import difflib
 from uuid import UUID
 
@@ -17,6 +18,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.enums import BackupStatus
 from app.crud.crud_backup import CRUDBackup
 from app.models.backup import Backup
+
+# 大文本阈值：超过此大小使用线程池处理避免阻塞
+LARGE_TEXT_THRESHOLD = 100 * 1024  # 100KB
 
 
 class DiffService:
@@ -66,7 +70,7 @@ class DiffService:
 
     def compute_unified_diff(self, old_text: str, new_text: str, *, context_lines: int = 3) -> str:
         """
-        计算 unified diff。
+        计算 unified diff（同步版本，适用于小文本）。
         """
         old_lines = self._normalize_lines(old_text)
         new_lines = self._normalize_lines(new_text)
@@ -81,8 +85,20 @@ class DiffService:
         )
         return "\n".join(diff_iter)
 
+    async def compute_unified_diff_async(self, old_text: str, new_text: str, *, context_lines: int = 3) -> str:
+        """
+        计算 unified diff（异步版本）。
+
+        对于大文本（超过 100KB），使用线程池执行以避免阻塞事件循环。
+        """
+        total_size = len(old_text) + len(new_text)
+        if total_size > LARGE_TEXT_THRESHOLD:
+            # 大文本使用线程池
+            return await asyncio.to_thread(self.compute_unified_diff, old_text, new_text, context_lines=context_lines)
+        # 小文本直接计算
+        return self.compute_unified_diff(old_text, new_text, context_lines=context_lines)
+
     @staticmethod
     def should_alert(diff_text: str) -> bool:
         """diff 不为空则认为需要告警。"""
         return bool(diff_text.strip())
-

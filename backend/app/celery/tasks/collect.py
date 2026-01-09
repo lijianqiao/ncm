@@ -10,36 +10,17 @@
 - Beat 调度的定时采集任务
 """
 
-import asyncio
 from typing import Any
 from uuid import UUID
 
 from app.celery.app import celery_app
-from app.celery.base import BaseTask
+from app.celery.base import BaseTask, run_async
 from app.core.db import AsyncSessionLocal
 from app.core.logger import logger
 from app.crud.crud_credential import credential as credential_crud
 from app.crud.crud_device import device as device_crud
 from app.schemas.collect import CollectBatchRequest
 from app.services.collect_service import CollectService
-
-
-def _run_async(coro):
-    """在同步 Celery 任务中运行异步代码。"""
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        loop = None
-
-    if loop and loop.is_running():
-        # 如果已有事件循环运行，创建新循环
-        import concurrent.futures
-
-        with concurrent.futures.ThreadPoolExecutor() as pool:
-            future = pool.submit(asyncio.run, coro)
-            return future.result()
-    else:
-        return asyncio.run(coro)
 
 
 @celery_app.task(
@@ -71,7 +52,7 @@ def collect_device_tables(self, device_id: str) -> dict[str, Any]:
             return result.model_dump()
 
     try:
-        result = _run_async(_collect())
+        result = run_async(_collect())
         logger.info(f"采集完成: device_id={device_id}, success={result.get('success')}")
         return result
     except Exception as e:
@@ -123,7 +104,7 @@ def batch_collect_tables(
             return result.model_dump()
 
     try:
-        result = _run_async(_batch_collect())
+        result = run_async(_batch_collect())
         logger.info(
             f"批量采集完成: total={result.get('total_devices')}, "
             f"success={result.get('success_count')}, failed={result.get('failed_count')}"
@@ -167,7 +148,7 @@ def scheduled_collect_all(self) -> dict[str, Any]:
             return result.model_dump()
 
     try:
-        result = _run_async(_collect_all())
+        result = run_async(_collect_all())
         logger.info(
             f"定时采集完成: total={result.get('total_devices')}, "
             f"success={result.get('success_count')}, failed={result.get('failed_count')}"

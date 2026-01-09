@@ -9,7 +9,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, computed_field
 
 from app.core.enums import BackupStatus, BackupType, DeviceGroup
 from app.schemas.device import DeviceResponse
@@ -50,8 +50,15 @@ class BackupResponse(BaseModel):
     # 关联设备（可选）
     device: DeviceResponse | None = None
 
-    # 是否有配置内容（不直接返回内容，需要单独接口获取）
-    has_content: bool = Field(default=False, description="是否有配置内容")
+    # 内部字段（用于计算 has_content）
+    content: str | None = Field(default=None, exclude=True)
+    content_path: str | None = Field(default=None, exclude=True)
+
+    @computed_field
+    @property
+    def has_content(self) -> bool:
+        """是否有配置内容（不直接返回内容，需要单独接口获取）。"""
+        return bool(self.content or self.content_path)
 
     model_config = ConfigDict(from_attributes=True)
 
