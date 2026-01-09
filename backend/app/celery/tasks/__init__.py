@@ -7,6 +7,24 @@
 """
 
 # 导入所有任务模块以确保任务被注册
-from app.celery.tasks import backup, example
+from app.celery.tasks import (
+    alerts,
+    backup,
+    collect,
+    deploy,
+    discovery,
+    example,
+    inventory_audit,
+    topology,
+)
 
-__all__ = ["backup", "example"]
+__all__ = [
+    "alerts",
+    "backup",
+    "collect",
+    "deploy",
+    "discovery",
+    "example",
+    "inventory_audit",
+    "topology",
+]

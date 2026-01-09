@@ -67,7 +67,7 @@ def collect_topology(
 
             return result.model_dump()
 
-    return asyncio.get_event_loop().run_until_complete(_collect())
+    return asyncio.run(_collect())
 
 
 @celery_app.task(
@@ -96,9 +96,7 @@ def collect_device_topology(self, device_id: str) -> dict[str, Any]:
                 redis_client=redis_client,
             )
 
-            result = await topology_service.collect_lldp_all(
-                db, device_ids=[UUID(device_id)]
-            )
+            result = await topology_service.collect_lldp_all(db, device_ids=[UUID(device_id)])
             result.task_id = self.request.id
 
             # 返回单设备结果
@@ -113,7 +111,7 @@ def collect_device_topology(self, device_id: str) -> dict[str, Any]:
                 "error": device_result.error if device_result else "Device not found",
             }
 
-    return asyncio.get_event_loop().run_until_complete(_collect_single())
+    return asyncio.run(_collect_single())
 
 
 @celery_app.task(
@@ -155,7 +153,7 @@ def scheduled_topology_refresh(self) -> dict[str, Any]:
 
             return result.model_dump()
 
-    return asyncio.get_event_loop().run_until_complete(_refresh())
+    return asyncio.run(_refresh())
 
 
 @celery_app.task(
@@ -199,4 +197,4 @@ def build_topology_cache(self) -> dict[str, Any]:
                 "unknown_devices": topology.stats.unknown_devices,
             }
 
-    return asyncio.get_event_loop().run_until_complete(_build_cache())
+    return asyncio.run(_build_cache())

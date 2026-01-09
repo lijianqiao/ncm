@@ -8,7 +8,7 @@
 
 from uuid import UUID
 
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import and_, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from sqlalchemy.sql.elements import ColumnElement
@@ -158,7 +158,7 @@ class CRUDDept(CRUDBase[Department, DeptCreate, DeptUpdate]):
 
     async def get_children_ids(self, db: AsyncSession, *, dept_id: UUID) -> list[UUID]:
         """
-        递归获取所有子部门 ID。
+        使用 PostgreSQL CTE 递归查询获取所有子部门 ID，避免 N+1 查询问题。
 
         Args:
             db: 数据库会话
@@ -167,22 +167,24 @@ class CRUDDept(CRUDBase[Department, DeptCreate, DeptUpdate]):
         Returns:
             所有子部门 ID 列表
         """
-        children_ids: list[UUID] = []
-        await self._collect_children_ids(db, dept_id, children_ids)
-        return children_ids
+        # 使用 CTE 递归查询，一次性获取所有子部门
+        cte_sql = text("""
+            WITH RECURSIVE dept_tree AS (
+                -- 锚定成员：直接子部门
+                SELECT id FROM department
+                WHERE parent_id = :parent_id AND is_deleted = false
 
-    async def _collect_children_ids(self, db: AsyncSession, parent_id: UUID, result: list[UUID]) -> None:
-        """递归收集子部门 ID。"""
-        stmt = select(Department.id).where(
-            and_(
-                Department.parent_id == parent_id,
-                Department.is_deleted == False,  # noqa: E712
+                UNION ALL
+
+                -- 递归成员：子部门的子部门
+                SELECT d.id FROM department d
+                INNER JOIN dept_tree dt ON d.parent_id = dt.id
+                WHERE d.is_deleted = false
             )
-        )
-        rows = await db.execute(stmt)
-        for (child_id,) in rows.fetchall():
-            result.append(child_id)
-            await self._collect_children_ids(db, child_id, result)
+            SELECT id FROM dept_tree
+        """)
+        result = await db.execute(cte_sql, {"parent_id": str(dept_id)})
+        return [UUID(row[0]) for row in result.fetchall()]
 
     async def exists_code(self, db: AsyncSession, *, code: str, exclude_id: UUID | None = None) -> bool:
         """

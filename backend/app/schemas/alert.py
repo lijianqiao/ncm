@@ -9,7 +9,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.core.enums import AlertSeverity, AlertStatus, AlertType
 
@@ -57,8 +57,7 @@ class AlertResponse(BaseModel):
     related_device_name: str | None = None
     related_device_ip: str | None = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class AlertListQuery(BaseModel):
@@ -73,4 +72,3 @@ class AlertListQuery(BaseModel):
     related_device_id: UUID | None = Field(default=None, description="设备筛选")
     start_time: datetime | None = Field(default=None, description="开始时间")
     end_time: datetime | None = Field(default=None, description="结束时间")
-

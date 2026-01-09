@@ -10,11 +10,8 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends
 
-from app.api.deps import CurrentUser, require_permissions
-from app.core.db import AsyncSessionLocal
+from app.api.deps import CollectServiceDep, CurrentUser, require_permissions
 from app.core.permissions import PermissionCode
-from app.crud.crud_credential import credential as credential_crud
-from app.crud.crud_device import device as device_crud
 from app.schemas.collect import (
     ARPTableResponse,
     CollectBatchRequest,
@@ -26,15 +23,8 @@ from app.schemas.collect import (
     MACTableResponse,
 )
 from app.schemas.common import ResponseBase
-from app.services.collect_service import CollectService
 
 router = APIRouter(prefix="/collect", tags=["ARP/MAC采集"])
-
-
-async def get_collect_service():
-    """获取采集服务实例。"""
-    async with AsyncSessionLocal() as db:
-        yield CollectService(db, device_crud, credential_crud)
 
 
 # ===== 手动采集 =====
@@ -49,25 +39,24 @@ async def get_collect_service():
 )
 async def collect_device(
     device_id: UUID,
+    service: CollectServiceDep,
     current_user: CurrentUser,
     request: CollectDeviceRequest | None = None,
 ) -> ResponseBase[DeviceCollectResult]:
     """手动采集单设备。"""
-    async with AsyncSessionLocal() as db:
-        service = CollectService(db, device_crud, credential_crud)
-        collect_arp = request.collect_arp if request else True
-        collect_mac = request.collect_mac if request else True
+    collect_arp = request.collect_arp if request else True
+    collect_mac = request.collect_mac if request else True
 
-        result = await service.collect_device(
-            device_id=device_id,
-            collect_arp=collect_arp,
-            collect_mac=collect_mac,
-        )
+    result = await service.collect_device(
+        device_id=device_id,
+        collect_arp=collect_arp,
+        collect_mac=collect_mac,
+    )
 
-        return ResponseBase(
-            data=result,
-            message="采集完成" if result.success else "采集失败",
-        )
+    return ResponseBase(
+        data=result,
+        message="采集完成" if result.success else "采集失败",
+    )
 
 
 @router.post(
@@ -79,20 +68,19 @@ async def collect_device(
 )
 async def batch_collect(
     request: CollectBatchRequest,
+    service: CollectServiceDep,
     current_user: CurrentUser,
 ) -> ResponseBase[CollectResult]:
     """批量采集设备。
 
     支持传入 OTP 验证码用于需要 OTP 认证的设备。
     """
-    async with AsyncSessionLocal() as db:
-        service = CollectService(db, device_crud, credential_crud)
-        result = await service.batch_collect(request)
+    result = await service.batch_collect(request)
 
-        return ResponseBase(
-            data=result,
-            message=f"批量采集完成: 成功 {result.success_count}/{result.total_devices}",
-        )
+    return ResponseBase(
+        data=result,
+        message=f"批量采集完成: 成功 {result.success_count}/{result.total_devices}",
+    )
 
 
 @router.post(
@@ -173,19 +161,20 @@ async def get_task_status(task_id: str) -> ResponseBase[CollectTaskStatus]:
     summary="获取设备 ARP 表",
     description="获取设备缓存的 ARP 表数据。",
 )
-async def get_device_arp(device_id: UUID) -> ResponseBase[ARPTableResponse]:
+async def get_device_arp(
+    device_id: UUID,
+    service: CollectServiceDep,
+) -> ResponseBase[ARPTableResponse]:
     """获取设备 ARP 表缓存。"""
-    async with AsyncSessionLocal() as db:
-        service = CollectService(db, device_crud, credential_crud)
-        result = await service.get_cached_arp(device_id)
+    result = await service.get_cached_arp(device_id)
 
-        message = f"共 {result.total} 条记录"
-        if result.cached_at:
-            message += f"（缓存于 {result.cached_at.strftime('%Y-%m-%d %H:%M:%S')}）"
-        else:
-            message = "暂无缓存数据，请先执行采集"
+    message = f"共 {result.total} 条记录"
+    if result.cached_at:
+        message += f"（缓存于 {result.cached_at.strftime('%Y-%m-%d %H:%M:%S')}）"
+    else:
+        message = "暂无缓存数据，请先执行采集"
 
-        return ResponseBase(data=result, message=message)
+    return ResponseBase(data=result, message=message)
 
 
 @router.get(
@@ -195,19 +184,20 @@ async def get_device_arp(device_id: UUID) -> ResponseBase[ARPTableResponse]:
     summary="获取设备 MAC 表",
     description="获取设备缓存的 MAC 地址表数据。",
 )
-async def get_device_mac(device_id: UUID) -> ResponseBase[MACTableResponse]:
+async def get_device_mac(
+    device_id: UUID,
+    service: CollectServiceDep,
+) -> ResponseBase[MACTableResponse]:
     """获取设备 MAC 表缓存。"""
-    async with AsyncSessionLocal() as db:
-        service = CollectService(db, device_crud, credential_crud)
-        result = await service.get_cached_mac(device_id)
+    result = await service.get_cached_mac(device_id)
 
-        message = f"共 {result.total} 条记录"
-        if result.cached_at:
-            message += f"（缓存于 {result.cached_at.strftime('%Y-%m-%d %H:%M:%S')}）"
-        else:
-            message = "暂无缓存数据，请先执行采集"
+    message = f"共 {result.total} 条记录"
+    if result.cached_at:
+        message += f"（缓存于 {result.cached_at.strftime('%Y-%m-%d %H:%M:%S')}）"
+    else:
+        message = "暂无缓存数据，请先执行采集"
 
-        return ResponseBase(data=result, message=message)
+    return ResponseBase(data=result, message=message)
 
 
 # ===== IP/MAC 精准定位 =====
@@ -220,7 +210,10 @@ async def get_device_mac(device_id: UUID) -> ResponseBase[MACTableResponse]:
     summary="IP 地址定位",
     description="根据 IP 地址查询所在设备和端口。",
 )
-async def locate_by_ip(ip_address: str) -> ResponseBase[LocateResponse]:
+async def locate_by_ip(
+    ip_address: str,
+    service: CollectServiceDep,
+) -> ResponseBase[LocateResponse]:
     """IP 地址精准定位。
 
     从所有设备的 ARP 缓存中搜索匹配的 IP 地址，返回设备和端口信息。
@@ -228,16 +221,14 @@ async def locate_by_ip(ip_address: str) -> ResponseBase[LocateResponse]:
     Example:
         GET /collect/locate/ip/192.168.1.100
     """
-    async with AsyncSessionLocal() as db:
-        service = CollectService(db, device_crud, credential_crud)
-        result = await service.locate_by_ip(ip_address)
+    result = await service.locate_by_ip(ip_address)
 
-        if result.total > 0:
-            message = f"找到 {result.total} 条匹配记录"
-        else:
-            message = "未找到匹配记录，请确保已采集 ARP 数据"
+    if result.total > 0:
+        message = f"找到 {result.total} 条匹配记录"
+    else:
+        message = "未找到匹配记录，请确保已采集 ARP 数据"
 
-        return ResponseBase(data=result, message=message)
+    return ResponseBase(data=result, message=message)
 
 
 @router.get(
@@ -247,7 +238,10 @@ async def locate_by_ip(ip_address: str) -> ResponseBase[LocateResponse]:
     summary="MAC 地址定位",
     description="根据 MAC 地址查询所在设备和端口。",
 )
-async def locate_by_mac(mac_address: str) -> ResponseBase[LocateResponse]:
+async def locate_by_mac(
+    mac_address: str,
+    service: CollectServiceDep,
+) -> ResponseBase[LocateResponse]:
     """MAC 地址精准定位。
 
     从所有设备的 ARP 和 MAC 缓存中搜索匹配的 MAC 地址，返回设备和端口信息。
@@ -257,13 +251,11 @@ async def locate_by_mac(mac_address: str) -> ResponseBase[LocateResponse]:
         GET /collect/locate/mac/00:11:22:33:44:55
         GET /collect/locate/mac/0011-2233-4455
     """
-    async with AsyncSessionLocal() as db:
-        service = CollectService(db, device_crud, credential_crud)
-        result = await service.locate_by_mac(mac_address)
+    result = await service.locate_by_mac(mac_address)
 
-        if result.total > 0:
-            message = f"找到 {result.total} 条匹配记录"
-        else:
-            message = "未找到匹配记录，请确保已采集 ARP/MAC 数据"
+    if result.total > 0:
+        message = f"找到 {result.total} 条匹配记录"
+    else:
+        message = "未找到匹配记录，请确保已采集 ARP/MAC 数据"
 
-        return ResponseBase(data=result, message=message)
+    return ResponseBase(data=result, message=message)

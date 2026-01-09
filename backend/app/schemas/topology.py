@@ -9,7 +9,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 # ===== 拓扑链路 CRUD =====
 
@@ -54,8 +54,7 @@ class TopologyLinkResponse(TopologyLinkBase):
     source_device_ip: str | None = Field(default=None, description="源设备IP")
     target_device_name: str | None = Field(default=None, description="目标设备名称(CMDB)")
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # ===== vis.js 拓扑数据格式 =====

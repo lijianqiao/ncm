@@ -60,9 +60,7 @@ def scan_subnet(
             # 处理扫描结果
             if result.hosts:
                 result.task_id = self.request.id
-                processed = await scan_service.process_scan_result(
-                    db, scan_result=result, scan_task_id=self.request.id
-                )
+                processed = await scan_service.process_scan_result(db, scan_result=result, scan_task_id=self.request.id)
                 logger.info(
                     "扫描结果处理完成",
                     subnet=subnet,
@@ -72,7 +70,7 @@ def scan_subnet(
 
             return result.model_dump()
 
-    return asyncio.get_event_loop().run_until_complete(_scan())
+    return asyncio.run(_scan())
 
 
 @celery_app.task(
@@ -121,24 +119,26 @@ def scan_subnets_batch(
                     # 处理结果
                     if result.hosts:
                         result.task_id = self.request.id
-                        await scan_service.process_scan_result(
-                            db, scan_result=result, scan_task_id=self.request.id
-                        )
+                        await scan_service.process_scan_result(db, scan_result=result, scan_task_id=self.request.id)
                         total_hosts += result.hosts_found
 
-                    results.append({
-                        "subnet": subnet,
-                        "hosts_found": result.hosts_found,
-                        "error": result.error,
-                    })
+                    results.append(
+                        {
+                            "subnet": subnet,
+                            "hosts_found": result.hosts_found,
+                            "error": result.error,
+                        }
+                    )
 
                 except Exception as e:
                     logger.error(f"扫描网段失败: {subnet}", error=str(e))
-                    results.append({
-                        "subnet": subnet,
-                        "hosts_found": 0,
-                        "error": str(e),
-                    })
+                    results.append(
+                        {
+                            "subnet": subnet,
+                            "hosts_found": 0,
+                            "error": str(e),
+                        }
+                    )
 
         return {
             "task_id": self.request.id,
@@ -147,7 +147,7 @@ def scan_subnets_batch(
             "results": results,
         }
 
-    return asyncio.get_event_loop().run_until_complete(_batch_scan())
+    return asyncio.run(_batch_scan())
 
 
 @celery_app.task(
@@ -184,7 +184,7 @@ def compare_cmdb(self) -> dict[str, Any]:
 
             return result.model_dump()
 
-    return asyncio.get_event_loop().run_until_complete(_compare())
+    return asyncio.run(_compare())
 
 
 @celery_app.task(
@@ -231,20 +231,22 @@ def scheduled_network_scan(self) -> dict[str, Any]:
                     result = await scan_service.nmap_scan(subnet)
                     if result.hosts:
                         result.task_id = self.request.id
-                        await scan_service.process_scan_result(
-                            db, scan_result=result, scan_task_id=self.request.id
-                        )
+                        await scan_service.process_scan_result(db, scan_result=result, scan_task_id=self.request.id)
                         total_hosts += result.hosts_found
-                    scan_results.append({
-                        "subnet": subnet,
-                        "hosts_found": result.hosts_found,
-                    })
+                    scan_results.append(
+                        {
+                            "subnet": subnet,
+                            "hosts_found": result.hosts_found,
+                        }
+                    )
                 except Exception as e:
                     logger.error(f"定时扫描失败: {subnet}", error=str(e))
-                    scan_results.append({
-                        "subnet": subnet,
-                        "error": str(e),
-                    })
+                    scan_results.append(
+                        {
+                            "subnet": subnet,
+                            "error": str(e),
+                        }
+                    )
 
             # 比对 CMDB
             compare_result = await scan_service.compare_with_cmdb(db)
@@ -257,7 +259,7 @@ def scheduled_network_scan(self) -> dict[str, Any]:
                 "compare_result": compare_result.model_dump(),
             }
 
-    return asyncio.get_event_loop().run_until_complete(_scheduled_scan())
+    return asyncio.run(_scheduled_scan())
 
 
 @celery_app.task(
@@ -287,4 +289,4 @@ def increment_offline_days(self) -> dict[str, Any]:
                 "updated_count": count,
             }
 
-    return asyncio.get_event_loop().run_until_complete(_increment())
+    return asyncio.run(_increment())

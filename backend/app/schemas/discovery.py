@@ -6,12 +6,21 @@
 @Docs: 设备发现 Pydantic Schema 定义。
 """
 
+import re
 from datetime import datetime
+from ipaddress import IPv4Address
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.core.enums import DiscoveryStatus
+
+# MAC 地址正则（支持多种格式）
+MAC_REGEX = re.compile(
+    r"^([0-9a-fA-F]{2}[:-]){5}[0-9a-fA-F]{2}$"  # 00:11:22:33:44:55 or 00-11-22-33-44-55
+    r"|^[0-9a-fA-F]{4}\.[0-9a-fA-F]{4}\.[0-9a-fA-F]{4}$"  # 0011.2233.4455
+    r"|^[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}$"  # 0011-2233-4455
+)
 
 # ===== 扫描请求 =====
 
@@ -46,6 +55,26 @@ class ScanHost(BaseModel):
     os_info: str | None = Field(default=None, description="操作系统信息")
     open_ports: dict[int, str] | None = Field(default=None, description="开放端口 {port: service}")
     status: str = Field(default="up", description="主机状态")
+
+    @field_validator("ip_address")
+    @classmethod
+    def validate_ip_address(cls, v: str) -> str:
+        """验证 IP 地址格式。"""
+        try:
+            IPv4Address(v)
+        except ValueError as e:
+            raise ValueError(f"无效的 IP 地址格式: {v}") from e
+        return v
+
+    @field_validator("mac_address")
+    @classmethod
+    def validate_mac_address(cls, v: str | None) -> str | None:
+        """验证 MAC 地址格式。"""
+        if v is None:
+            return v
+        if not MAC_REGEX.match(v):
+            raise ValueError(f"无效的 MAC 地址格式: {v}")
+        return v.upper()
 
 
 class ScanResult(BaseModel):
@@ -85,6 +114,26 @@ class DiscoveryBase(BaseModel):
     hostname: str | None = Field(default=None, description="主机名")
     os_info: str | None = Field(default=None, description="操作系统信息")
 
+    @field_validator("ip_address")
+    @classmethod
+    def validate_ip_address(cls, v: str) -> str:
+        """验证 IP 地址格式。"""
+        try:
+            IPv4Address(v)
+        except ValueError as e:
+            raise ValueError(f"无效的 IP 地址格式: {v}") from e
+        return v
+
+    @field_validator("mac_address")
+    @classmethod
+    def validate_mac_address(cls, v: str | None) -> str | None:
+        """验证 MAC 地址格式。"""
+        if v is None:
+            return v
+        if not MAC_REGEX.match(v):
+            raise ValueError(f"无效的 MAC 地址格式: {v}")
+        return v.upper()
+
 
 class DiscoveryCreate(DiscoveryBase):
     """创建发现记录。"""
@@ -123,8 +172,7 @@ class DiscoveryResponse(DiscoveryBase):
     matched_device_name: str | None = Field(default=None, description="匹配设备名称")
     matched_device_ip: str | None = Field(default=None, description="匹配设备IP")
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class DiscoveryListQuery(BaseModel):

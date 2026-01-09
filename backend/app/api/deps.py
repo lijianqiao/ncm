@@ -65,6 +65,7 @@ from app.schemas.token import TokenPayload
 from app.services.alert_service import AlertService
 from app.services.auth_service import AuthService
 from app.services.backup_service import BackupService
+from app.services.collect_service import CollectService
 from app.services.credential_service import CredentialService
 from app.services.dashboard_service import DashboardService
 from app.services.deploy_service import DeployService
@@ -569,3 +570,17 @@ def get_diff_service(
 
 
 DiffServiceDep = Annotated[DiffService, Depends(get_diff_service)]
+
+
+# ----- ARP/MAC采集依赖 -----
+
+
+def get_collect_service(
+    db: SessionDep,
+    device_crud: Annotated[CRUDDevice, Depends(get_device_crud)],
+    credential_crud: Annotated[CRUDCredential, Depends(get_credential_crud)],
+) -> CollectService:
+    return CollectService(db, device_crud, credential_crud)
+
+
+CollectServiceDep = Annotated[CollectService, Depends(get_collect_service)]
