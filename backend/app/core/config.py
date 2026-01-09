@@ -47,6 +47,10 @@ class Settings(BaseSettings):
     AUTH_COOKIE_SECURE: bool = False  # 生产环境应使用 https 并设为 True
     AUTH_COOKIE_SAMESITE: Literal["lax", "strict", "none"] = "lax"
 
+    # NCM 凭据加密（双密钥体系）
+    NCM_CREDENTIAL_KEY: str = "changethis_credential_key_32b"  # 静态密码加密密钥（32字节）
+    NCM_OTP_SEED_KEY: str = "changethis_otp_seed_key_32byte"  # OTP 种子加密密钥（独立密钥）
+
     # CORS (跨域资源共享)
     BACKEND_CORS_ORIGINS: list[str] = ["*"]
 
