@@ -3,14 +3,88 @@
 @Email: lijianqiao2906@live.com
 @FileName: validators.py
 @DateTime: 2026-01-09 00:00:00
-@Docs: 项目通用校验工具（手机号、密码强度等）。
+@Docs: 项目通用校验工具（手机号、密码强度、IP/MAC地址等）。
 """
 
 import re
 
 import phonenumbers
+from netaddr import EUI, AddrFormatError, IPAddress, mac_unix_expanded
 
 from app.core.config import settings
+
+
+def validate_ip_address(ip: str) -> str:
+    """验证 IP 地址格式（支持 IPv4/IPv6）。
+
+    使用 netaddr 库进行校验，支持多种格式。
+
+    Args:
+        ip: IP 地址字符串
+
+    Returns:
+        标准化后的 IP 地址
+
+    Raises:
+        ValueError: IP 地址格式无效
+    """
+    try:
+        addr = IPAddress(ip)
+        return str(addr)
+    except AddrFormatError as e:
+        raise ValueError(f"无效的 IP 地址格式: {ip}") from e
+
+
+def validate_mac_address(mac: str, *, normalize: bool = True) -> str:
+    """验证 MAC 地址格式。
+
+    使用 netaddr 库进行校验，支持多种格式：
+    - 00:11:22:33:44:55 (冒号分隔)
+    - 00-11-22-33-44-55 (短横线分隔)
+    - 0011.2233.4455 (思科格式)
+    - 0011-2233-4455 (华为格式)
+    - 001122334455 (无分隔符)
+
+    Args:
+        mac: MAC 地址字符串
+        normalize: 是否标准化为大写冒号分隔格式
+
+    Returns:
+        标准化后的 MAC 地址（大写，冒号分隔）
+
+    Raises:
+        ValueError: MAC 地址格式无效
+    """
+    try:
+        eui = EUI(mac)
+        if normalize:
+            # 设置为 unix_expanded 格式（冒号分隔，完整字节）然后转大写
+            eui.dialect = mac_unix_expanded
+            return str(eui).upper()
+        return mac.upper()
+    except AddrFormatError as e:
+        raise ValueError(f"无效的 MAC 地址格式: {mac}") from e
+
+
+def validate_cidr(cidr: str) -> str:
+    """验证 CIDR 网段格式。
+
+    Args:
+        cidr: CIDR 格式网段（如 192.168.1.0/24）
+
+    Returns:
+        标准化后的 CIDR 字符串
+
+    Raises:
+        ValueError: CIDR 格式无效
+    """
+    from netaddr import IPNetwork
+
+    try:
+        network = IPNetwork(cidr)
+        return str(network.cidr)
+    except AddrFormatError as e:
+        raise ValueError(f"无效的 CIDR 格式: {cidr}") from e
 
 
 def validate_password_strength(password: str) -> str:

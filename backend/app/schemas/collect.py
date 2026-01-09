@@ -6,19 +6,12 @@
 @Docs: ARP/MAC 采集 Pydantic Schema 定义。
 """
 
-import re
 from datetime import datetime
-from ipaddress import IPv4Address
 from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator
 
-# MAC 地址正则（支持多种格式）
-MAC_REGEX = re.compile(
-    r"^([0-9a-fA-F]{2}[:-]){5}[0-9a-fA-F]{2}$"  # 00:11:22:33:44:55 or 00-11-22-33-44-55
-    r"|^[0-9a-fA-F]{4}\.[0-9a-fA-F]{4}\.[0-9a-fA-F]{4}$"  # 0011.2233.4455
-    r"|^[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}$"  # 0011-2233-4455
-)
+from app.utils.validators import validate_ip_address, validate_mac_address
 
 # ===== ARP 表相关 =====
 
@@ -36,21 +29,15 @@ class ARPEntry(BaseModel):
 
     @field_validator("ip_address")
     @classmethod
-    def validate_ip_address(cls, v: str) -> str:
+    def validate_ip(cls, v: str) -> str:
         """验证 IP 地址格式。"""
-        try:
-            IPv4Address(v)
-        except ValueError as e:
-            raise ValueError(f"无效的 IP 地址格式: {v}") from e
-        return v
+        return validate_ip_address(v)
 
     @field_validator("mac_address")
     @classmethod
-    def validate_mac_address(cls, v: str) -> str:
+    def validate_mac(cls, v: str) -> str:
         """验证 MAC 地址格式。"""
-        if not MAC_REGEX.match(v):
-            raise ValueError(f"无效的 MAC 地址格式: {v}")
-        return v.upper()
+        return validate_mac_address(v)
 
 
 class ARPTableResponse(BaseModel):
@@ -78,11 +65,9 @@ class MACEntry(BaseModel):
 
     @field_validator("mac_address")
     @classmethod
-    def validate_mac_address(cls, v: str) -> str:
+    def validate_mac(cls, v: str) -> str:
         """验证 MAC 地址格式。"""
-        if not MAC_REGEX.match(v):
-            raise ValueError(f"无效的 MAC 地址格式: {v}")
-        return v.upper()
+        return validate_mac_address(v)
 
 
 class MACTableResponse(BaseModel):
