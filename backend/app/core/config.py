@@ -104,6 +104,10 @@ class Settings(BaseSettings):
     CELERY_BEAT_BACKUP_MINUTE: int = 0  # 每日全量备份时间（分钟，0-59）
     CELERY_BEAT_INCREMENTAL_HOURS: str = "*/4"  # 增量检查间隔（cron 格式）
 
+    # ARP/MAC 采集配置
+    COLLECT_CACHE_TTL: int = 3600  # ARP/MAC 缓存过期时间（秒），默认 1 小时
+    CELERY_BEAT_COLLECT_MINUTE: int = 30  # 定时采集分钟（每小时的第几分钟执行）
+
     @computed_field
     @property
     def CELERY_BROKER_URL(self) -> RedisDsn:

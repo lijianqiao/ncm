@@ -1,0 +1,507 @@
+"""
+@Author: li
+@Email: lijianqiao2906@live.com
+@FileName: collect_service.py
+@DateTime: 2026-01-09 22:10:00
+@Docs: ARP/MAC 采集服务 (Collection Service).
+
+负责从网络设备采集 ARP/MAC 表数据，并缓存到 Redis。
+"""
+
+import asyncio
+import json
+import time
+from datetime import datetime
+from typing import Any
+from uuid import UUID
+
+from scrapli import AsyncScrapli
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.cache import redis_client
+from app.core.config import settings
+from app.core.enums import AuthType, DeviceStatus
+from app.core.exceptions import BadRequestException, NotFoundException
+from app.core.logger import logger
+from app.core.otp_service import otp_service
+from app.crud.crud_credential import CRUDCredential
+from app.crud.crud_device import CRUDDevice
+from app.models.device import Device
+from app.network.platform_config import get_command, get_platform_for_vendor, get_scrapli_options
+from app.network.textfsm_parser import parse_arp_table, parse_mac_table
+from app.schemas.collect import (
+    ARPEntry,
+    ARPTableResponse,
+    CollectBatchRequest,
+    CollectResult,
+    DeviceCollectResult,
+    MACEntry,
+    MACTableResponse,
+)
+
+
+# Redis 键前缀
+ARP_CACHE_PREFIX = "ncm:arp"
+MAC_CACHE_PREFIX = "ncm:mac"
+COLLECT_LAST_PREFIX = "ncm:collect:last"
+
+
+class CollectService:
+    """
+    ARP/MAC 采集服务类。
+    """
+
+    def __init__(self, db: AsyncSession, device_crud: CRUDDevice, credential_crud: CRUDCredential):
+        self.db = db
+        self.device_crud = device_crud
+        self.credential_crud = credential_crud
+
+    # ===== 缓存查询 =====
+
+    async def get_cached_arp(self, device_id: UUID) -> ARPTableResponse:
+        """
+        获取设备缓存的 ARP 表。
+
+        Args:
+            device_id: 设备ID
+
+        Returns:
+            ARPTableResponse: ARP 表响应
+
+        Raises:
+            NotFoundException: 设备不存在
+        """
+        # 验证设备存在
+        device = await self.device_crud.get(self.db, id=device_id)
+        if not device:
+            raise NotFoundException(message="设备不存在")
+
+        entries: list[ARPEntry] = []
+        cached_at: datetime | None = None
+
+        if redis_client:
+            cache_key = f"{ARP_CACHE_PREFIX}:{device_id}"
+            try:
+                cached_data = await redis_client.get(cache_key)
+                if cached_data:
+                    data = json.loads(cached_data)
+                    entries = [ARPEntry(**entry) for entry in data.get("entries", [])]
+                    cached_at = datetime.fromisoformat(data["cached_at"]) if data.get("cached_at") else None
+            except Exception as e:
+                logger.warning(f"读取 ARP 缓存失败: {e}")
+
+        return ARPTableResponse(
+            device_id=device_id,
+            device_name=device.name,
+            entries=entries,
+            total=len(entries),
+            cached_at=cached_at,
+        )
+
+    async def get_cached_mac(self, device_id: UUID) -> MACTableResponse:
+        """
+        获取设备缓存的 MAC 表。
+
+        Args:
+            device_id: 设备ID
+
+        Returns:
+            MACTableResponse: MAC 表响应
+
+        Raises:
+            NotFoundException: 设备不存在
+        """
+        # 验证设备存在
+        device = await self.device_crud.get(self.db, id=device_id)
+        if not device:
+            raise NotFoundException(message="设备不存在")
+
+        entries: list[MACEntry] = []
+        cached_at: datetime | None = None
+
+        if redis_client:
+            cache_key = f"{MAC_CACHE_PREFIX}:{device_id}"
+            try:
+                cached_data = await redis_client.get(cache_key)
+                if cached_data:
+                    data = json.loads(cached_data)
+                    entries = [MACEntry(**entry) for entry in data.get("entries", [])]
+                    cached_at = datetime.fromisoformat(data["cached_at"]) if data.get("cached_at") else None
+            except Exception as e:
+                logger.warning(f"读取 MAC 缓存失败: {e}")
+
+        return MACTableResponse(
+            device_id=device_id,
+            device_name=device.name,
+            entries=entries,
+            total=len(entries),
+            cached_at=cached_at,
+        )
+
+    # ===== 单设备采集 =====
+
+    async def collect_device(
+        self,
+        device_id: UUID,
+        collect_arp: bool = True,
+        collect_mac: bool = True,
+        otp_code: str | None = None,
+    ) -> DeviceCollectResult:
+        """
+        采集单设备的 ARP/MAC 表。
+
+        Args:
+            device_id: 设备ID
+            collect_arp: 是否采集 ARP
+            collect_mac: 是否采集 MAC
+            otp_code: OTP 验证码（如果设备需要）
+
+        Returns:
+            DeviceCollectResult: 采集结果
+        """
+        start_time = time.time()
+
+        # 获取设备信息
+        device = await self.device_crud.get(self.db, id=device_id)
+        if not device:
+            return DeviceCollectResult(
+                device_id=device_id,
+                success=False,
+                error_message="设备不存在",
+            )
+
+        if device.status != DeviceStatus.ACTIVE:
+            return DeviceCollectResult(
+                device_id=device_id,
+                device_name=device.name,
+                success=False,
+                error_message=f"设备状态异常: {device.status}",
+            )
+
+        # 获取凭据
+        try:
+            credential = await self._get_device_credential(device, otp_code)
+        except Exception as e:
+            return DeviceCollectResult(
+                device_id=device_id,
+                device_name=device.name,
+                success=False,
+                error_message=f"获取凭据失败: {str(e)}",
+            )
+
+        # 连接设备并采集
+        platform = get_platform_for_vendor(device.vendor.value if device.vendor else "h3c")
+        scrapli_options = get_scrapli_options(platform)
+
+        device_config = {
+            "host": device.ip_address,
+            "auth_username": credential["username"],
+            "auth_password": credential["password"],
+            "port": device.port or 22,
+            "platform": platform,
+            **scrapli_options,
+        }
+
+        arp_count = 0
+        mac_count = 0
+
+        try:
+            async with AsyncScrapli(**device_config) as conn:
+                # 采集 ARP 表
+                if collect_arp:
+                    arp_cmd = get_command("arp_table", platform)
+                    arp_response = await conn.send_command(arp_cmd)
+                    if not arp_response.failed:
+                        arp_entries = parse_arp_table(platform, arp_response.result)
+                        await self._save_arp_cache(device_id, arp_entries)
+                        arp_count = len(arp_entries)
+                        logger.debug(f"ARP 采集成功: device={device.name}, entries={arp_count}")
+
+                # 采集 MAC 表
+                if collect_mac:
+                    mac_cmd = get_command("mac_table", platform)
+                    mac_response = await conn.send_command(mac_cmd)
+                    if not mac_response.failed:
+                        mac_entries = parse_mac_table(platform, mac_response.result)
+                        await self._save_mac_cache(device_id, mac_entries)
+                        mac_count = len(mac_entries)
+                        logger.debug(f"MAC 采集成功: device={device.name}, entries={mac_count}")
+
+                # 更新最后采集时间
+                await self._update_last_collect_time(device_id)
+
+        except Exception as e:
+            duration_ms = int((time.time() - start_time) * 1000)
+            logger.error(f"采集失败: device={device.name}, error={str(e)}")
+            return DeviceCollectResult(
+                device_id=device_id,
+                device_name=device.name,
+                success=False,
+                error_message=str(e),
+                duration_ms=duration_ms,
+            )
+
+        duration_ms = int((time.time() - start_time) * 1000)
+        logger.info(
+            f"采集完成: device={device.name}, arp={arp_count}, mac={mac_count}, duration={duration_ms}ms"
+        )
+
+        return DeviceCollectResult(
+            device_id=device_id,
+            device_name=device.name,
+            success=True,
+            arp_count=arp_count,
+            mac_count=mac_count,
+            duration_ms=duration_ms,
+        )
+
+    # ===== 批量采集 =====
+
+    async def batch_collect(
+        self,
+        request: CollectBatchRequest,
+        concurrency: int = 10,
+    ) -> CollectResult:
+        """
+        批量采集多台设备的 ARP/MAC 表。
+
+        Args:
+            request: 批量采集请求
+            concurrency: 并发数
+
+        Returns:
+            CollectResult: 采集结果
+        """
+        started_at = datetime.now()
+        semaphore = asyncio.Semaphore(concurrency)
+
+        # 如果提供了 OTP，先缓存
+        if request.otp_code:
+            # 获取设备列表确定需要缓存 OTP 的部门/设备组
+            devices = await self.device_crud.get_multi_by_ids(self.db, ids=request.device_ids)
+            for device in devices:
+                if device.auth_type == AuthType.OTP_MANUAL and device.dept_id and device.device_group:
+                    await otp_service.cache_otp(device.dept_id, device.device_group, request.otp_code)
+
+        async def collect_with_semaphore(device_id: UUID) -> DeviceCollectResult:
+            async with semaphore:
+                return await self.collect_device(
+                    device_id=device_id,
+                    collect_arp=request.collect_arp,
+                    collect_mac=request.collect_mac,
+                )
+
+        tasks = [collect_with_semaphore(device_id) for device_id in request.device_ids]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        # 处理结果
+        device_results: list[DeviceCollectResult] = []
+        success_count = 0
+        failed_count = 0
+
+        for i, result in enumerate(results):
+            if isinstance(result, Exception):
+                device_results.append(
+                    DeviceCollectResult(
+                        device_id=request.device_ids[i],
+                        success=False,
+                        error_message=str(result),
+                    )
+                )
+                failed_count += 1
+            else:
+                device_results.append(result)
+                if result.success:
+                    success_count += 1
+                else:
+                    failed_count += 1
+
+        completed_at = datetime.now()
+        logger.info(
+            f"批量采集完成: total={len(request.device_ids)}, success={success_count}, failed={failed_count}"
+        )
+
+        return CollectResult(
+            total_devices=len(request.device_ids),
+            success_count=success_count,
+            failed_count=failed_count,
+            results=device_results,
+            started_at=started_at,
+            completed_at=completed_at,
+        )
+
+    async def collect_all_active_devices(
+        self,
+        collect_arp: bool = True,
+        collect_mac: bool = True,
+        concurrency: int = 10,
+    ) -> CollectResult:
+        """
+        采集所有活跃设备的 ARP/MAC 表（用于定时任务）。
+
+        Args:
+            collect_arp: 是否采集 ARP
+            collect_mac: 是否采集 MAC
+            concurrency: 并发数
+
+        Returns:
+            CollectResult: 采集结果
+        """
+        # 获取所有活跃设备
+        devices, _ = await self.device_crud.get_multi_paginated_filtered(
+            self.db,
+            page=1,
+            page_size=10000,  # 获取所有
+            status=DeviceStatus.ACTIVE.value,
+        )
+
+        if not devices:
+            logger.info("没有活跃设备，跳过采集")
+            return CollectResult(total_devices=0)
+
+        device_ids = [device.id for device in devices]
+        request = CollectBatchRequest(
+            device_ids=device_ids,
+            collect_arp=collect_arp,
+            collect_mac=collect_mac,
+        )
+
+        return await self.batch_collect(request, concurrency=concurrency)
+
+    # ===== 内部方法 =====
+
+    async def _get_device_credential(self, device: Device, otp_code: str | None = None) -> dict[str, str]:
+        """
+        获取设备连接凭据。
+
+        Returns:
+            dict: {"username": str, "password": str}
+        """
+        if not device.username:
+            raise BadRequestException(message="设备未配置用户名")
+
+        auth_type = device.auth_type or AuthType.STATIC
+
+        if auth_type == AuthType.STATIC:
+            # 静态密码
+            if not device.encrypted_password:
+                raise BadRequestException(message="设备未配置密码")
+            from app.core.encryption import decrypt_password
+            password = decrypt_password(device.encrypted_password)
+            return {"username": device.username, "password": password}
+
+        elif auth_type == AuthType.OTP_SEED:
+            # 自动生成 OTP
+            if not device.encrypted_otp_seed:
+                raise BadRequestException(message="设备未配置 OTP 种子")
+            credential = await otp_service.get_device_credential(
+                auth_type=auth_type,
+                username=device.username,
+                password_or_seed=device.encrypted_otp_seed,
+            )
+            return {"username": credential.username, "password": credential.password}
+
+        elif auth_type == AuthType.OTP_MANUAL:
+            # 手动输入 OTP
+            if otp_code and device.dept_id and device.device_group:
+                # 缓存提供的 OTP
+                await otp_service.cache_otp(device.dept_id, device.device_group, otp_code)
+
+            if not device.dept_id or not device.device_group:
+                raise BadRequestException(message="设备未配置部门或设备组")
+
+            credential = await otp_service.get_device_credential(
+                auth_type=auth_type,
+                username=device.username,
+                dept_id=device.dept_id,
+                device_group=device.device_group,
+                failed_devices=[{"device_id": str(device.id), "device_name": device.name}],
+            )
+            return {"username": credential.username, "password": credential.password}
+
+        else:
+            raise BadRequestException(message=f"不支持的认证类型: {auth_type}")
+
+    async def _save_arp_cache(self, device_id: UUID, entries: list[dict[str, Any]]) -> None:
+        """保存 ARP 表到 Redis 缓存。"""
+        if not redis_client:
+            return
+
+        cache_key = f"{ARP_CACHE_PREFIX}:{device_id}"
+        now = datetime.now()
+
+        # 规范化条目
+        normalized_entries = []
+        for entry in entries:
+            normalized_entries.append({
+                "ip_address": entry.get("ip_address", entry.get("address", "")),
+                "mac_address": entry.get("mac_address", entry.get("mac", "")),
+                "vlan_id": entry.get("vlan_id", entry.get("vlan", "")),
+                "interface": entry.get("interface", entry.get("port", "")),
+                "age": entry.get("age", entry.get("aging", "")),
+                "entry_type": entry.get("type", entry.get("entry_type", "")),
+                "updated_at": now.isoformat(),
+            })
+
+        cache_data = {
+            "entries": normalized_entries,
+            "cached_at": now.isoformat(),
+        }
+
+        try:
+            await redis_client.setex(
+                cache_key,
+                settings.COLLECT_CACHE_TTL,
+                json.dumps(cache_data),
+            )
+        except Exception as e:
+            logger.warning(f"保存 ARP 缓存失败: {e}")
+
+    async def _save_mac_cache(self, device_id: UUID, entries: list[dict[str, Any]]) -> None:
+        """保存 MAC 表到 Redis 缓存。"""
+        if not redis_client:
+            return
+
+        cache_key = f"{MAC_CACHE_PREFIX}:{device_id}"
+        now = datetime.now()
+
+        # 规范化条目
+        normalized_entries = []
+        for entry in entries:
+            normalized_entries.append({
+                "mac_address": entry.get("mac_address", entry.get("destination_address", entry.get("mac", ""))),
+                "vlan_id": entry.get("vlan_id", entry.get("vlan", "")),
+                "interface": entry.get("interface", entry.get("port", entry.get("destination_port", ""))),
+                "entry_type": entry.get("type", entry.get("entry_type", "")),
+                "state": entry.get("state", ""),
+                "updated_at": now.isoformat(),
+            })
+
+        cache_data = {
+            "entries": normalized_entries,
+            "cached_at": now.isoformat(),
+        }
+
+        try:
+            await redis_client.setex(
+                cache_key,
+                settings.COLLECT_CACHE_TTL,
+                json.dumps(cache_data),
+            )
+        except Exception as e:
+            logger.warning(f"保存 MAC 缓存失败: {e}")
+
+    async def _update_last_collect_time(self, device_id: UUID) -> None:
+        """更新设备最后采集时间。"""
+        if not redis_client:
+            return
+
+        cache_key = f"{COLLECT_LAST_PREFIX}:{device_id}"
+        try:
+            await redis_client.setex(
+                cache_key,
+                settings.COLLECT_CACHE_TTL * 2,  # 保留更长时间
+                datetime.now().isoformat(),
+            )
+        except Exception as e:
+            logger.warning(f"更新最后采集时间失败: {e}")

@@ -78,6 +78,10 @@ class PermissionCode(str, Enum):
     BACKUP_CREATE = "backup:create"
     BACKUP_DELETE = "backup:delete"
 
+    # NCM 采集权限
+    COLLECT_EXECUTE = "collect:execute"
+    COLLECT_VIEW = "collect:view"
+
 
 @dataclass(frozen=True, slots=True)
 class PermissionDef:
@@ -138,6 +142,9 @@ PERMISSION_DEFS: tuple[PermissionDef, ...] = (
     PermissionDef(PermissionCode.BACKUP_LIST, "备份-列表"),
     PermissionDef(PermissionCode.BACKUP_CREATE, "备份-创建"),
     PermissionDef(PermissionCode.BACKUP_DELETE, "备份-删除"),
+    # NCM 采集权限
+    PermissionDef(PermissionCode.COLLECT_EXECUTE, "采集-执行", "执行 ARP/MAC 表采集"),
+    PermissionDef(PermissionCode.COLLECT_VIEW, "采集-查看", "查看 ARP/MAC 表缓存数据"),
 )
 
 

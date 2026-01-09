@@ -47,6 +47,7 @@ def create_celery_app() -> Celery:
         # 任务路由
         task_routes={
             "app.celery.tasks.backup.*": {"queue": "backup"},
+            "app.celery.tasks.collect.*": {"queue": "discovery"},
             "app.celery.tasks.discovery.*": {"queue": "discovery"},
             "app.celery.tasks.topology.*": {"queue": "topology"},
         },
@@ -69,6 +70,12 @@ def create_celery_app() -> Celery:
                     hour=settings.CELERY_BEAT_INCREMENTAL_HOURS,
                 ),
                 "options": {"queue": "backup"},
+            },
+            # 定时 ARP/MAC 表采集
+            "hourly-collect-all": {
+                "task": "app.celery.tasks.collect.scheduled_collect_all",
+                "schedule": crontab(minute=settings.CELERY_BEAT_COLLECT_MINUTE),
+                "options": {"queue": "discovery"},
             },
         },
         # Beat 调度器配置

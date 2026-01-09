@@ -887,6 +887,48 @@ is_hidden = true
 permission = "backup:delete"
 parent_key = "backups"
 
+# ---- 采集菜单（collect）----
+
+[[menus]]
+key = "collect"
+title = "ARP/MAC采集"
+name = "Collect"
+path = "/ncm/collect"
+component = "ncm/collect/index"
+icon = "DatabaseSyncOutlined"
+sort = 2040
+type = "MENU"
+is_hidden = false
+parent_key = "ncm"
+
+# ---- 采集权限点（collect:*）----
+
+[[menus]]
+key = "perm_collect_execute"
+title = "采集-执行"
+name = "PermCollectExecute"
+path = ""
+component = ""
+icon = "KeyOutline"
+sort = 2041
+type = "PERMISSION"
+is_hidden = true
+permission = "collect:execute"
+parent_key = "collect"
+
+[[menus]]
+key = "perm_collect_view"
+title = "采集-查看"
+name = "PermCollectView"
+path = ""
+component = ""
+icon = "KeyOutline"
+sort = 2042
+type = "PERMISSION"
+is_hidden = true
+permission = "collect:view"
+parent_key = "collect"
+
 # 角色数据：permissions 会映射到上面菜单的 permission 字段，并绑定到角色 menus。
 
 [[roles]]
@@ -943,6 +985,8 @@ permissions = [
   "backup:list",
   "backup:create",
   "backup:delete",
+  "collect:execute",
+  "collect:view",
 ]
 
 [[roles]]
