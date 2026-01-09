@@ -874,6 +874,19 @@ is_hidden = true
 permission = "backup:create"
 parent_key = "backups"
 
+[[menus]]
+key = "perm_backup_delete"
+title = "备份-删除"
+name = "PermBackupDelete"
+path = ""
+component = ""
+icon = "KeyOutline"
+sort = 2033
+type = "PERMISSION"
+is_hidden = true
+permission = "backup:delete"
+parent_key = "backups"
+
 # 角色数据：permissions 会映射到上面菜单的 permission 字段，并绑定到角色 menus。
 
 [[roles]]
@@ -929,6 +942,7 @@ permissions = [
   "credential:use",
   "backup:list",
   "backup:create",
+  "backup:delete",
 ]
 
 [[roles]]

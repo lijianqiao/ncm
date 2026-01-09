@@ -135,6 +135,23 @@ class BackupService:
 
         return await self.backup_crud.get_latest_by_device(self.db, device_id=device_id)
 
+    @transactional()
+    async def delete_backup(self, backup_id: UUID) -> None:
+        """
+        删除备份（软删除）。
+
+        Args:
+            backup_id: 备份ID
+
+        Raises:
+            NotFoundException: 备份不存在
+        """
+        backup = await self.backup_crud.remove(self.db, id=backup_id)
+        if not backup:
+            raise NotFoundException(message="备份不存在")
+
+        logger.info(f"备份已删除: backup_id={backup_id}")
+
     # ===== 备份内容获取 =====
 
     async def get_backup_content(self, backup_id: UUID) -> str:

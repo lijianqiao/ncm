@@ -6,9 +6,11 @@
 @Docs: 配置备份 API 接口 (Backup API Endpoints).
 """
 
+from io import BytesIO
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query
+from fastapi.responses import StreamingResponse
 
 from app.api.deps import BackupServiceDep, CurrentUser, require_permissions
 from app.core.enums import BackupType
@@ -318,4 +320,73 @@ async def get_device_backup_history(
             page=page,
             page_size=page_size,
         )
+    )
+
+
+# ===== 下载备份配置 =====
+
+
+@router.get(
+    "/{backup_id}/download",
+    dependencies=[Depends(require_permissions([PermissionCode.BACKUP_LIST.value]))],
+    summary="下载备份配置文件",
+    description="将备份配置内容导出为文件下载。",
+)
+async def download_backup_content(
+    backup_id: UUID,
+    service: BackupServiceDep,
+) -> StreamingResponse:
+    """下载备份配置文件。
+
+    返回文件名格式：{设备名称}_{备份时间}.txt
+    """
+    # 获取备份信息
+    backup = await service.get_backup(backup_id)
+    content = await service.get_backup_content(backup_id)
+
+    # 构建文件名
+    device_name = backup.device.name if backup.device else "unknown"
+    backup_time = backup.created_at.strftime("%Y%m%d_%H%M%S")
+    filename = f"{device_name}_{backup_time}.txt"
+
+    # 创建流式响应
+    content_bytes = content.encode("utf-8")
+    stream = BytesIO(content_bytes)
+
+    return StreamingResponse(
+        stream,
+        media_type="text/plain; charset=utf-8",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Content-Length": str(len(content_bytes)),
+        },
+    )
+
+
+# ===== 删除备份 =====
+
+
+@router.delete(
+    "/{backup_id}",
+    response_model=ResponseBase[dict],
+    dependencies=[Depends(require_permissions([PermissionCode.BACKUP_DELETE.value]))],
+    summary="删除备份",
+    description="软删除指定的备份记录。",
+)
+async def delete_backup(
+    backup_id: UUID,
+    service: BackupServiceDep,
+    current_user: CurrentUser,
+) -> ResponseBase[dict]:
+    """删除备份（软删除）。
+
+    Note:
+        - 需要 backup:delete 权限
+        - 执行软删除，数据库记录不会物理删除
+    """
+    await service.delete_backup(backup_id)
+
+    return ResponseBase(
+        data={"id": str(backup_id), "deleted": True},
+        message="备份已删除",
     )

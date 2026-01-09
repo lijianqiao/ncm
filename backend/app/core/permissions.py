@@ -76,6 +76,7 @@ class PermissionCode(str, Enum):
     # NCM 备份权限
     BACKUP_LIST = "backup:list"
     BACKUP_CREATE = "backup:create"
+    BACKUP_DELETE = "backup:delete"
 
 
 @dataclass(frozen=True, slots=True)
@@ -136,6 +137,7 @@ PERMISSION_DEFS: tuple[PermissionDef, ...] = (
     # NCM 备份权限
     PermissionDef(PermissionCode.BACKUP_LIST, "备份-列表"),
     PermissionDef(PermissionCode.BACKUP_CREATE, "备份-创建"),
+    PermissionDef(PermissionCode.BACKUP_DELETE, "备份-删除"),
 )
 
 
