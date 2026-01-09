@@ -931,6 +931,32 @@ is_hidden = false
 permission = ""
 parent_key = "ncm"
 
+[[menus]]
+key = "diff"
+title = "配置差异"
+name = "Diff"
+path = "/ncm/diff"
+component = "/views/ncm/diff/index.vue"
+icon = "GitCompareOutline"
+sort = 2070
+type = "MENU"
+is_hidden = false
+permission = ""
+parent_key = "ncm"
+
+[[menus]]
+key = "alerts"
+title = "告警中心"
+name = "Alerts"
+path = "/ncm/alerts"
+component = "/views/ncm/alerts/index.vue"
+icon = "NotificationsOutline"
+sort = 2080
+type = "MENU"
+is_hidden = false
+permission = ""
+parent_key = "ncm"
+
 # ---- 采集权限点（collect:*）----
 
 [[menus]]
@@ -1041,6 +1067,62 @@ is_hidden = true
 permission = "topology:refresh"
 parent_key = "topology"
 
+# ---- 差异权限点（diff:*）----
+
+[[menus]]
+key = "perm_diff_view"
+title = "差异-查看"
+name = "PermDiffView"
+path = ""
+component = ""
+icon = "KeyOutline"
+sort = 2071
+type = "PERMISSION"
+is_hidden = true
+permission = "diff:view"
+parent_key = "diff"
+
+# ---- 告警权限点（alert:*）----
+
+[[menus]]
+key = "perm_alert_list"
+title = "告警-列表"
+name = "PermAlertList"
+path = ""
+component = ""
+icon = "KeyOutline"
+sort = 2081
+type = "PERMISSION"
+is_hidden = true
+permission = "alert:list"
+parent_key = "alerts"
+
+[[menus]]
+key = "perm_alert_ack"
+title = "告警-确认"
+name = "PermAlertAck"
+path = ""
+component = ""
+icon = "KeyOutline"
+sort = 2082
+type = "PERMISSION"
+is_hidden = true
+permission = "alert:ack"
+parent_key = "alerts"
+
+[[menus]]
+key = "perm_alert_close"
+title = "告警-关闭"
+name = "PermAlertClose"
+path = ""
+component = ""
+icon = "KeyOutline"
+sort = 2083
+type = "PERMISSION"
+is_hidden = true
+permission = "alert:close"
+parent_key = "alerts"
+
 # 角色数据：permissions 会映射到上面菜单的 permission 字段，并绑定到角色 menus。
 
 [[roles]]
@@ -1105,6 +1187,10 @@ permissions = [
   "discovery:delete",
   "topology:view",
   "topology:refresh",
+  "diff:view",
+  "alert:list",
+  "alert:ack",
+  "alert:close",
 ]
 
 [[roles]]

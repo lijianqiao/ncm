@@ -269,6 +269,47 @@ class CRUDBackup(CRUDBase[Backup, BackupCreate, BackupUpdate]):
         result = await db.execute(query)
         return {row.device_id: row.md5_hash for row in result.fetchall()}
 
+    async def get_devices_latest_backup_info(
+        self, db: AsyncSession, device_ids: list[UUID]
+    ) -> dict[UUID, dict]:
+        """
+        批量获取多个设备的最新成功备份信息（用于差异/告警）。
+
+        Returns:
+            dict[UUID, dict]: 设备ID -> {backup_id, md5_hash, content}
+        """
+        if not device_ids:
+            return {}
+
+        from sqlalchemy.sql import func as sql_func
+
+        subquery = (
+            select(
+                self.model.device_id,
+                self.model.id.label("backup_id"),
+                self.model.md5_hash,
+                self.model.content,
+                sql_func.row_number()
+                .over(partition_by=self.model.device_id, order_by=self.model.created_at.desc())
+                .label("rn"),
+            )
+            .where(self.model.device_id.in_(device_ids))
+            .where(self.model.is_deleted.is_(False))
+            .where(self.model.status == "success")
+            .subquery()
+        )
+
+        query = select(
+            subquery.c.device_id, subquery.c.backup_id, subquery.c.md5_hash, subquery.c.content
+        ).where(subquery.c.rn == 1)
+
+        result = await db.execute(query)
+        rows = result.fetchall()
+        return {
+            row.device_id: {"backup_id": row.backup_id, "md5_hash": row.md5_hash, "content": row.content}
+            for row in rows
+        }
+
 
 # 单例实例
 backup = CRUDBackup(Backup)

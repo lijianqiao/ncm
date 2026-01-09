@@ -4,6 +4,7 @@ from .credential import DeviceGroupCredential
 from .dept import Department
 from .device import AuthType, Device, DeviceGroup, DeviceStatus, DeviceVendor
 from .discovery import Discovery, DiscoveryStatus
+from .alert import Alert
 from .log import LoginLog, OperationLog
 from .rbac import Menu, Role, RoleMenu, UserRole
 from .task import ApprovalStatus, Task, TaskStatus, TaskType
@@ -50,6 +51,8 @@ __all__ = [
     # 设备发现
     "Discovery",
     "DiscoveryStatus",
+    # 告警
+    "Alert",
     # 网络拓扑
     "TopologyLink",
 ]

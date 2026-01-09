@@ -30,6 +30,8 @@ from app.core.logger import logger
 from app.core.token_store import get_user_revoked_after
 from app.crud.crud_backup import CRUDBackup
 from app.crud.crud_backup import backup as backup_instance
+from app.crud.crud_alert import CRUDAlert
+from app.crud.crud_alert import alert_crud as alert_instance
 from app.crud.crud_credential import CRUDCredential
 from app.crud.crud_credential import credential as credential_instance
 from app.crud.crud_dept import CRUDDept
@@ -53,10 +55,12 @@ from app.models.rbac import Role
 from app.models.user import User
 from app.schemas.token import TokenPayload
 from app.services.auth_service import AuthService
+from app.services.alert_service import AlertService
 from app.services.backup_service import BackupService
 from app.services.credential_service import CredentialService
 from app.services.dashboard_service import DashboardService
 from app.services.dept_service import DeptService
+from app.services.diff_service import DiffService
 from app.services.device_service import DeviceService
 from app.services.log_service import LogService
 from app.services.menu_service import MenuService
@@ -477,3 +481,30 @@ def get_topology_service(
 
 
 TopologyServiceDep = Annotated[TopologyService, Depends(get_topology_service)]
+
+
+# ----- 差异与告警依赖（Phase 3）-----
+
+
+def get_alert_crud() -> CRUDAlert:
+    return alert_instance
+
+
+def get_alert_service(
+    db: SessionDep,
+    alert_crud: Annotated[CRUDAlert, Depends(get_alert_crud)],
+) -> AlertService:
+    return AlertService(db, alert_crud)
+
+
+AlertServiceDep = Annotated[AlertService, Depends(get_alert_service)]
+
+
+def get_diff_service(
+    db: SessionDep,
+    backup_crud: Annotated[CRUDBackup, Depends(get_backup_crud)],
+) -> DiffService:
+    return DiffService(db, backup_crud)
+
+
+DiffServiceDep = Annotated[DiffService, Depends(get_diff_service)]

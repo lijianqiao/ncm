@@ -119,6 +119,22 @@ class Settings(BaseSettings):
     TOPOLOGY_CACHE_TTL: int = 1800  # 拓扑缓存过期时间（秒），默认 30 分钟
     CELERY_BEAT_TOPOLOGY_HOUR: int = 4  # 定时拓扑刷新小时
 
+    # 告警配置（Phase 3）
+    ALERT_OFFLINE_DAYS_THRESHOLD: int = 3  # 离线告警阈值（天）
+
+    # Webhook 通知（默认不启用）
+    ALERT_WEBHOOK_ENABLED: bool = False
+    ALERT_WEBHOOK_URL: str = ""
+
+    # 邮件通知（仅提供配置项，默认不启用）
+    ALERT_EMAIL_ENABLED: bool = False
+    ALERT_EMAIL_HOST: str = ""
+    ALERT_EMAIL_PORT: int = 25
+    ALERT_EMAIL_USER: str = ""
+    ALERT_EMAIL_PASSWORD: str = ""
+    ALERT_EMAIL_FROM: str = ""
+    ALERT_EMAIL_TO: str = ""
+
     @computed_field
     @property
     def CELERY_BROKER_URL(self) -> RedisDsn:

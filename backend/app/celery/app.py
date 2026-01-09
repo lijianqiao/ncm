@@ -49,6 +49,7 @@ def create_celery_app() -> Celery:
             "app.celery.tasks.backup.*": {"queue": "backup"},
             "app.celery.tasks.collect.*": {"queue": "discovery"},
             "app.celery.tasks.discovery.*": {"queue": "discovery"},
+            "app.celery.tasks.alerts.*": {"queue": "discovery"},
             "app.celery.tasks.topology.*": {"queue": "topology"},
         },
         # 定时任务调度 (Celery Beat)
@@ -57,8 +58,8 @@ def create_celery_app() -> Celery:
             "daily-backup-all": {
                 "task": "app.celery.tasks.backup.scheduled_backup_all",
                 "schedule": crontab(
-                    hour=settings.CELERY_BEAT_BACKUP_HOUR,
-                    minute=settings.CELERY_BEAT_BACKUP_MINUTE,
+                    hour=str(settings.CELERY_BEAT_BACKUP_HOUR),
+                    minute=str(settings.CELERY_BEAT_BACKUP_MINUTE),
                 ),
                 "options": {"queue": "backup"},
             },
@@ -66,7 +67,7 @@ def create_celery_app() -> Celery:
             "incremental-backup-check": {
                 "task": "app.celery.tasks.backup.incremental_backup_check",
                 "schedule": crontab(
-                    minute=0,
+                    minute="0",
                     hour=settings.CELERY_BEAT_INCREMENTAL_HOURS,
                 ),
                 "options": {"queue": "backup"},
@@ -74,29 +75,35 @@ def create_celery_app() -> Celery:
             # 定时 ARP/MAC 表采集
             "hourly-collect-all": {
                 "task": "app.celery.tasks.collect.scheduled_collect_all",
-                "schedule": crontab(minute=settings.CELERY_BEAT_COLLECT_MINUTE),
+                "schedule": crontab(minute=str(settings.CELERY_BEAT_COLLECT_MINUTE)),
                 "options": {"queue": "discovery"},
             },
             # 定时网络扫描
             "daily-network-scan": {
                 "task": "app.celery.tasks.discovery.scheduled_network_scan",
                 "schedule": crontab(
-                    hour=settings.CELERY_BEAT_SCAN_HOUR,
-                    minute=settings.CELERY_BEAT_SCAN_MINUTE,
+                    hour=str(settings.CELERY_BEAT_SCAN_HOUR),
+                    minute=str(settings.CELERY_BEAT_SCAN_MINUTE),
                 ),
                 "options": {"queue": "discovery"},
             },
             # 定时离线天数更新
             "daily-offline-increment": {
                 "task": "app.celery.tasks.discovery.increment_offline_days",
-                "schedule": crontab(hour=0, minute=30),  # 每日 00:30
+                "schedule": crontab(hour="0", minute="30"),  # 每日 00:30
                 "options": {"queue": "discovery"},
             },
             # 定时拓扑刷新
             "daily-topology-refresh": {
                 "task": "app.celery.tasks.topology.scheduled_topology_refresh",
-                "schedule": crontab(hour=settings.CELERY_BEAT_TOPOLOGY_HOUR, minute=0),
+                "schedule": crontab(hour=str(settings.CELERY_BEAT_TOPOLOGY_HOUR), minute="0"),
                 "options": {"queue": "topology"},
+            },
+            # 定时告警扫描（离线/影子资产）
+            "daily-alert-scan": {
+                "task": "app.celery.tasks.alerts.scheduled_offline_alerts",
+                "schedule": crontab(hour="1", minute="0"),
+                "options": {"queue": "discovery"},
             },
         },
         # Beat 调度器配置

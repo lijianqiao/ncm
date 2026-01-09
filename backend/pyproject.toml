@@ -11,6 +11,7 @@ dependencies = [
     "cryptography>=46.0.3",
     "fastapi[standard]>=0.128.0",
     "flower>=2.0.1",
+    "httpx>=0.28.1",
     "nornir>=3.5.0",
     "nornir-scrapli>=2025.1.30",
     "nornir-utils>=0.2.0",

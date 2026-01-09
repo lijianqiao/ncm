@@ -11,6 +11,7 @@
 """
 
 import asyncio
+import difflib
 import hashlib
 from datetime import UTC, datetime
 from typing import Any
@@ -24,13 +25,18 @@ from app.core.db import AsyncSessionLocal
 from app.core.enums import AuthType, BackupStatus, BackupType, DeviceStatus
 from app.core.logger import logger
 from app.core.otp_service import otp_service
+from app.core.enums import AlertSeverity, AlertType
+from app.crud.crud_alert import alert_crud
 from app.crud.crud_backup import backup as backup_crud
 from app.crud.crud_credential import credential as credential_crud
 from app.models.backup import Backup
 from app.models.device import Device
 from app.network.nornir_config import init_nornir
 from app.network.nornir_tasks import aggregate_results, backup_config
+from app.schemas.alert import AlertCreate
 from app.schemas.backup import BackupCreate
+from app.services.alert_service import AlertService
+from app.services.notification_service import NotificationService
 
 # 存储阈值：小于 64KB 存 DB
 CONTENT_SIZE_THRESHOLD = 64 * 1024
@@ -51,6 +57,32 @@ def _run_async(coro):
             return future.result()
     else:
         return asyncio.run(coro)
+
+
+def _normalize_lines(text: str) -> list[str]:
+    """差异预处理：去行尾空白、去空行。"""
+    lines: list[str] = []
+    for line in text.splitlines():
+        s = line.rstrip()
+        if not s:
+            continue
+        lines.append(s)
+    return lines
+
+
+def _compute_unified_diff(old_text: str, new_text: str, context_lines: int = 3) -> str:
+    """计算 unified diff（用于告警详情）。"""
+    old_lines = _normalize_lines(old_text)
+    new_lines = _normalize_lines(new_text)
+    diff_iter = difflib.unified_diff(
+        old_lines,
+        new_lines,
+        fromfile="old",
+        tofile="new",
+        lineterm="",
+        n=context_lines,
+    )
+    return "\n".join(diff_iter)
 
 
 @celery_app.task(
@@ -554,9 +586,9 @@ async def _perform_incremental_check(task) -> dict[str, Any]:
                 "message": "没有可检查的设备",
             }
 
-        # 获取设备的最新备份 MD5
+        # 获取设备的最新备份信息（MD5 + 内容，用于差异与告警）
         device_ids = [UUID(h["device_id"]) for h in hosts_data if h.get("device_id")]
-        old_md5_map = await backup_crud.get_devices_latest_md5(db, device_ids)
+        old_info_map = await backup_crud.get_devices_latest_backup_info(db, device_ids)
 
         total_checked = len(hosts_data)
 
@@ -595,7 +627,10 @@ async def _perform_incremental_check(task) -> dict[str, Any]:
                 continue
 
             new_md5 = hashlib.md5(config.encode("utf-8")).hexdigest()
-            old_md5 = old_md5_map.get(UUID(device_id))
+            old_info = old_info_map.get(UUID(device_id), {})
+            old_md5 = old_info.get("md5_hash")
+            old_backup_id = old_info.get("backup_id")
+            old_content = old_info.get("content") or ""
 
             if old_md5 != new_md5:
                 changed_count += 1
@@ -621,6 +656,37 @@ async def _perform_incremental_check(task) -> dict[str, Any]:
                     db.add(backup)
                     await db.commit()
                     backup_triggered += 1
+
+                    # 触发配置变更告警（写入 DB + 可选 Webhook）
+                    try:
+                        diff_text = ""
+                        if old_content:
+                            diff_text = _compute_unified_diff(old_content, config, context_lines=3)
+
+                        alert_service = AlertService(db, alert_crud)
+                        notification_service = NotificationService()
+                        alert = await alert_service.create_alert(
+                            AlertCreate(
+                                alert_type=AlertType.CONFIG_CHANGE,
+                                severity=AlertSeverity.MEDIUM,
+                                title=f"设备配置变更: {name}",
+                                message=f"检测到设备配置变更: {name}",
+                                details={
+                                    "device_id": str(device_id),
+                                    "device_name": name,
+                                    "old_backup_id": str(old_backup_id) if old_backup_id else None,
+                                    "new_backup_id": str(backup.id),
+                                    "old_md5": old_md5,
+                                    "new_md5": new_md5,
+                                    "diff": diff_text[:8000] if diff_text else "",
+                                },
+                                source="diff",
+                                related_device_id=UUID(device_id),
+                            )
+                        )
+                        await notification_service.send_webhook(alert)
+                    except Exception as e:
+                        logger.warning("配置变更告警触发失败", error=str(e))
 
     return {
         "total_checked": total_checked,

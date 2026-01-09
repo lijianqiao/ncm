@@ -164,3 +164,30 @@ class DiscoveryStatus(str, Enum):
     PENDING = "pending"  # 待确认
     SHADOW = "shadow"  # 影子资产（未在 CMDB 中）
     OFFLINE = "offline"  # CMDB 中存在但扫描未发现
+
+
+# ===== NCM 告警相关枚举 =====
+
+
+class AlertType(str, Enum):
+    """告警类型。"""
+
+    CONFIG_CHANGE = "config_change"  # 配置变更
+    DEVICE_OFFLINE = "device_offline"  # 设备离线
+    SHADOW_ASSET = "shadow_asset"  # 影子资产
+
+
+class AlertSeverity(str, Enum):
+    """告警级别。"""
+
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+
+
+class AlertStatus(str, Enum):
+    """告警状态。"""
+
+    OPEN = "open"
+    ACK = "ack"
+    CLOSED = "closed"

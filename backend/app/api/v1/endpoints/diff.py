@@ -1,0 +1,67 @@
+"""
+@Author: li
+@Email: lijianqiao2906@live.com
+@FileName: diff.py
+@DateTime: 2026-01-10 04:10:00
+@Docs: 配置差异 API 接口 (Diff API).
+"""
+
+from uuid import UUID
+
+from fastapi import APIRouter, Depends
+
+from app.api import deps
+from app.core.permissions import PermissionCode
+from app.schemas.common import ResponseBase
+from app.schemas.diff import DiffResponse
+
+router = APIRouter()
+
+
+@router.get(
+    "/device/{device_id}/latest",
+    response_model=ResponseBase[DiffResponse],
+    summary="获取设备最新配置差异",
+)
+async def get_device_latest_diff(
+    device_id: UUID,
+    diff_service: deps.DiffServiceDep,
+    current_user: deps.CurrentUser,
+    _: deps.User = Depends(deps.require_permissions([PermissionCode.DIFF_VIEW.value])),
+) -> ResponseBase[DiffResponse]:
+    new_bak, old_bak = await diff_service.get_latest_pair(device_id)
+    if not new_bak:
+        return ResponseBase(data=DiffResponse(device_id=device_id, message="暂无备份记录，无法生成差异"))
+    if not old_bak:
+        return ResponseBase(
+            data=DiffResponse(
+                device_id=device_id,
+                new_backup_id=new_bak.id,
+                new_md5=new_bak.md5_hash,
+                message="仅有一份成功备份，暂无可对比的上一版本",
+            )
+        )
+
+    if not old_bak.content or not new_bak.content:
+        return ResponseBase(
+            data=DiffResponse(
+                device_id=device_id,
+                old_backup_id=old_bak.id,
+                new_backup_id=new_bak.id,
+                old_md5=old_bak.md5_hash,
+                new_md5=new_bak.md5_hash,
+                message="备份内容未直存数据库（可能为大配置/MinIO 未集成），暂不支持差异计算",
+            )
+        )
+
+    diff_text = diff_service.compute_unified_diff(old_bak.content, new_bak.content, context_lines=3)
+    return ResponseBase(
+        data=DiffResponse(
+            device_id=device_id,
+            old_backup_id=old_bak.id,
+            new_backup_id=new_bak.id,
+            old_md5=old_bak.md5_hash,
+            new_md5=new_bak.md5_hash,
+            diff=diff_text,
+        )
+    )

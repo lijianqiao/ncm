@@ -92,6 +92,12 @@ class PermissionCode(str, Enum):
     TOPOLOGY_VIEW = "topology:view"
     TOPOLOGY_REFRESH = "topology:refresh"
 
+    # NCM 差异与告警权限（Phase 3）
+    DIFF_VIEW = "diff:view"
+    ALERT_LIST = "alert:list"
+    ALERT_ACK = "alert:ack"
+    ALERT_CLOSE = "alert:close"
+
 
 @dataclass(frozen=True, slots=True)
 class PermissionDef:
@@ -163,6 +169,11 @@ PERMISSION_DEFS: tuple[PermissionDef, ...] = (
     # NCM 拓扑权限
     PermissionDef(PermissionCode.TOPOLOGY_VIEW, "拓扑-查看", "查看网络拓扑"),
     PermissionDef(PermissionCode.TOPOLOGY_REFRESH, "拓扑-刷新", "刷新拓扑数据"),
+    # NCM 差异与告警权限
+    PermissionDef(PermissionCode.DIFF_VIEW, "差异-查看", "查看设备最新配置差异"),
+    PermissionDef(PermissionCode.ALERT_LIST, "告警-列表", "查看告警列表"),
+    PermissionDef(PermissionCode.ALERT_ACK, "告警-确认", "确认告警"),
+    PermissionDef(PermissionCode.ALERT_CLOSE, "告警-关闭", "关闭告警"),
 )
 
 
