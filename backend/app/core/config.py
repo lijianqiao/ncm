@@ -47,9 +47,11 @@ class Settings(BaseSettings):
     AUTH_COOKIE_SECURE: bool = False  # 生产环境应使用 https 并设为 True
     AUTH_COOKIE_SAMESITE: Literal["lax", "strict", "none"] = "lax"
 
-    # NCM 凭据加密（双密钥体系）
-    NCM_CREDENTIAL_KEY: str = "changethis_credential_key_32b"  # 静态密码加密密钥（32字节）
-    NCM_OTP_SEED_KEY: str = "changethis_otp_seed_key_32byte"  # OTP 种子加密密钥（独立密钥）
+    # NCM 凭据加密（双密钥体系，AES-256 需要 32 字节密钥）
+    # 可使用 32 字符 UTF-8 字符串或 64 字符 Hex 编码
+    # 生成方法: python -c "import os; print(os.urandom(32).hex())"
+    NCM_CREDENTIAL_KEY: str = "changethis_credential_key_32b!!"  # 静态密码加密密钥（32字节）
+    NCM_OTP_SEED_KEY: str = "changethis_otp_seed_key_32bytes!"  # OTP 种子加密密钥（独立密钥）
 
     # CORS (跨域资源共享)
     BACKEND_CORS_ORIGINS: list[str] = ["*"]
@@ -159,6 +161,45 @@ class Settings(BaseSettings):
         # 3. 生产/预发环境强制要求配置明确的 CORS 白名单
         if self.ENVIRONMENT in ("production", "staging") and any(str(x) == "*" for x in self.BACKEND_CORS_ORIGINS):
             raise ValueError("[BLOCK] 生产/预发环境禁止将 BACKEND_CORS_ORIGINS 配置为 '*'，请配置具体域名白名单")
+
+        # 4. 检查 NCM 凭据加密密钥
+        ncm_default_keys = [
+            "changethis_credential_key_32b!!",
+            "changethis_otp_seed_key_32bytes!",
+        ]
+
+        def _check_key_length(key: str, name: str) -> None:
+            """验证密钥长度（支持 32 字节 UTF-8 或 64 字符 Hex）。"""
+            # Hex 格式：64 字符 = 32 字节
+            if len(key) == 64:
+                try:
+                    bytes.fromhex(key)
+                    return  # 有效的 Hex 密钥
+                except ValueError:
+                    pass
+            # UTF-8 格式：需要正好 32 字节
+            if len(key.encode("utf-8")) != 32:
+                raise ValueError(
+                    f"[BLOCK] {name} 长度无效：需要 32 字节 UTF-8 字符串或 64 字符 Hex 编码，"
+                    f"当前 {len(key.encode('utf-8'))} 字节"
+                )
+
+        _check_key_length(self.NCM_CREDENTIAL_KEY, "NCM_CREDENTIAL_KEY")
+        _check_key_length(self.NCM_OTP_SEED_KEY, "NCM_OTP_SEED_KEY")
+
+        if self.NCM_CREDENTIAL_KEY in ncm_default_keys:
+            msg = "[安全警告]: NCM_CREDENTIAL_KEY 使用了默认值，请在 .env 中修改。"
+            if self.ENVIRONMENT == "production":
+                raise ValueError(f"[BLOCK] {msg} 生产环境严禁使用默认密钥！")
+            else:
+                logging.getLogger(__name__).warning(msg)
+
+        if self.NCM_OTP_SEED_KEY in ncm_default_keys:
+            msg = "[安全警告]: NCM_OTP_SEED_KEY 使用了默认值，请在 .env 中修改。"
+            if self.ENVIRONMENT == "production":
+                raise ValueError(f"[BLOCK] {msg} 生产环境严禁使用默认密钥！")
+            else:
+                logging.getLogger(__name__).warning(msg)
 
         return self
 
