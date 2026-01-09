@@ -114,3 +114,31 @@ class CollectTaskStatus(BaseModel):
     progress: int = Field(default=0, description="进度百分比")
     result: CollectResult | None = Field(default=None, description="任务结果（完成时）")
     error: str | None = Field(default=None, description="错误信息（失败时）")
+
+
+# ===== IP/MAC 定位相关 =====
+
+
+class LocateMatch(BaseModel):
+    """单条定位匹配结果。"""
+
+    device_id: UUID = Field(..., description="设备ID")
+    device_name: str | None = Field(default=None, description="设备名称")
+    device_ip: str | None = Field(default=None, description="设备管理IP")
+    interface: str | None = Field(default=None, description="接口/端口")
+    vlan_id: str | None = Field(default=None, description="VLAN ID")
+    ip_address: str | None = Field(default=None, description="IP 地址（MAC 查询时返回）")
+    mac_address: str | None = Field(default=None, description="MAC 地址（IP 查询时返回）")
+    entry_type: str | None = Field(default=None, description="条目类型")
+    cached_at: datetime | None = Field(default=None, description="数据缓存时间")
+
+
+class LocateResponse(BaseModel):
+    """定位查询响应。"""
+
+    query: str = Field(..., description="查询的 IP 或 MAC 地址")
+    query_type: str = Field(..., description="查询类型 (ip/mac)")
+    matches: list[LocateMatch] = Field(default_factory=list, description="匹配结果列表")
+    total: int = Field(default=0, description="匹配总数")
+    searched_devices: int = Field(default=0, description="搜索的设备数")
+    search_time_ms: int = Field(default=0, description="搜索耗时（毫秒）")

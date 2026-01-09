@@ -22,6 +22,7 @@ from app.schemas.collect import (
     CollectResult,
     CollectTaskStatus,
     DeviceCollectResult,
+    LocateResponse,
     MACTableResponse,
 )
 from app.schemas.common import ResponseBase
@@ -205,5 +206,64 @@ async def get_device_mac(device_id: UUID) -> ResponseBase[MACTableResponse]:
             message += f"（缓存于 {result.cached_at.strftime('%Y-%m-%d %H:%M:%S')}）"
         else:
             message = "暂无缓存数据，请先执行采集"
+
+        return ResponseBase(data=result, message=message)
+
+
+# ===== IP/MAC 精准定位 =====
+
+
+@router.get(
+    "/locate/ip/{ip_address:path}",
+    response_model=ResponseBase[LocateResponse],
+    dependencies=[Depends(require_permissions([PermissionCode.COLLECT_VIEW.value]))],
+    summary="IP 地址定位",
+    description="根据 IP 地址查询所在设备和端口。",
+)
+async def locate_by_ip(ip_address: str) -> ResponseBase[LocateResponse]:
+    """IP 地址精准定位。
+
+    从所有设备的 ARP 缓存中搜索匹配的 IP 地址，返回设备和端口信息。
+
+    Example:
+        GET /collect/locate/ip/192.168.1.100
+    """
+    async with AsyncSessionLocal() as db:
+        service = CollectService(db, device_crud, credential_crud)
+        result = await service.locate_by_ip(ip_address)
+
+        if result.total > 0:
+            message = f"找到 {result.total} 条匹配记录"
+        else:
+            message = "未找到匹配记录，请确保已采集 ARP 数据"
+
+        return ResponseBase(data=result, message=message)
+
+
+@router.get(
+    "/locate/mac/{mac_address:path}",
+    response_model=ResponseBase[LocateResponse],
+    dependencies=[Depends(require_permissions([PermissionCode.COLLECT_VIEW.value]))],
+    summary="MAC 地址定位",
+    description="根据 MAC 地址查询所在设备和端口。",
+)
+async def locate_by_mac(mac_address: str) -> ResponseBase[LocateResponse]:
+    """MAC 地址精准定位。
+
+    从所有设备的 ARP 和 MAC 缓存中搜索匹配的 MAC 地址，返回设备和端口信息。
+    支持多种 MAC 格式（如 00:11:22:33:44:55、00-11-22-33-44-55、0011.2233.4455）。
+
+    Example:
+        GET /collect/locate/mac/00:11:22:33:44:55
+        GET /collect/locate/mac/0011-2233-4455
+    """
+    async with AsyncSessionLocal() as db:
+        service = CollectService(db, device_crud, credential_crud)
+        result = await service.locate_by_mac(mac_address)
+
+        if result.total > 0:
+            message = f"找到 {result.total} 条匹配记录"
+        else:
+            message = "未找到匹配记录，请确保已采集 ARP/MAC 数据"
 
         return ResponseBase(data=result, message=message)

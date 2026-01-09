@@ -35,6 +35,8 @@ from app.schemas.collect import (
     CollectBatchRequest,
     CollectResult,
     DeviceCollectResult,
+    LocateMatch,
+    LocateResponse,
     MACEntry,
     MACTableResponse,
 )
@@ -505,3 +507,218 @@ class CollectService:
             )
         except Exception as e:
             logger.warning(f"更新最后采集时间失败: {e}")
+
+    # ===== IP/MAC 精准定位 =====
+
+    async def locate_by_ip(self, ip_address: str) -> LocateResponse:
+        """
+        根据 IP 地址定位设备和端口。
+
+        遍历所有设备的 ARP 缓存，查找匹配的 IP 地址。
+
+        Args:
+            ip_address: 要查询的 IP 地址
+
+        Returns:
+            LocateResponse: 定位结果
+        """
+        start_time = time.time()
+        matches: list[LocateMatch] = []
+        searched_devices = 0
+
+        if not redis_client:
+            logger.warning("Redis 未连接，无法执行定位查询")
+            return LocateResponse(
+                query=ip_address,
+                query_type="ip",
+                matches=[],
+                total=0,
+                searched_devices=0,
+                search_time_ms=0,
+            )
+
+        # 获取所有设备
+        devices, _ = await self.device_crud.get_multi_paginated_filtered(
+            self.db,
+            page=1,
+            page_size=10000,
+        )
+
+        # 预加载设备信息映射
+        device_map = {str(d.id): d for d in devices}
+
+        # 扫描所有 ARP 缓存
+        try:
+            async for key in redis_client.scan_iter(match=f"{ARP_CACHE_PREFIX}:*"):
+                searched_devices += 1
+                device_id = key.split(":")[-1]
+                device = device_map.get(device_id)
+
+                cached_data = await redis_client.get(key)
+                if not cached_data:
+                    continue
+
+                data = json.loads(cached_data)
+                entries = data.get("entries", [])
+                cached_at = datetime.fromisoformat(data["cached_at"]) if data.get("cached_at") else None
+
+                # 搜索匹配的 IP
+                for entry in entries:
+                    if entry.get("ip_address", "").lower() == ip_address.lower():
+                        matches.append(LocateMatch(
+                            device_id=UUID(device_id),
+                            device_name=device.name if device else None,
+                            device_ip=device.ip_address if device else None,
+                            interface=entry.get("interface"),
+                            vlan_id=entry.get("vlan_id"),
+                            mac_address=entry.get("mac_address"),
+                            entry_type=entry.get("entry_type"),
+                            cached_at=cached_at,
+                        ))
+
+        except Exception as e:
+            logger.error(f"IP 定位查询失败: {e}")
+
+        search_time_ms = int((time.time() - start_time) * 1000)
+        logger.info(
+            f"IP 定位完成: query={ip_address}, matches={len(matches)}, "
+            f"devices={searched_devices}, time={search_time_ms}ms"
+        )
+
+        return LocateResponse(
+            query=ip_address,
+            query_type="ip",
+            matches=matches,
+            total=len(matches),
+            searched_devices=searched_devices,
+            search_time_ms=search_time_ms,
+        )
+
+    async def locate_by_mac(self, mac_address: str) -> LocateResponse:
+        """
+        根据 MAC 地址定位设备和端口。
+
+        同时搜索 ARP 和 MAC 缓存，合并结果。
+
+        Args:
+            mac_address: 要查询的 MAC 地址
+
+        Returns:
+            LocateResponse: 定位结果
+        """
+        start_time = time.time()
+        matches: list[LocateMatch] = []
+        searched_devices = 0
+
+        if not redis_client:
+            logger.warning("Redis 未连接，无法执行定位查询")
+            return LocateResponse(
+                query=mac_address,
+                query_type="mac",
+                matches=[],
+                total=0,
+                searched_devices=0,
+                search_time_ms=0,
+            )
+
+        # 标准化 MAC 地址格式（支持多种格式搜索）
+        mac_normalized = mac_address.lower().replace("-", "").replace(":", "").replace(".", "")
+
+        def mac_matches(stored_mac: str) -> bool:
+            """检查 MAC 是否匹配（忽略分隔符格式差异）。"""
+            if not stored_mac:
+                return False
+            stored_normalized = stored_mac.lower().replace("-", "").replace(":", "").replace(".", "")
+            return stored_normalized == mac_normalized
+
+        # 获取所有设备
+        devices, _ = await self.device_crud.get_multi_paginated_filtered(
+            self.db,
+            page=1,
+            page_size=10000,
+        )
+
+        # 预加载设备信息映射
+        device_map = {str(d.id): d for d in devices}
+
+        # 用于去重的集合（device_id + interface）
+        found_locations: set[str] = set()
+
+        try:
+            # 1. 搜索 ARP 缓存（可获取 IP 地址）
+            async for key in redis_client.scan_iter(match=f"{ARP_CACHE_PREFIX}:*"):
+                searched_devices += 1
+                device_id = key.split(":")[-1]
+                device = device_map.get(device_id)
+
+                cached_data = await redis_client.get(key)
+                if not cached_data:
+                    continue
+
+                data = json.loads(cached_data)
+                entries = data.get("entries", [])
+                cached_at = datetime.fromisoformat(data["cached_at"]) if data.get("cached_at") else None
+
+                for entry in entries:
+                    if mac_matches(entry.get("mac_address", "")):
+                        location_key = f"{device_id}:{entry.get('interface', '')}"
+                        if location_key not in found_locations:
+                            found_locations.add(location_key)
+                            matches.append(LocateMatch(
+                                device_id=UUID(device_id),
+                                device_name=device.name if device else None,
+                                device_ip=device.ip_address if device else None,
+                                interface=entry.get("interface"),
+                                vlan_id=entry.get("vlan_id"),
+                                ip_address=entry.get("ip_address"),
+                                mac_address=entry.get("mac_address"),
+                                entry_type=entry.get("entry_type"),
+                                cached_at=cached_at,
+                            ))
+
+            # 2. 搜索 MAC 缓存（可能有更精确的端口信息）
+            async for key in redis_client.scan_iter(match=f"{MAC_CACHE_PREFIX}:*"):
+                device_id = key.split(":")[-1]
+                device = device_map.get(device_id)
+
+                cached_data = await redis_client.get(key)
+                if not cached_data:
+                    continue
+
+                data = json.loads(cached_data)
+                entries = data.get("entries", [])
+                cached_at = datetime.fromisoformat(data["cached_at"]) if data.get("cached_at") else None
+
+                for entry in entries:
+                    if mac_matches(entry.get("mac_address", "")):
+                        location_key = f"{device_id}:{entry.get('interface', '')}"
+                        if location_key not in found_locations:
+                            found_locations.add(location_key)
+                            matches.append(LocateMatch(
+                                device_id=UUID(device_id),
+                                device_name=device.name if device else None,
+                                device_ip=device.ip_address if device else None,
+                                interface=entry.get("interface"),
+                                vlan_id=entry.get("vlan_id"),
+                                mac_address=entry.get("mac_address"),
+                                entry_type=entry.get("entry_type") or entry.get("state"),
+                                cached_at=cached_at,
+                            ))
+
+        except Exception as e:
+            logger.error(f"MAC 定位查询失败: {e}")
+
+        search_time_ms = int((time.time() - start_time) * 1000)
+        logger.info(
+            f"MAC 定位完成: query={mac_address}, matches={len(matches)}, "
+            f"devices={searched_devices}, time={search_time_ms}ms"
+        )
+
+        return LocateResponse(
+            query=mac_address,
+            query_type="mac",
+            matches=matches,
+            total=len(matches),
+            searched_devices=searched_devices,
+            search_time_ms=search_time_ms,
+        )
