@@ -1,0 +1,63 @@
+"""
+@Author: li
+@Email: lijianqiao2906@live.com
+@FileName: celery_app.py
+@DateTime: 2026-01-09 11:45:00
+@Docs: Celery 应用配置 (Celery Application Configuration).
+"""
+
+from celery import Celery
+
+from app.core.config import settings
+
+
+def create_celery_app() -> Celery:
+    """
+    创建并配置 Celery 应用实例。
+
+    Returns:
+        Celery: 配置完成的 Celery 应用实例。
+    """
+    celery_app = Celery(
+        "ncm_worker",
+        broker=str(settings.CELERY_BROKER_URL),
+        backend=str(settings.CELERY_RESULT_BACKEND),
+    )
+
+    # Celery 配置
+    celery_app.conf.update(
+        # 任务序列化
+        task_serializer="json",
+        accept_content=["json"],
+        result_serializer="json",
+        # 时区
+        timezone="Asia/Shanghai",
+        enable_utc=True,
+        # 任务配置
+        task_track_started=True,
+        task_time_limit=3600,  # 单个任务最大执行时间 1 小时
+        task_soft_time_limit=3300,  # 软超时 55 分钟，允许任务优雅退出
+        # 结果配置
+        result_expires=86400,  # 结果保留 24 小时
+        result_extended=True,  # 保存更详细的结果信息
+        # Worker 配置
+        worker_prefetch_multiplier=1,  # 每次只预取 1 个任务，适合长时间任务
+        worker_concurrency=4,  # 默认并发数，可通过启动参数覆盖
+        # 任务路由
+        task_routes={
+            "app.tasks.backup.*": {"queue": "backup"},
+            "app.tasks.discovery.*": {"queue": "discovery"},
+            "app.tasks.topology.*": {"queue": "topology"},
+        },
+        # 定时任务调度（后续配置）
+        beat_schedule={},
+    )
+
+    # 自动发现任务模块
+    celery_app.autodiscover_tasks(["app.tasks"])
+
+    return celery_app
+
+
+# 创建全局 Celery 应用实例
+celery_app = create_celery_app()

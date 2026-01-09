@@ -1,0 +1,87 @@
+"""
+@Author: li
+@Email: lijianqiao2906@live.com
+@FileName: session_service.py
+@DateTime: 2026-01-07 00:00:00
+@Docs: 在线会话管理服务（在线列表/强制下线）。
+"""
+
+from datetime import UTC, datetime
+from uuid import UUID
+
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.exceptions import NotFoundException
+from app.core.session_store import list_online_sessions, remove_online_session, remove_online_sessions
+from app.core.token_store import (
+    revoke_user_access_now,
+    revoke_user_refresh,
+    revoke_users_access_now,
+    revoke_users_refresh,
+)
+from app.crud.crud_user import CRUDUser
+from app.schemas.session import OnlineSessionResponse
+
+
+class SessionService:
+    def __init__(self, db: AsyncSession, user_crud: CRUDUser):
+        self.db = db
+        self.user_crud = user_crud
+
+    async def list_online(
+        self, *, page: int = 1, page_size: int = 20, keyword: str | None = None
+    ) -> tuple[list[OnlineSessionResponse], int]:
+        sessions, total = await list_online_sessions(page=page, page_size=page_size, keyword=keyword)
+
+        items: list[OnlineSessionResponse] = []
+        for s in sessions:
+            try:
+                uid = UUID(str(s.user_id))
+            except Exception:
+                continue
+
+            items.append(
+                OnlineSessionResponse(
+                    user_id=uid,
+                    username=s.username,
+                    ip=s.ip,
+                    user_agent=s.user_agent,
+                    login_at=datetime.fromtimestamp(float(s.login_at), tz=UTC),
+                    last_seen_at=datetime.fromtimestamp(float(s.last_seen_at), tz=UTC),
+                )
+            )
+
+        return items, total
+
+    async def kick_user(self, *, user_id: UUID) -> None:
+        user = await self.user_crud.get(self.db, id=user_id)
+        if not user:
+            raise NotFoundException(message="用户不存在")
+
+        await revoke_user_refresh(user_id=str(user_id))
+        await revoke_user_access_now(user_id=str(user_id))
+        await remove_online_session(user_id=str(user_id))
+
+    async def kick_users(self, *, user_ids: list[UUID]) -> tuple[int, list[UUID]]:
+        unique_ids = list(dict.fromkeys(user_ids))
+        if not unique_ids:
+            return 0, []
+
+        # 仅踢存在的用户（避免把错误 ID 当成功）
+        success: list[UUID] = []
+        failed: list[UUID] = []
+
+        for uid in unique_ids:
+            user = await self.user_crud.get(self.db, id=uid)
+            if not user:
+                failed.append(uid)
+            else:
+                success.append(uid)
+
+        if success:
+            str_ids = [str(x) for x in success]
+            await revoke_users_refresh(user_ids=str_ids)
+            await revoke_users_access_now(user_ids=str_ids)
+            await remove_online_sessions(user_ids=str_ids)
+
+        return len(success), failed
