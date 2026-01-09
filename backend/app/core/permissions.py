@@ -82,6 +82,16 @@ class PermissionCode(str, Enum):
     COLLECT_EXECUTE = "collect:execute"
     COLLECT_VIEW = "collect:view"
 
+    # NCM 设备发现权限
+    DISCOVERY_SCAN = "discovery:scan"
+    DISCOVERY_LIST = "discovery:list"
+    DISCOVERY_ADOPT = "discovery:adopt"
+    DISCOVERY_DELETE = "discovery:delete"
+
+    # NCM 拓扑权限
+    TOPOLOGY_VIEW = "topology:view"
+    TOPOLOGY_REFRESH = "topology:refresh"
+
 
 @dataclass(frozen=True, slots=True)
 class PermissionDef:
@@ -145,6 +155,14 @@ PERMISSION_DEFS: tuple[PermissionDef, ...] = (
     # NCM 采集权限
     PermissionDef(PermissionCode.COLLECT_EXECUTE, "采集-执行", "执行 ARP/MAC 表采集"),
     PermissionDef(PermissionCode.COLLECT_VIEW, "采集-查看", "查看 ARP/MAC 表缓存数据"),
+    # NCM 设备发现权限
+    PermissionDef(PermissionCode.DISCOVERY_SCAN, "发现-扫描", "执行网络扫描"),
+    PermissionDef(PermissionCode.DISCOVERY_LIST, "发现-列表", "查看发现记录"),
+    PermissionDef(PermissionCode.DISCOVERY_ADOPT, "发现-纳管", "将发现设备纳管到 CMDB"),
+    PermissionDef(PermissionCode.DISCOVERY_DELETE, "发现-删除", "删除发现记录"),
+    # NCM 拓扑权限
+    PermissionDef(PermissionCode.TOPOLOGY_VIEW, "拓扑-查看", "查看网络拓扑"),
+    PermissionDef(PermissionCode.TOPOLOGY_REFRESH, "拓扑-刷新", "刷新拓扑数据"),
 )
 
 

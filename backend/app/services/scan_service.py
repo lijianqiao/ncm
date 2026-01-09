@@ -1,0 +1,550 @@
+"""
+@Author: li
+@Email: lijianqiao2906@live.com
+@FileName: scan_service.py
+@DateTime: 2026-01-09 23:30:00
+@Docs: 网络扫描服务 (Scan Service).
+
+提供 Nmap/Masscan 扫描功能，以及扫描结果与 CMDB 比对。
+"""
+
+import asyncio
+import subprocess
+from datetime import datetime
+from typing import Any
+from uuid import UUID
+
+import nmap
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.config import settings
+from app.core.decorator import transactional
+from app.core.enums import DeviceGroup, DeviceStatus, DeviceVendor, DiscoveryStatus
+from app.core.logger import logger
+from app.crud.crud_device import CRUDDevice
+from app.crud.crud_discovery import CRUDDiscovery
+from app.models.device import Device
+from app.models.discovery import Discovery
+from app.schemas.discovery import (
+    CMDBCompareResult,
+    DiscoveryCreate,
+    OfflineDevice,
+    ScanHost,
+    ScanResult,
+)
+
+
+class ScanService:
+    """网络扫描服务类。"""
+
+    def __init__(
+        self,
+        discovery_crud: CRUDDiscovery,
+        device_crud: CRUDDevice,
+    ):
+        self.discovery_crud = discovery_crud
+        self.device_crud = device_crud
+
+    async def nmap_scan(
+        self,
+        subnet: str,
+        ports: str | None = None,
+        arguments: str = "-sS -sV -O --host-timeout 30s",
+    ) -> ScanResult:
+        """
+        使用 Nmap 扫描网段。
+
+        Args:
+            subnet: 网段 (CIDR 格式)
+            ports: 扫描端口 (如 "22,23,80,443")
+            arguments: Nmap 参数
+
+        Returns:
+            ScanResult: 扫描结果
+        """
+        started_at = datetime.now()
+        result = ScanResult(
+            subnet=subnet,
+            scan_type="nmap",
+            started_at=started_at,
+        )
+
+        try:
+            # 在线程池中运行 nmap 扫描 (避免阻塞事件循环)
+            scan_result = await asyncio.get_event_loop().run_in_executor(
+                None,
+                self._run_nmap_scan,
+                subnet,
+                ports or settings.SCAN_DEFAULT_PORTS,
+                arguments,
+            )
+
+            # 解析扫描结果
+            hosts = self._parse_nmap_result(scan_result)
+            result.hosts = hosts
+            result.hosts_found = len(hosts)
+            result.completed_at = datetime.now()
+            result.duration_seconds = int((result.completed_at - started_at).total_seconds())
+
+        except Exception as e:
+            logger.error(f"Nmap 扫描失败: {subnet}", error=str(e))
+            result.error = str(e)
+            result.completed_at = datetime.now()
+
+        return result
+
+    def _run_nmap_scan(self, subnet: str, ports: str, arguments: str) -> dict[str, Any]:
+        """
+        运行 Nmap 扫描 (同步方法，在线程池中执行)。
+
+        Args:
+            subnet: 网段
+            ports: 端口
+            arguments: Nmap 参数
+
+        Returns:
+            扫描结果字典
+        """
+        nm = nmap.PortScanner()
+        nm.scan(hosts=subnet, ports=ports, arguments=arguments, timeout=settings.SCAN_TIMEOUT)
+        return {
+            "hosts": nm.all_hosts(),
+            "scan_info": nm.scaninfo(),
+            "scan_stats": nm.scanstats(),
+            "csv": nm.csv(),
+            "raw": {host: nm[host] for host in nm.all_hosts()},
+        }
+
+    def _parse_nmap_result(self, scan_result: dict[str, Any]) -> list[ScanHost]:
+        """
+        解析 Nmap 扫描结果。
+
+        Args:
+            scan_result: Nmap 原始结果
+
+        Returns:
+            ScanHost 列表
+        """
+        hosts: list[ScanHost] = []
+        raw_data = scan_result.get("raw", {})
+
+        for ip, host_data in raw_data.items():
+            # 获取 MAC 地址和厂商
+            mac_address = None
+            vendor = None
+            addresses = host_data.get("addresses", {})
+            if "mac" in addresses:
+                mac_address = addresses["mac"]
+            vendor_info = host_data.get("vendor", {})
+            if mac_address and mac_address in vendor_info:
+                vendor = vendor_info[mac_address]
+
+            # 获取主机名
+            hostname = None
+            hostnames = host_data.get("hostnames", [])
+            if hostnames and hostnames[0].get("name"):
+                hostname = hostnames[0]["name"]
+
+            # 获取操作系统信息
+            os_info = None
+            osmatch = host_data.get("osmatch", [])
+            if osmatch:
+                os_info = osmatch[0].get("name", "")
+
+            # 获取开放端口
+            open_ports: dict[int, str] = {}
+            for proto in ["tcp", "udp"]:
+                if proto in host_data:
+                    for port, port_data in host_data[proto].items():
+                        if port_data.get("state") == "open":
+                            service = port_data.get("name", "unknown")
+                            open_ports[int(port)] = service
+
+            # 获取状态
+            status = host_data.get("status", {}).get("state", "unknown")
+
+            hosts.append(
+                ScanHost(
+                    ip_address=ip,
+                    mac_address=mac_address,
+                    hostname=hostname,
+                    vendor=vendor,
+                    os_info=os_info,
+                    open_ports=open_ports if open_ports else None,
+                    status=status,
+                )
+            )
+
+        return hosts
+
+    async def masscan_scan(
+        self,
+        subnet: str,
+        ports: str | None = None,
+        rate: int | None = None,
+    ) -> ScanResult:
+        """
+        使用 Masscan 快速扫描网段 (仅存活探测)。
+
+        Args:
+            subnet: 网段 (CIDR 格式)
+            ports: 扫描端口
+            rate: 扫描速率 (packets/sec)
+
+        Returns:
+            ScanResult: 扫描结果
+        """
+        started_at = datetime.now()
+        result = ScanResult(
+            subnet=subnet,
+            scan_type="masscan",
+            started_at=started_at,
+        )
+
+        try:
+            ports = ports or settings.SCAN_DEFAULT_PORTS
+            rate = rate or settings.SCAN_RATE
+
+            # 在线程池中运行 masscan
+            hosts = await asyncio.get_event_loop().run_in_executor(
+                None,
+                self._run_masscan,
+                subnet,
+                ports,
+                rate,
+            )
+
+            result.hosts = hosts
+            result.hosts_found = len(hosts)
+            result.completed_at = datetime.now()
+            result.duration_seconds = int((result.completed_at - started_at).total_seconds())
+
+        except Exception as e:
+            logger.error(f"Masscan 扫描失败: {subnet}", error=str(e))
+            result.error = str(e)
+            result.completed_at = datetime.now()
+
+        return result
+
+    def _run_masscan(self, subnet: str, ports: str, rate: int) -> list[ScanHost]:
+        """
+        运行 Masscan 扫描 (同步方法)。
+
+        Args:
+            subnet: 网段
+            ports: 端口
+            rate: 速率
+
+        Returns:
+            ScanHost 列表
+        """
+        hosts: list[ScanHost] = []
+
+        try:
+            # 构建 masscan 命令
+            cmd = [
+                "masscan",
+                subnet,
+                "-p",
+                ports,
+                "--rate",
+                str(rate),
+                "-oG",
+                "-",  # Grepable 输出到 stdout
+            ]
+
+            # 执行命令
+            process = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=settings.SCAN_TIMEOUT,
+            )
+
+            # 解析输出
+            for line in process.stdout.splitlines():
+                if line.startswith("Host:"):
+                    parts = line.split()
+                    if len(parts) >= 2:
+                        ip = parts[1]
+                        # 解析端口
+                        open_ports: dict[int, str] = {}
+                        if "Ports:" in line:
+                            port_section = line.split("Ports:")[1].strip()
+                            for port_info in port_section.split(","):
+                                port_parts = port_info.strip().split("/")
+                                if len(port_parts) >= 1:
+                                    try:
+                                        port = int(port_parts[0])
+                                        open_ports[port] = "unknown"
+                                    except ValueError:
+                                        pass
+
+                        hosts.append(
+                            ScanHost(
+                                ip_address=ip,
+                                open_ports=open_ports if open_ports else None,
+                                status="up",
+                            )
+                        )
+
+        except subprocess.TimeoutExpired:
+            logger.warning(f"Masscan 超时: {subnet}")
+        except FileNotFoundError as e:
+            logger.error("Masscan 未安装或不在 PATH 中")
+            raise RuntimeError("Masscan 未安装，请先安装 masscan") from e
+
+        return hosts
+
+    @transactional()
+    async def process_scan_result(
+        self,
+        db: AsyncSession,
+        scan_result: ScanResult,
+        scan_task_id: str | None = None,
+    ) -> int:
+        """
+        处理扫描结果，更新 Discovery 表。
+
+        Args:
+            db: 数据库会话
+            scan_result: 扫描结果
+            scan_task_id: 扫描任务ID
+
+        Returns:
+            处理的主机数量
+        """
+        count = 0
+
+        for host in scan_result.hosts:
+            try:
+                # 创建发现记录数据
+                discovery_data = DiscoveryCreate(
+                    ip_address=host.ip_address,
+                    mac_address=host.mac_address,
+                    vendor=host.vendor,
+                    hostname=host.hostname,
+                    os_info=host.os_info,
+                    open_ports=host.open_ports,
+                    scan_source=scan_result.scan_type,
+                    scan_task_id=scan_task_id,
+                )
+
+                # 插入或更新发现记录
+                await self.discovery_crud.upsert_discovery(
+                    db,
+                    data=discovery_data,
+                    scan_source=scan_result.scan_type,
+                    scan_task_id=scan_task_id,
+                )
+                count += 1
+
+            except Exception as e:
+                logger.error(f"处理扫描结果失败: {host.ip_address}", error=str(e))
+
+        return count
+
+    @transactional()
+    async def compare_with_cmdb(self, db: AsyncSession) -> CMDBCompareResult:
+        """
+        将发现记录与 CMDB (Device 表) 比对。
+
+        Args:
+            db: 数据库会话
+
+        Returns:
+            CMDBCompareResult: 比对结果
+        """
+        result = CMDBCompareResult(compared_at=datetime.now())
+
+        # 获取所有发现记录
+        discoveries, total_discovered = await self.discovery_crud.get_multi_paginated_filtered(
+            db, page=1, page_size=10000
+        )
+        result.total_discovered = total_discovered
+
+        # 获取所有设备
+        devices, total_cmdb = await self.device_crud.get_multi_paginated_filtered(db, page=1, page_size=10000)
+        result.total_cmdb = total_cmdb
+
+        # 构建设备 IP 索引
+        device_ip_map: dict[str, Device] = {d.ip_address: d for d in devices}
+
+        # 比对发现记录
+        matched_count = 0
+        shadow_count = 0
+
+        for discovery in discoveries:
+            if discovery.ip_address in device_ip_map:
+                # 匹配成功
+                device = device_ip_map[discovery.ip_address]
+                if discovery.status != DiscoveryStatus.MATCHED.value:
+                    await self.discovery_crud.set_matched_device(db, id=discovery.id, device_id=device.id)
+                matched_count += 1
+            else:
+                # 影子资产
+                if discovery.status != DiscoveryStatus.SHADOW.value:
+                    await self.discovery_crud.update_status(db, id=discovery.id, status=DiscoveryStatus.SHADOW)
+                shadow_count += 1
+
+        result.matched = matched_count
+        result.shadow_assets = shadow_count
+
+        # 检测离线设备 (CMDB 中有但扫描未发现)
+        discovered_ips = {d.ip_address for d in discoveries}
+        offline_count = 0
+        for device in devices:
+            if device.ip_address not in discovered_ips:
+                offline_count += 1
+
+        result.offline_devices = offline_count
+
+        return result
+
+    async def detect_offline_devices(self, db: AsyncSession, days_threshold: int = 7) -> list[OfflineDevice]:
+        """
+        检测离线设备 (CMDB 中存在但长时间未扫描到)。
+
+        Args:
+            db: 数据库会话
+            days_threshold: 离线天数阈值
+
+        Returns:
+            OfflineDevice 列表
+        """
+        offline_devices: list[OfflineDevice] = []
+
+        # 获取所有活跃设备
+        devices, _ = await self.device_crud.get_multi_paginated_filtered(
+            db, page=1, page_size=10000, status=DeviceStatus.ACTIVE
+        )
+
+        for device in devices:
+            # 查找对应的发现记录
+            discovery = await self.discovery_crud.get_by_ip(db, ip_address=device.ip_address)
+
+            if discovery:
+                if discovery.offline_days >= days_threshold:
+                    offline_devices.append(
+                        OfflineDevice(
+                            device_id=device.id,
+                            device_name=device.name,
+                            ip_address=device.ip_address,
+                            offline_days=discovery.offline_days,
+                            last_seen_at=discovery.last_seen_at,
+                        )
+                    )
+            else:
+                # 从未扫描到过
+                offline_devices.append(
+                    OfflineDevice(
+                        device_id=device.id,
+                        device_name=device.name,
+                        ip_address=device.ip_address,
+                        offline_days=-1,  # -1 表示从未发现
+                        last_seen_at=None,
+                    )
+                )
+
+        return offline_devices
+
+    async def get_shadow_assets(
+        self, db: AsyncSession, page: int = 1, page_size: int = 20
+    ) -> tuple[list[Discovery], int]:
+        """
+        获取影子资产列表。
+
+        Args:
+            db: 数据库会话
+            page: 页码
+            page_size: 每页数量
+
+        Returns:
+            (discoveries, total): 发现记录列表和总数
+        """
+        return await self.discovery_crud.get_multi_paginated_filtered(
+            db,
+            page=page,
+            page_size=page_size,
+            status=DiscoveryStatus.SHADOW,
+        )
+
+    @transactional()
+    async def adopt_device(
+        self,
+        db: AsyncSession,
+        *,
+        discovery_id: UUID,
+        name: str,
+        vendor: str = "other",
+        device_group: str = "access",
+        dept_id: UUID | None = None,
+        username: str | None = None,
+        password: str | None = None,
+    ) -> Device | None:
+        """
+        纳管设备 (将发现记录转为正式设备)。
+
+        Args:
+            db: 数据库会话
+            discovery_id: 发现记录ID
+            name: 设备名称
+            vendor: 厂商
+            device_group: 设备分组
+            dept_id: 所属部门ID
+            username: SSH 用户名
+            password: SSH 密码
+
+        Returns:
+            创建的 Device 或 None
+        """
+        from app.core.encryption import encrypt_password
+        from app.schemas.device import DeviceCreate
+
+        # 获取发现记录
+        discovery = await self.discovery_crud.get(db, id=discovery_id)
+        if not discovery:
+            return None
+
+        # 检查是否已存在同 IP 设备
+        existing = await self.device_crud.get_by_ip(db, ip_address=discovery.ip_address)
+        if existing:
+            # 更新发现记录状态
+            await self.discovery_crud.set_matched_device(db, id=discovery_id, device_id=existing.id)
+            return existing
+
+        # 创建设备（对齐 DeviceService.create_device 的映射逻辑：password -> password_encrypted）
+        try:
+            vendor_enum = DeviceVendor(vendor)
+        except Exception:
+            vendor_enum = DeviceVendor.OTHER
+
+        try:
+            group_enum = DeviceGroup(device_group)
+        except Exception:
+            group_enum = DeviceGroup.ACCESS
+
+        device_data = DeviceCreate(
+            name=name,
+            ip_address=discovery.ip_address,
+            vendor=vendor_enum,
+            device_group=group_enum,
+            dept_id=dept_id,
+            username=username,
+            password=password,
+            ssh_port=22,
+        )
+
+        create_data = device_data.model_dump(exclude={"password"}, exclude_unset=True)
+        if device_data.password:
+            create_data["password_encrypted"] = encrypt_password(device_data.password)
+
+        device = Device(**create_data)
+        db.add(device)
+        await db.flush()
+        await db.refresh(device)
+
+        # 更新发现记录状态
+        await self.discovery_crud.set_matched_device(db, id=discovery_id, device_id=device.id)
+
+        return device

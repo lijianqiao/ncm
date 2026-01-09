@@ -108,6 +108,17 @@ class Settings(BaseSettings):
     COLLECT_CACHE_TTL: int = 3600  # ARP/MAC 缓存过期时间（秒），默认 1 小时
     CELERY_BEAT_COLLECT_MINUTE: int = 30  # 定时采集分钟（每小时的第几分钟执行）
 
+    # 网络扫描配置
+    SCAN_DEFAULT_PORTS: str = "22,23,80,443,161"  # Nmap 默认扫描端口
+    SCAN_TIMEOUT: int = 300  # 扫描超时时间（秒）
+    SCAN_RATE: int = 1000  # Masscan 扫描速率（packets/sec）
+    CELERY_BEAT_SCAN_HOUR: int = 3  # 定时扫描小时（0-23）
+    CELERY_BEAT_SCAN_MINUTE: int = 0  # 定时扫描分钟
+
+    # 拓扑配置
+    TOPOLOGY_CACHE_TTL: int = 1800  # 拓扑缓存过期时间（秒），默认 30 分钟
+    CELERY_BEAT_TOPOLOGY_HOUR: int = 4  # 定时拓扑刷新小时
+
     @computed_field
     @property
     def CELERY_BROKER_URL(self) -> RedisDsn:

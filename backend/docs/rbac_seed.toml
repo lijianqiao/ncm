@@ -895,10 +895,40 @@ title = "ARP/MAC采集"
 name = "Collect"
 path = "/ncm/collect"
 component = "ncm/collect/index"
-icon = "DatabaseSyncOutlined"
+icon = "ArrowUpCircleOutline"
 sort = 2040
 type = "MENU"
 is_hidden = false
+parent_key = "ncm"
+
+# ---- 设备发现菜单（discovery）----
+
+[[menus]]
+key = "discovery"
+title = "设备发现"
+name = "Discovery"
+path = "/ncm/discovery"
+component = "/views/ncm/discovery/index.vue"
+icon = "SearchOutline"
+sort = 2050
+type = "MENU"
+is_hidden = false
+permission = ""
+parent_key = "ncm"
+
+# ---- 网络拓扑菜单（topology）----
+
+[[menus]]
+key = "topology"
+title = "网络拓扑"
+name = "Topology"
+path = "/ncm/topology"
+component = "/views/ncm/topology/index.vue"
+icon = "GitNetworkOutline"
+sort = 2060
+type = "MENU"
+is_hidden = false
+permission = ""
 parent_key = "ncm"
 
 # ---- 采集权限点（collect:*）----
@@ -928,6 +958,88 @@ type = "PERMISSION"
 is_hidden = true
 permission = "collect:view"
 parent_key = "collect"
+
+# ---- 设备发现权限点（discovery:*）----
+
+[[menus]]
+key = "perm_discovery_scan"
+title = "发现-扫描"
+name = "PermDiscoveryScan"
+path = ""
+component = ""
+icon = "KeyOutline"
+sort = 2051
+type = "PERMISSION"
+is_hidden = true
+permission = "discovery:scan"
+parent_key = "discovery"
+
+[[menus]]
+key = "perm_discovery_list"
+title = "发现-列表"
+name = "PermDiscoveryList"
+path = ""
+component = ""
+icon = "KeyOutline"
+sort = 2052
+type = "PERMISSION"
+is_hidden = true
+permission = "discovery:list"
+parent_key = "discovery"
+
+[[menus]]
+key = "perm_discovery_adopt"
+title = "发现-纳管"
+name = "PermDiscoveryAdopt"
+path = ""
+component = ""
+icon = "KeyOutline"
+sort = 2053
+type = "PERMISSION"
+is_hidden = true
+permission = "discovery:adopt"
+parent_key = "discovery"
+
+[[menus]]
+key = "perm_discovery_delete"
+title = "发现-删除"
+name = "PermDiscoveryDelete"
+path = ""
+component = ""
+icon = "KeyOutline"
+sort = 2054
+type = "PERMISSION"
+is_hidden = true
+permission = "discovery:delete"
+parent_key = "discovery"
+
+# ---- 网络拓扑权限点（topology:*）----
+
+[[menus]]
+key = "perm_topology_view"
+title = "拓扑-查看"
+name = "PermTopologyView"
+path = ""
+component = ""
+icon = "KeyOutline"
+sort = 2061
+type = "PERMISSION"
+is_hidden = true
+permission = "topology:view"
+parent_key = "topology"
+
+[[menus]]
+key = "perm_topology_refresh"
+title = "拓扑-刷新"
+name = "PermTopologyRefresh"
+path = ""
+component = ""
+icon = "KeyOutline"
+sort = 2062
+type = "PERMISSION"
+is_hidden = true
+permission = "topology:refresh"
+parent_key = "topology"
 
 # 角色数据：permissions 会映射到上面菜单的 permission 字段，并绑定到角色 menus。
 
@@ -987,6 +1099,12 @@ permissions = [
   "backup:delete",
   "collect:execute",
   "collect:view",
+  "discovery:scan",
+  "discovery:list",
+  "discovery:adopt",
+  "discovery:delete",
+  "topology:view",
+  "topology:refresh",
 ]
 
 [[roles]]

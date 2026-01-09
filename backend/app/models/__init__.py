@@ -8,6 +8,7 @@ from .log import LoginLog, OperationLog
 from .rbac import Menu, Role, RoleMenu, UserRole
 from .task import ApprovalStatus, Task, TaskStatus, TaskType
 from .template import DeviceType, Template, TemplateStatus, TemplateType
+from .topology import TopologyLink
 from .user import User
 
 __all__ = [
@@ -49,4 +50,6 @@ __all__ = [
     # 设备发现
     "Discovery",
     "DiscoveryStatus",
+    # 网络拓扑
+    "TopologyLink",
 ]

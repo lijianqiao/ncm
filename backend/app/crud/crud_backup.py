@@ -68,11 +68,7 @@ class CRUDBackup(CRUDBase[Backup, BackupCreate, BackupUpdate]):
             page_size = 100
 
         # 基础查询
-        base_query = (
-            select(self.model)
-            .where(self.model.device_id == device_id)
-            .where(self.model.is_deleted.is_(False))
-        )
+        base_query = select(self.model).where(self.model.device_id == device_id).where(self.model.is_deleted.is_(False))
 
         # 计算总数
         count_query = select(func.count()).select_from(base_query.subquery())
@@ -234,9 +230,7 @@ class CRUDBackup(CRUDBase[Backup, BackupCreate, BackupUpdate]):
         result = await db.execute(query)
         return result.scalar() or 0
 
-    async def get_devices_latest_md5(
-        self, db: AsyncSession, device_ids: list[UUID]
-    ) -> dict[UUID, str]:
+    async def get_devices_latest_md5(self, db: AsyncSession, device_ids: list[UUID]) -> dict[UUID, str]:
         """
         批量获取多个设备的最新 MD5 哈希值。
 
@@ -251,7 +245,6 @@ class CRUDBackup(CRUDBase[Backup, BackupCreate, BackupUpdate]):
             return {}
 
         # 使用窗口函数获取每个设备的最新备份
-        from sqlalchemy import and_
         from sqlalchemy.sql import func as sql_func
 
         # 子查询：为每个设备的备份按时间排序

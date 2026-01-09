@@ -181,6 +181,7 @@ dependencies = [
     { name = "pydantic-settings" },
     { name = "pyjwt" },
     { name = "pyotp" },
+    { name = "python-nmap" },
     { name = "redis" },
     { name = "scrapli", extra = ["asyncssh"] },
     { name = "slowapi" },
@@ -221,6 +222,7 @@ requires-dist = [
     { name = "pydantic-settings", specifier = ">=2.12.0" },
     { name = "pyjwt", specifier = ">=2.10.1" },
     { name = "pyotp", specifier = ">=2.9.0" },
+    { name = "python-nmap", specifier = ">=0.7.1" },
     { name = "redis", specifier = ">=7.1.0" },
     { name = "scrapli", extras = ["asyncssh"], specifier = ">=2025.1.30" },
     { name = "slowapi", specifier = ">=0.1.9" },
@@ -1412,6 +1414,12 @@ sdist = { url = "https://files.pythonhosted.org/packages/78/96/804520d0850c7db98
 wheels = [
     { url = "https://files.pythonhosted.org/packages/aa/76/03af049af4dcee5d27442f71b6924f01f3efb5d2bd34f23fcd563f2cc5f5/python_multipart-0.0.21-py3-none-any.whl", hash = "sha256:cf7a6713e01c87aa35387f4774e812c4361150938d20d232800f75ffcf266090", size = 24541, upload-time = "2025-12-17T09:24:21.153Z" },
 ]
+
+[[package]]
+name = "python-nmap"
+version = "0.7.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/f7/1b/8e6b3d1461331e4e8600faf099e7c62ba3c1603987dafdd558681fb8ba37/python-nmap-0.7.1.tar.gz", hash = "sha256:f75af6b91dd8e3b0c31f869db32163f62ada686945e5b7c25f84bc0f7fad3b64", size = 44366, upload-time = "2021-10-26T18:40:26.488Z" }
 
 [[package]]
 name = "pytz"

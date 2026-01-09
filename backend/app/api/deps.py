@@ -29,12 +29,14 @@ from app.core.exceptions import ForbiddenException, NotFoundException, Unauthori
 from app.core.logger import logger
 from app.core.token_store import get_user_revoked_after
 from app.crud.crud_backup import CRUDBackup
-from app.crud.crud_backup import backup as backup_crud_global
+from app.crud.crud_backup import backup as backup_instance
 from app.crud.crud_credential import CRUDCredential
-from app.crud.crud_credential import credential as credential_crud_global
+from app.crud.crud_credential import credential as credential_instance
 from app.crud.crud_dept import CRUDDept
 from app.crud.crud_device import CRUDDevice
-from app.crud.crud_device import device as device_crud_global
+from app.crud.crud_device import device as device_instance
+from app.crud.crud_discovery import CRUDDiscovery
+from app.crud.crud_discovery import discovery_crud as discovery_instance
 from app.crud.crud_log import CRUDLoginLog, CRUDOperationLog
 from app.crud.crud_log import login_log as login_log_crud_global
 from app.crud.crud_log import operation_log as operation_log_crud_global
@@ -42,6 +44,8 @@ from app.crud.crud_menu import CRUDMenu
 from app.crud.crud_menu import menu as menu_crud_global
 from app.crud.crud_role import CRUDRole
 from app.crud.crud_role import role as role_crud_global
+from app.crud.crud_topology import CRUDTopology
+from app.crud.crud_topology import topology_crud as topology_instance
 from app.crud.crud_user import CRUDUser
 from app.crud.crud_user import user as user_crud_global
 from app.models.dept import Department
@@ -58,7 +62,9 @@ from app.services.log_service import LogService
 from app.services.menu_service import MenuService
 from app.services.permission_service import PermissionService
 from app.services.role_service import RoleService
+from app.services.scan_service import ScanService
 from app.services.session_service import SessionService
+from app.services.topology_service import TopologyService
 from app.services.user_service import UserService
 
 # -----------------------
@@ -388,11 +394,11 @@ DeptServiceDep = Annotated[DeptService, Depends(get_dept_service)]
 
 
 def get_device_crud() -> CRUDDevice:
-    return device_crud_global
+    return device_instance
 
 
 def get_credential_crud() -> CRUDCredential:
-    return credential_crud_global
+    return credential_instance
 
 
 def get_device_service(
@@ -418,7 +424,7 @@ CredentialServiceDep = Annotated[CredentialService, Depends(get_credential_servi
 
 
 def get_backup_crud() -> CRUDBackup:
-    return backup_crud_global
+    return backup_instance
 
 
 def get_backup_service(
@@ -431,3 +437,43 @@ def get_backup_service(
 
 
 BackupServiceDep = Annotated[BackupService, Depends(get_backup_service)]
+
+
+# ----- 设备发现依赖 -----
+
+
+def get_discovery_crud() -> CRUDDiscovery:
+    return discovery_instance
+
+
+def get_scan_service(
+    db: SessionDep,
+    discovery_crud: Annotated[CRUDDiscovery, Depends(get_discovery_crud)],
+    device_crud: Annotated[CRUDDevice, Depends(get_device_crud)],
+) -> ScanService:
+    return ScanService(discovery_crud=discovery_crud, device_crud=device_crud)
+
+
+ScanServiceDep = Annotated[ScanService, Depends(get_scan_service)]
+
+
+# ----- 网络拓扑依赖 -----
+
+
+def get_topology_crud() -> CRUDTopology:
+    return topology_instance
+
+
+def get_topology_service(
+    db: SessionDep,
+    topology_crud: Annotated[CRUDTopology, Depends(get_topology_crud)],
+    device_crud: Annotated[CRUDDevice, Depends(get_device_crud)],
+) -> TopologyService:
+    return TopologyService(
+        topology_crud=topology_crud,
+        device_crud=device_crud,
+        redis_client=redis_client,
+    )
+
+
+TopologyServiceDep = Annotated[TopologyService, Depends(get_topology_service)]

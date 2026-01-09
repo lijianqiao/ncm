@@ -77,6 +77,27 @@ def create_celery_app() -> Celery:
                 "schedule": crontab(minute=settings.CELERY_BEAT_COLLECT_MINUTE),
                 "options": {"queue": "discovery"},
             },
+            # 定时网络扫描
+            "daily-network-scan": {
+                "task": "app.celery.tasks.discovery.scheduled_network_scan",
+                "schedule": crontab(
+                    hour=settings.CELERY_BEAT_SCAN_HOUR,
+                    minute=settings.CELERY_BEAT_SCAN_MINUTE,
+                ),
+                "options": {"queue": "discovery"},
+            },
+            # 定时离线天数更新
+            "daily-offline-increment": {
+                "task": "app.celery.tasks.discovery.increment_offline_days",
+                "schedule": crontab(hour=0, minute=30),  # 每日 00:30
+                "options": {"queue": "discovery"},
+            },
+            # 定时拓扑刷新
+            "daily-topology-refresh": {
+                "task": "app.celery.tasks.topology.scheduled_topology_refresh",
+                "schedule": crontab(hour=settings.CELERY_BEAT_TOPOLOGY_HOUR, minute=0),
+                "options": {"queue": "topology"},
+            },
         },
         # Beat 调度器配置
         beat_scheduler="celery.beat:PersistentScheduler",
