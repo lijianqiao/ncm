@@ -1,0 +1,13 @@
+Value LOCAL_INTERFACE (\S+)
+Value NEIGHBOR_DEVICE (\S+)
+Value NEIGHBOR_INTERFACE (\S+)
+Value HOLD_TIME (\d+)
+
+Start
+  # 跳过表头行
+  ^Local\s+Intf -> Continue
+  ^-+ -> Continue
+  # 匹配数据行: GE1/0/1  H3C-Dist1  GigabitEthernet1/0/24  120
+  ^${LOCAL_INTERFACE}\s+${NEIGHBOR_DEVICE}\s+${NEIGHBOR_INTERFACE}\s+${HOLD_TIME}\s*$$ -> Record
+
+EOF

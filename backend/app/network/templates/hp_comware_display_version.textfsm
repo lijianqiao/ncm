@@ -1,0 +1,18 @@
+Value VERSION (\d+\.\d+\.\d+)
+Value RELEASE (\S+)
+Value HOSTNAME (\S+)
+Value UPTIME (.+?)(?:\s*$)
+Value MODEL (\S+)
+Value BOOT_IMAGE (\S+)
+Value SYSTEM_IMAGE (\S+)
+Value COMPILED_DATE (.+?)(?:\s*$)
+
+Start
+  ^.*[Cc]omware.*[Ss]oftware.*[Vv]ersion\s+${VERSION}.*[Rr]elease\s+${RELEASE} -> Continue
+  ^${HOSTNAME}\s+uptime\s+is\s+${UPTIME}
+  ^H3C\s+${MODEL}\s+uptime -> Continue
+  ^Boot\s+image:\s+${BOOT_IMAGE}
+  ^System\s+image:\s+${SYSTEM_IMAGE}
+  ^\s+Compiled\s+${COMPILED_DATE} -> Record
+
+EOF
