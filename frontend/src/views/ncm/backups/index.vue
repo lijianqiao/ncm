@@ -216,7 +216,7 @@ const handleManualBackup = async () => {
   deviceLoading.value = true
   showBackupModal.value = true
   try {
-    const res = await getDevices({ page_size: 500, status: 'running' })
+    const res = await getDevices({ page_size: 100, status: 'active' })
     deviceOptions.value = res.data.items.map((d: Device) => ({
       label: `${d.name} (${d.ip_address})`,
       value: d.id,
@@ -258,7 +258,7 @@ const handleBatchBackup = async () => {
   showBatchBackupModal.value = true
   batchTaskStatus.value = null
   try {
-    const res = await getDevices({ page_size: 500, status: 'running' })
+    const res = await getDevices({ page_size: 100, status: 'active' })
     deviceOptions.value = res.data.items.map((d: Device) => ({
       label: `${d.name} (${d.ip_address})`,
       value: d.id,

@@ -57,8 +57,19 @@ class DeptUpdate(BaseModel):
         return validate_phone_number(v)
 
 
+class DeptSimpleResponse(BaseModel):
+    """部门简要响应模型（用于关联显示，不包含嵌套关系）。"""
+
+    id: UUID
+    name: str
+    code: str
+    parent_id: UUID | None = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class DeptResponse(BaseModel):
-    """部门响应模型。"""
+    """部门响应模型（完整，包含子部门）。"""
 
     id: UUID
     name: str

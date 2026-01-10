@@ -12,7 +12,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.core.enums import AuthType, DeviceGroup, DeviceStatus, DeviceVendor
-from app.schemas.dept import DeptResponse
+from app.schemas.dept import DeptSimpleResponse
 
 
 class DeviceBase(BaseModel):
@@ -123,8 +123,8 @@ class DeviceResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
 
-    # 关联部门
-    dept: DeptResponse | None = None
+    # 关联部门（使用简要响应，避免嵌套加载 children 导致 MissingGreenlet）
+    dept: DeptSimpleResponse | None = None
 
     model_config = ConfigDict(from_attributes=True)
 

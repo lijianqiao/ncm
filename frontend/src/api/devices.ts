@@ -8,22 +8,29 @@
 
 import { request } from '@/utils/request'
 import type { ResponseBase, PaginatedResponse } from '@/types/api'
+import type {
+  DeviceVendorType,
+  DeviceStatusType,
+  DeviceGroupType,
+  AuthTypeType,
+} from '@/types/enums'
 
-// ==================== 枚举类型 ====================
+// ==================== 类型重导出（兼容现有代码） ====================
 
-/** 设备厂商 */
-export type DeviceVendor = 'cisco' | 'huawei' | 'h3c' | 'ruijie' | 'other'
-
-/** 设备状态 */
-export type DeviceStatus = 'stock' | 'running' | 'maintenance' | 'retired'
-
-/** 设备分组 */
-export type DeviceGroup = 'core' | 'distribution' | 'access' | 'firewall' | 'wireless' | 'other'
-
-/** 认证类型 */
-export type AuthType = 'static' | 'dynamic'
+export type DeviceVendor = DeviceVendorType
+export type DeviceStatus = DeviceStatusType
+export type DeviceGroup = DeviceGroupType
+export type AuthType = AuthTypeType
 
 // ==================== 接口定义 ====================
+
+/** 部门简要信息 */
+export interface DeptSimple {
+  id: string
+  name: string
+  code: string
+  parent_id: string | null
+}
 
 /** 设备响应接口 */
 export interface Device {
@@ -38,7 +45,7 @@ export interface Device {
   ssh_port: number
   auth_type: AuthType
   dept_id: string | null
-  dept_name: string | null
+  dept: DeptSimple | null
   device_group: DeviceGroup | null
   status: DeviceStatus
   serial_number: string | null
@@ -46,6 +53,9 @@ export interface Device {
   stock_in_at: string | null
   assigned_to: string | null
   retired_at: string | null
+  last_backup_at: string | null
+  last_online_at: string | null
+  is_deleted: boolean
   created_at: string
   updated_at: string | null
 }

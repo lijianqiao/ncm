@@ -150,7 +150,7 @@ const getNodeShape = (deviceType: string | null): string => {
 
 const getNodeColor = (status: string | null): string => {
   switch (status) {
-    case 'running':
+    case 'active':
       return '#18a058'
     case 'maintenance':
       return '#f0a020'

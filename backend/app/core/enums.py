@@ -192,14 +192,14 @@ class AlertType(str, Enum):
 class AlertSeverity(str, Enum):
     """告警级别。"""
 
-    LOW = "low"
-    MEDIUM = "medium"
-    HIGH = "high"
+    LOW = "low"  # 低
+    MEDIUM = "medium"  # 中
+    HIGH = "high"  # 高
 
 
 class AlertStatus(str, Enum):
     """告警状态。"""
 
-    OPEN = "open"
-    ACK = "ack"
-    CLOSED = "closed"
+    OPEN = "open"  # 未处理
+    ACK = "ack"  # 已确认
+    CLOSED = "closed"  # 已关闭

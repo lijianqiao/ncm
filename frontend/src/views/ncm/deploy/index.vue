@@ -209,7 +209,7 @@ const handleCreate = async () => {
   try {
     const [templatesRes, devicesRes, usersRes] = await Promise.all([
       getTemplates({ status: 'approved', page_size: 100 }),
-      getDevices({ status: 'running', page_size: 500 }),
+      getDevices({ status: 'active', page_size: 100 }),
       getUsers({ page_size: 100 }),
     ])
     templateOptions.value = templatesRes.data.items.map((t: Template) => ({

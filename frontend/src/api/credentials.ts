@@ -21,6 +21,7 @@ export interface Credential {
   username: string
   auth_type: AuthType
   description: string | null
+  has_otp_seed: boolean
   created_at: string
   updated_at: string | null
 }

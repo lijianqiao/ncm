@@ -22,7 +22,13 @@ import {
   type Credential,
   type CredentialSearchParams,
 } from '@/api/credentials'
-import { type DeviceGroup, type AuthType } from '@/api/devices'
+import { DeviceGroup, AuthType } from '@/types/enums'
+import {
+  DeviceGroupOptions,
+  AuthTypeOptions,
+  DeviceGroupLabels,
+  AuthTypeLabels,
+} from '@/types/enum-labels'
 import { getDeptTree, type Dept } from '@/api/depts'
 import { formatDateTime } from '@/utils/date'
 import ProTable, { type FilterConfig } from '@/components/common/ProTable.vue'
@@ -34,35 +40,12 @@ defineOptions({
 const dialog = useDialog()
 const tableRef = ref()
 
-// ==================== 常量定义 ====================
+// ==================== 常量定义（使用统一枚举） ====================
 
-const deviceGroupOptions = [
-  { label: '核心层', value: 'core' },
-  { label: '汇聚层', value: 'distribution' },
-  { label: '接入层', value: 'access' },
-  { label: '防火墙', value: 'firewall' },
-  { label: '无线', value: 'wireless' },
-  { label: '其他', value: 'other' },
-]
-
-const authTypeOptions = [
-  { label: '静态凭据', value: 'static' },
-  { label: '动态凭据', value: 'dynamic' },
-]
-
-const groupLabelMap: Record<DeviceGroup, string> = {
-  core: '核心层',
-  distribution: '汇聚层',
-  access: '接入层',
-  firewall: '防火墙',
-  wireless: '无线',
-  other: '其他',
-}
-
-const authTypeLabelMap: Record<AuthType, string> = {
-  static: '静态凭据',
-  dynamic: '动态凭据',
-}
+const deviceGroupOptions = DeviceGroupOptions
+const authTypeOptions = AuthTypeOptions
+const groupLabelMap = DeviceGroupLabels
+const authTypeLabelMap = AuthTypeLabels
 
 // ==================== 部门树 ====================
 
@@ -114,7 +97,7 @@ const columns: DataTableColumns<Credential> = [
     render(row) {
       return h(
         NTag,
-        { type: row.auth_type === 'dynamic' ? 'info' : 'default', bordered: false },
+        { type: row.auth_type === 'static' ? 'default' : 'info', bordered: false },
         { default: () => authTypeLabelMap[row.auth_type] },
       )
     },
@@ -178,10 +161,10 @@ const createFormRef = ref()
 const createModel = ref({
   id: '',
   dept_id: '' as string,
-  device_group: 'core' as DeviceGroup,
+  device_group: DeviceGroup.CORE as `${DeviceGroup}`,
   username: '',
   otp_seed: '',
-  auth_type: 'dynamic' as AuthType,
+  auth_type: AuthType.OTP_SEED as `${AuthType}`,
   description: '',
 })
 
@@ -196,10 +179,10 @@ const handleCreate = () => {
   createModel.value = {
     id: '',
     dept_id: '',
-    device_group: 'core',
+    device_group: DeviceGroup.CORE,
     username: '',
     otp_seed: '',
-    auth_type: 'dynamic',
+    auth_type: AuthType.OTP_SEED,
     description: '',
   }
   fetchDeptTree()

@@ -44,7 +44,7 @@ const deviceLoading = ref(false)
 const fetchDevices = async () => {
   deviceLoading.value = true
   try {
-    const res = await getDevices({ status: 'running', page_size: 500 })
+    const res = await getDevices({ status: 'active', page_size: 100 })
     deviceOptions.value = res.data.items.map((d: Device) => ({
       label: `${d.name} (${d.ip_address})`,
       value: d.id,

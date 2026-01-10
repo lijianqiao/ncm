@@ -95,14 +95,10 @@ class CredentialService:
         Returns:
             DeviceGroupCredential | None: 凭据对象或 None
         """
-        return await self.credential_crud.get_by_dept_and_group(
-            self.db, dept_id, device_group.value
-        )
+        return await self.credential_crud.get_by_dept_and_group(self.db, dept_id, device_group.value)
 
     @transactional()
-    async def create_credential(
-        self, obj_in: DeviceGroupCredentialCreate
-    ) -> DeviceGroupCredential:
+    async def create_credential(self, obj_in: DeviceGroupCredentialCreate) -> DeviceGroupCredential:
         """
         创建凭据。
 
@@ -116,9 +112,7 @@ class CredentialService:
             BadRequestException: 凭据已存在或业务校验失败
         """
         # 1. 检查凭据唯一性
-        if await self.credential_crud.exists_credential(
-            self.db, obj_in.dept_id, obj_in.device_group.value
-        ):
+        if await self.credential_crud.exists_credential(self.db, obj_in.dept_id, obj_in.device_group.value):
             raise BadRequestException(
                 message=f"部门 {obj_in.dept_id} 的设备分组 {obj_in.device_group.value} 凭据已存在"
             )
@@ -209,9 +203,7 @@ class CredentialService:
             OTPCacheResponse: 缓存响应
         """
         try:
-            await otp_service.cache_otp(
-                request.dept_id, request.device_group, request.otp_code
-            )
+            await otp_service.cache_otp(request.dept_id, request.device_group, request.otp_code)
             return OTPCacheResponse(
                 success=True,
                 message="OTP 缓存成功",
@@ -237,9 +229,12 @@ class CredentialService:
         return DeviceGroupCredentialResponse(
             id=credential.id,
             dept_id=credential.dept_id,
+            dept_name=credential.dept.name if credential.dept else None,
             device_group=credential.device_group,
             username=credential.username,
             auth_type=credential.auth_type,
             description=credential.description,
             has_otp_seed=bool(credential.otp_seed_encrypted),
+            created_at=credential.created_at,
+            updated_at=credential.updated_at,
         )

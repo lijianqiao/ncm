@@ -33,11 +33,19 @@ import {
   getDeviceLifecycleStats,
   type Device,
   type DeviceSearchParams,
-  type DeviceVendor,
-  type DeviceStatus,
-  type DeviceGroup,
   type DeviceLifecycleStatsResponse,
 } from '@/api/devices'
+import { DeviceVendor, DeviceStatus, DeviceGroup, AuthType } from '@/types/enums'
+import {
+  DeviceVendorOptions,
+  DeviceStatusOptions,
+  DeviceGroupOptions,
+  AuthTypeOptions,
+  DeviceVendorLabels,
+  DeviceStatusLabels,
+  DeviceGroupLabels,
+  DeviceStatusColors,
+} from '@/types/enum-labels'
 import { getDeptTree, type Dept } from '@/api/depts'
 import { formatDateTime } from '@/utils/date'
 import ProTable, { type FilterConfig } from '@/components/common/ProTable.vue'
@@ -50,68 +58,16 @@ const dialog = useDialog()
 const tableRef = ref()
 const recycleBinTableRef = ref()
 
-// ==================== 常量定义 ====================
+// ==================== 常量定义（使用统一枚举） ====================
 
-const vendorOptions = [
-  { label: 'Cisco', value: 'cisco' },
-  { label: 'Huawei', value: 'huawei' },
-  { label: 'H3C', value: 'h3c' },
-  { label: 'Ruijie', value: 'ruijie' },
-  { label: '其他', value: 'other' },
-]
-
-const statusOptions = [
-  { label: '入库', value: 'stock' },
-  { label: '运行中', value: 'running' },
-  { label: '维护中', value: 'maintenance' },
-  { label: '已报废', value: 'retired' },
-]
-
-const deviceGroupOptions = [
-  { label: '核心层', value: 'core' },
-  { label: '汇聚层', value: 'distribution' },
-  { label: '接入层', value: 'access' },
-  { label: '防火墙', value: 'firewall' },
-  { label: '无线', value: 'wireless' },
-  { label: '其他', value: 'other' },
-]
-
-const authTypeOptions = [
-  { label: '静态凭据', value: 'static' },
-  { label: '动态凭据', value: 'dynamic' },
-]
-
-// 状态颜色映射
-const statusColorMap: Record<DeviceStatus, 'default' | 'success' | 'warning' | 'error'> = {
-  stock: 'default',
-  running: 'success',
-  maintenance: 'warning',
-  retired: 'error',
-}
-
-const statusLabelMap: Record<DeviceStatus, string> = {
-  stock: '入库',
-  running: '运行中',
-  maintenance: '维护中',
-  retired: '已报废',
-}
-
-const vendorLabelMap: Record<DeviceVendor, string> = {
-  cisco: 'Cisco',
-  huawei: 'Huawei',
-  h3c: 'H3C',
-  ruijie: 'Ruijie',
-  other: '其他',
-}
-
-const groupLabelMap: Record<DeviceGroup, string> = {
-  core: '核心层',
-  distribution: '汇聚层',
-  access: '接入层',
-  firewall: '防火墙',
-  wireless: '无线',
-  other: '其他',
-}
+const vendorOptions = DeviceVendorOptions
+const statusOptions = DeviceStatusOptions
+const deviceGroupOptions = DeviceGroupOptions
+const authTypeOptions = AuthTypeOptions
+const statusColorMap = DeviceStatusColors
+const statusLabelMap = DeviceStatusLabels
+const vendorLabelMap = DeviceVendorLabels
+const groupLabelMap = DeviceGroupLabels
 
 // ==================== 生命周期统计 ====================
 
@@ -182,10 +138,10 @@ const columns: DataTableColumns<Device> = [
   },
   {
     title: '所属部门',
-    key: 'dept_name',
+    key: 'dept',
     width: 120,
     ellipsis: { tooltip: true },
-    render: (row) => row.dept_name || '-',
+    render: (row) => row.dept?.name || '-',
   },
   {
     title: '状态',
@@ -207,6 +163,12 @@ const columns: DataTableColumns<Device> = [
     key: 'created_at',
     width: 180,
     render: (row) => formatDateTime(row.created_at),
+  },
+  {
+    title: '更新时间',
+    key: 'updated_at',
+    width: 180,
+    render: (row) => formatDateTime(row.updated_at),
   },
 ]
 
@@ -257,10 +219,10 @@ const createModel = ref({
   location: '',
   description: '',
   ssh_port: 22,
-  auth_type: 'dynamic' as 'static' | 'dynamic',
+  auth_type: AuthType.OTP_SEED as `${AuthType}`,
   dept_id: null as string | null,
-  device_group: null as DeviceGroup | null,
-  status: 'stock' as DeviceStatus,
+  device_group: null as `${DeviceGroup}` | null,
+  status: DeviceStatus.IN_STOCK as `${DeviceStatus}`,
   username: '',
   password: '',
   serial_number: '',
@@ -286,10 +248,10 @@ const handleCreate = () => {
     location: '',
     description: '',
     ssh_port: 22,
-    auth_type: 'dynamic',
+    auth_type: AuthType.OTP_SEED,
     dept_id: null,
     device_group: null,
-    status: 'stock',
+    status: DeviceStatus.IN_STOCK,
     username: '',
     password: '',
     serial_number: '',
@@ -445,7 +407,7 @@ const submitTransition = async () => {
 const showBatchTransitionModal = ref(false)
 const batchTransitionModel = ref({
   ids: [] as string[],
-  toStatus: 'running' as DeviceStatus,
+  toStatus: DeviceStatus.ACTIVE as `${DeviceStatus}`,
   reason: '',
 })
 
@@ -457,7 +419,7 @@ const handleBatchTransition = () => {
   }
   batchTransitionModel.value = {
     ids: selectedKeys as string[],
-    toStatus: 'running',
+    toStatus: DeviceStatus.ACTIVE,
     reason: '',
   }
   showBatchTransitionModal.value = true

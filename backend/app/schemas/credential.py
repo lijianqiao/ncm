@@ -6,6 +6,7 @@
 @Docs: 设备凭据相关 Schema 定义。
 """
 
+from datetime import datetime
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -71,10 +72,13 @@ class DeviceGroupCredentialResponse(BaseModel):
 
     id: UUID = Field(..., description="凭据ID")
     dept_id: UUID = Field(..., description="部门ID")
+    dept_name: str | None = Field(None, description="部门名称")
     device_group: str = Field(..., description="设备分组")
     username: str = Field(..., description="SSH 账号")
     auth_type: str = Field(..., description="认证类型")
     description: str | None = Field(None, description="凭据描述")
     has_otp_seed: bool = Field(..., description="是否配置了 OTP 种子")
+    created_at: datetime = Field(..., description="创建时间")
+    updated_at: datetime | None = Field(None, description="更新时间")
 
     model_config = ConfigDict(from_attributes=True)
