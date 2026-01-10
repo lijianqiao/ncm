@@ -1,0 +1,173 @@
+/**
+ * @Author: li
+ * @Email: lijianqiao2906@live.com
+ * @FileName: discovery.ts
+ * @DateTime: 2026-01-10
+ * @Docs: 资产发现 API 模块
+ */
+
+import { request } from '@/utils/request'
+import type { ResponseBase, PaginatedResponse } from '@/types/api'
+
+// ==================== 枚举类型 ====================
+
+/** 发现状态 */
+export type DiscoveryStatus = 'new' | 'ignored' | 'matched'
+
+// ==================== 接口定义 ====================
+
+/** 发现记录响应接口 */
+export interface DiscoveryRecord {
+  id: string
+  ip_address: string
+  mac_address: string | null
+  vendor: string | null
+  device_type: string | null
+  hostname: string | null
+  os_info: string | null
+  open_ports: Record<string, string> | null
+  ssh_banner: string | null
+  first_seen_at: string
+  last_seen_at: string
+  offline_days: number
+  status: DiscoveryStatus
+  matched_device_id: string | null
+  matched_device_name: string | null
+  matched_device_ip: string | null
+  scan_source: string | null
+  created_at: string
+  updated_at: string
+}
+
+/** 发现记录查询参数 */
+export interface DiscoverySearchParams {
+  page?: number
+  page_size?: number
+  status?: DiscoveryStatus
+  keyword?: string
+  scan_source?: string
+}
+
+/** 扫描请求 */
+export interface ScanRequest {
+  subnets: string[]
+  scan_type?: 'nmap' | 'masscan'
+  ports?: string
+  async_mode?: boolean
+}
+
+/** 扫描结果 */
+export interface ScanResult {
+  total_hosts: number
+  online_hosts: number
+  new_hosts: number
+  matched_hosts: number
+}
+
+/** 扫描任务状态 */
+export interface ScanTaskStatus {
+  task_id: string
+  status: 'PENDING' | 'STARTED' | 'SUCCESS' | 'FAILURE'
+  progress: number | null
+  result: ScanResult | null
+  error: string | null
+}
+
+/** 纳管设备请求 */
+export interface AdoptDeviceRequest {
+  name: string
+  vendor?: string
+  device_group?: string
+  dept_id?: string
+  username?: string
+  password?: string
+}
+
+/** 离线设备 */
+export interface OfflineDevice {
+  device_id: string
+  device_name: string
+  ip_address: string
+  last_seen_at: string
+  offline_days: number
+}
+
+// ==================== API 函数 ====================
+
+/** 触发网络扫描 */
+export function triggerScan(data: ScanRequest) {
+  return request<ResponseBase<{ task_id?: string; result?: ScanResult }>>({
+    url: '/discovery/discovery/scan',
+    method: 'post',
+    data,
+  })
+}
+
+/** 查询扫描任务状态 */
+export function getScanTaskStatus(taskId: string) {
+  return request<ScanTaskStatus>({
+    url: `/discovery/discovery/scan/task/${taskId}`,
+    method: 'get',
+  })
+}
+
+/** 获取发现记录列表 */
+export function getDiscoveryRecords(params?: DiscoverySearchParams) {
+  return request<PaginatedResponse<DiscoveryRecord>>({
+    url: '/discovery/discovery/',
+    method: 'get',
+    params,
+  })
+}
+
+/** 获取发现记录详情 */
+export function getDiscoveryRecord(id: string) {
+  return request<DiscoveryRecord>({
+    url: `/discovery/discovery/${id}`,
+    method: 'get',
+  })
+}
+
+/** 删除发现记录 */
+export function deleteDiscoveryRecord(id: string) {
+  return request<ResponseBase<unknown>>({
+    url: `/discovery/discovery/${id}`,
+    method: 'delete',
+  })
+}
+
+/** 纳管设备 */
+export function adoptDevice(discoveryId: string, data: AdoptDeviceRequest) {
+  return request<ResponseBase<{ device_id: string }>>({
+    url: `/discovery/discovery/${discoveryId}/adopt`,
+    method: 'post',
+    data,
+  })
+}
+
+/** 获取影子资产列表 */
+export function getShadowAssets(params?: { page?: number; page_size?: number }) {
+  return request<PaginatedResponse<DiscoveryRecord>>({
+    url: '/discovery/discovery/shadow',
+    method: 'get',
+    params,
+  })
+}
+
+/** 获取离线设备列表 */
+export function getOfflineDevices(daysThreshold?: number) {
+  return request<ResponseBase<OfflineDevice[]>>({
+    url: '/discovery/discovery/offline',
+    method: 'get',
+    params: daysThreshold ? { days_threshold: daysThreshold } : undefined,
+  })
+}
+
+/** 执行 CMDB 比对 */
+export function compareCMDB(asyncMode: boolean = true) {
+  return request<ResponseBase<{ task_id?: string; result?: unknown }>>({
+    url: '/discovery/discovery/compare',
+    method: 'post',
+    params: { async_mode: asyncMode },
+  })
+}

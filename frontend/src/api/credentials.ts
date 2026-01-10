@@ -1,0 +1,119 @@
+/**
+ * @Author: li
+ * @Email: lijianqiao2906@live.com
+ * @FileName: credentials.ts
+ * @DateTime: 2026-01-10
+ * @Docs: 凭据管理 API 模块
+ */
+
+import { request } from '@/utils/request'
+import type { ResponseBase, PaginatedResponse } from '@/types/api'
+import type { DeviceGroup, AuthType } from './devices'
+
+// ==================== 接口定义 ====================
+
+/** 凭据响应接口 */
+export interface Credential {
+  id: string
+  dept_id: string
+  dept_name: string | null
+  device_group: DeviceGroup
+  username: string
+  auth_type: AuthType
+  description: string | null
+  created_at: string
+  updated_at: string | null
+}
+
+/** 创建凭据参数 */
+export interface CredentialCreate {
+  dept_id: string
+  device_group: DeviceGroup
+  username: string
+  otp_seed?: string
+  auth_type?: AuthType
+  description?: string
+}
+
+/** 更新凭据参数 */
+export interface CredentialUpdate {
+  username?: string
+  otp_seed?: string
+  auth_type?: AuthType
+  description?: string
+}
+
+/** 凭据查询参数 */
+export interface CredentialSearchParams {
+  page?: number
+  page_size?: number
+  dept_id?: string
+  device_group?: DeviceGroup
+}
+
+/** OTP 缓存请求 */
+export interface OTPCacheRequest {
+  dept_id: string
+  device_group: DeviceGroup
+  otp_code: string
+}
+
+/** OTP 缓存响应 */
+export interface OTPCacheResponse {
+  cached: boolean
+  expires_in: number
+}
+
+// ==================== API 函数 ====================
+
+/** 获取凭据列表 */
+export function getCredentials(params?: CredentialSearchParams) {
+  return request<ResponseBase<PaginatedResponse<Credential>>>({
+    url: '/credentials/',
+    method: 'get',
+    params,
+  })
+}
+
+/** 获取凭据详情 */
+export function getCredential(id: string) {
+  return request<ResponseBase<Credential>>({
+    url: `/credentials/${id}`,
+    method: 'get',
+  })
+}
+
+/** 创建凭据 */
+export function createCredential(data: CredentialCreate) {
+  return request<ResponseBase<Credential>>({
+    url: '/credentials/',
+    method: 'post',
+    data,
+  })
+}
+
+/** 更新凭据 */
+export function updateCredential(id: string, data: CredentialUpdate) {
+  return request<ResponseBase<Credential>>({
+    url: `/credentials/${id}`,
+    method: 'put',
+    data,
+  })
+}
+
+/** 删除凭据 */
+export function deleteCredential(id: string) {
+  return request<ResponseBase<Credential>>({
+    url: `/credentials/${id}`,
+    method: 'delete',
+  })
+}
+
+/** 缓存 OTP 验证码 */
+export function cacheOTP(data: OTPCacheRequest) {
+  return request<ResponseBase<OTPCacheResponse>>({
+    url: '/credentials/otp/cache',
+    method: 'post',
+    data,
+  })
+}
