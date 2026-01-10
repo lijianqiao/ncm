@@ -532,4 +532,3 @@ const closeBatchBackupModal = () => {
   padding: 16px;
 }
 </style>
-</script>

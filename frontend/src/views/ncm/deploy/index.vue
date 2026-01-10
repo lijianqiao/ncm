@@ -593,4 +593,3 @@ const handleRollback = (row: DeployTask) => {
   padding: 16px;
 }
 </style>
-</script>

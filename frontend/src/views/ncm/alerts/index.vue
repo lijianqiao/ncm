@@ -383,4 +383,3 @@ const handleBatchClose = () => {
   padding: 16px;
 }
 </style>
-</script>

@@ -13,6 +13,29 @@ import type { Menu } from '@/api/menus'
 const modules = import.meta.glob('@/views/**/*.vue')
 
 /**
+ * 规范化组件路径
+ * 支持多种格式：
+ *   - /views/ncm/devices/index.vue (标准格式)
+ *   - ncm/devices/index (简写格式)
+ *   - /views/ncm/devices/index (无后缀)
+ */
+function normalizeComponentPath(componentPath: string): string {
+  let path = componentPath
+
+  // 如果不以 /views 开头，添加 /views/ 前缀
+  if (!path.startsWith('/views')) {
+    path = '/views/' + path.replace(/^\//, '')
+  }
+
+  // 如果不以 .vue 结尾，添加 .vue 后缀
+  if (!path.endsWith('.vue')) {
+    path = path + '.vue'
+  }
+
+  return '/src' + path
+}
+
+/**
  * 根据后端菜单数据生成 Vue Router 路由配置
  * @param menus 后端返回的菜单列表
  * @returns RouteRecordRaw 数组
@@ -31,10 +54,11 @@ export function generateRoutes(menus: Menu[]): RouteRecordRaw[] {
       // Layout 类型映射到透传组件
       component = () => import('@/layouts/RouterView.vue')
     } else if (menu.component) {
-      const key = `/src${menu.component}`
+      const key = normalizeComponentPath(menu.component)
       if (modules[key]) {
         component = modules[key] as () => Promise<RouteComponent>
       } else {
+        console.warn(`[Router] Component not found: ${menu.component} -> ${key}`)
         // 组件路径不存在，显示 404
         component = () => import('@/views/error/404.vue')
       }

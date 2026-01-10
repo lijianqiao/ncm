@@ -508,4 +508,3 @@ const handleFitView = () => {
   min-height: 500px;
 }
 </style>
-</script>

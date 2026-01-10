@@ -487,4 +487,3 @@ const handleSubmit = (row: Template) => {
   padding: 16px;
 }
 </style>
-</script>

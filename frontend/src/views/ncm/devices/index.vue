@@ -842,4 +842,3 @@ const handleBatchRestore = async () => {
   border-radius: 8px;
 }
 </style>
-</script>

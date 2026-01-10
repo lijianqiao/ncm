@@ -650,4 +650,3 @@ const handleCompareCMDB = () => {
   padding: 16px;
 }
 </style>
-</script>

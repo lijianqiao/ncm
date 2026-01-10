@@ -486,4 +486,3 @@ const submitCreate = async () => {
   padding: 16px;
 }
 </style>
-</script>

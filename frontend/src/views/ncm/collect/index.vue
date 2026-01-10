@@ -467,4 +467,3 @@ const submitLocate = async () => {
   padding: 16px;
 }
 </style>
-</script>
