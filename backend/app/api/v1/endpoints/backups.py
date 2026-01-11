@@ -26,7 +26,7 @@ from app.schemas.backup import (
 )
 from app.schemas.common import PaginatedResponse, ResponseBase
 
-router = APIRouter(prefix="/backups", tags=["配置备份"])
+router = APIRouter(tags=["配置备份"])
 
 
 # ===== 备份列表 =====

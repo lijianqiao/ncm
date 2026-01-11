@@ -22,7 +22,7 @@ from app.schemas.template import (
     TemplateUpdate,
 )
 
-router = APIRouter(prefix="/templates", tags=["模板库"])
+router = APIRouter(tags=["模板库"])
 
 
 @router.get(

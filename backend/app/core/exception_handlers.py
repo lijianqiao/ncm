@@ -93,10 +93,37 @@ async def pydantic_validation_exception_handler(request: Request, exc: Validatio
     )
 
 
+async def generic_exception_handler(request: Request, exc: Exception):
+    """
+    通用异常处理器，捕获所有未处理的异常。
+
+    生产环境中不暴露详细错误信息，仅返回统一的 500 错误。
+    """
+    try:
+        client_ip = request.client.host if request.client else None
+    except Exception:
+        client_ip = None
+
+    logger.error(
+        "未处理的异常",
+        error_type=type(exc).__name__,
+        error_message=str(exc),
+        http_method=request.method,
+        path=str(request.url.path),
+        client_ip=client_ip,
+        exc_info=True,
+    )
+    return JSONResponse(
+        status_code=500,
+        content={"error_code": 500, "message": "服务器内部错误", "details": None},
+    )
+
+
 def register_exception_handlers(app: FastAPI) -> None:
     """
     注册所有全局异常处理器。
     """
     app.add_exception_handler(CustomException, custom_exception_handler)  # type: ignore
+    app.add_exception_handler(Exception, generic_exception_handler)  # 通用异常处理器（兜底）
     app.add_exception_handler(RequestValidationError, validation_exception_handler)  # type: ignore
     app.add_exception_handler(ValidationError, pydantic_validation_exception_handler)  # type: ignore

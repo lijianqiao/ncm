@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, h, onUnmounted } from 'vue'
+import { ref, h } from 'vue'
 import {
   NButton,
   NModal,
@@ -39,6 +39,7 @@ import { type DeviceGroup } from '@/api/devices'
 import { getDeptTree, type Dept } from '@/api/depts'
 import { formatDateTime } from '@/utils/date'
 import ProTable, { type FilterConfig } from '@/components/common/ProTable.vue'
+import { useTaskPolling } from '@/composables'
 
 defineOptions({
   name: 'DiscoveryManagement',
@@ -260,8 +261,20 @@ const scanModel = ref({
   ports: '22,23,80,443',
   async_mode: true,
 })
-const scanTaskStatus = ref<ScanTaskStatus | null>(null)
-const scanTaskPolling = ref<ReturnType<typeof setInterval> | null>(null)
+
+// 使用 useTaskPolling composable
+const {
+  taskStatus: scanTaskStatus,
+  start: startPollingScanStatus,
+  stop: stopPollingScanStatus,
+  reset: resetScanTask,
+} = useTaskPolling<ScanTaskStatus>(
+  (taskId) => getScanTaskStatus(taskId),
+  {
+    onComplete: () => tableRef.value?.reload(),
+    onError: () => tableRef.value?.reload(),
+  }
+)
 
 const handleTriggerScan = () => {
   scanModel.value = {
@@ -270,7 +283,7 @@ const handleTriggerScan = () => {
     ports: '22,23,80,443',
     async_mode: true,
   }
-  scanTaskStatus.value = null
+  resetScanTask()
   showScanModal.value = true
 }
 
@@ -302,41 +315,6 @@ const submitScan = async () => {
     // Error handled
   }
 }
-
-const startPollingScanStatus = (taskId: string) => {
-  scanTaskStatus.value = {
-    task_id: taskId,
-    status: 'PENDING',
-    progress: 0,
-    result: null,
-    error: null,
-  }
-
-  scanTaskPolling.value = setInterval(async () => {
-    try {
-      const res = await getScanTaskStatus(taskId)
-      scanTaskStatus.value = res
-
-      if (res.status === 'SUCCESS' || res.status === 'FAILURE') {
-        stopPollingScanStatus()
-        tableRef.value?.reload()
-      }
-    } catch {
-      stopPollingScanStatus()
-    }
-  }, 2000)
-}
-
-const stopPollingScanStatus = () => {
-  if (scanTaskPolling.value) {
-    clearInterval(scanTaskPolling.value)
-    scanTaskPolling.value = null
-  }
-}
-
-onUnmounted(() => {
-  stopPollingScanStatus()
-})
 
 const closeScanModal = () => {
   stopPollingScanStatus()

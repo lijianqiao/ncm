@@ -17,6 +17,7 @@ engine = create_async_engine(
     pool_pre_ping=True,  # 连接前检测连接是否有效
     pool_size=settings.DB_POOL_SIZE,  # 连接池大小
     max_overflow=settings.DB_MAX_OVERFLOW,  # 最大溢出连接数
+    pool_recycle=settings.DB_POOL_RECYCLE,  # 连接回收时间，防止长时间空闲连接超时
 )
 
 AsyncSessionLocal = async_sessionmaker(
@@ -25,3 +26,8 @@ AsyncSessionLocal = async_sessionmaker(
     expire_on_commit=False,
     autoflush=False,
 )
+
+
+async def close_db() -> None:
+    """关闭数据库引擎连接池，在应用关闭时调用。"""
+    await engine.dispose()

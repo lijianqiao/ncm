@@ -75,6 +75,7 @@ router.beforeEach(async (to, from, next) => {
     } catch (error) {
       console.error(error)
       userStore.logout()
+      next({ name: 'Login' })
       return
     }
   }

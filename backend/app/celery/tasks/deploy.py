@@ -86,6 +86,8 @@ async def _save_pre_change_backup(db, device: Device, config_content: str) -> Ba
     bind=True,
     name="app.celery.tasks.deploy.deploy_task",
     queue="deploy",
+    max_retries=0,  # 禁用自动重试，下发任务是高危操作
+    autoretry_for=(),  # 不自动重试任何异常
 )
 def deploy_task(self, task_id: str) -> dict[str, Any]:
     """执行下发任务（灰度/并发/OTP断点续传）。"""

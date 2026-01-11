@@ -8,11 +8,10 @@
 
 import { request } from '@/utils/request'
 import type { ResponseBase, PaginatedResponse } from '@/types/api'
+import type { InventoryAuditStatusType } from '@/types/enums'
 
-// ==================== 枚举类型 ====================
-
-/** 盘点任务状态 */
-export type InventoryAuditStatus = 'pending' | 'running' | 'success' | 'failed'
+// 重新导出枚举类型供外部使用
+export type { InventoryAuditStatusType as InventoryAuditStatus }
 
 // ==================== 接口定义 ====================
 
@@ -37,7 +36,7 @@ export interface InventoryAudit {
   id: string
   name: string
   scope: InventoryAuditScope
-  status: InventoryAuditStatus
+  status: InventoryAuditStatusType
   celery_task_id: string | null
   stats: InventoryAuditStats | null
   created_by: string | null

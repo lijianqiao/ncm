@@ -35,7 +35,7 @@ from app.schemas.topology import (
     TopologyTaskStatus,
 )
 
-router = APIRouter(prefix="/topology", tags=["网络拓扑"])
+router = APIRouter(tags=["网络拓扑"])
 
 
 # ===== 拓扑数据查询 =====

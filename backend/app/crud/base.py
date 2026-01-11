@@ -48,6 +48,37 @@ class CRUDBase[ModelType: Base, CreateSchemaType: BaseModel, UpdateSchemaType: B
         kw = keyword.strip()
         return kw if kw else None
 
+    @staticmethod
+    def _validate_pagination(page: int, page_size: int, max_size: int = 100, default_size: int = 20) -> tuple[int, int]:
+        """验证并规范化分页参数。
+
+        Args:
+            page: 页码，小于 1 时重置为 1
+            page_size: 每页数量，小于 1 时使用默认值，超过 max_size 时截断
+            max_size: 允许的最大每页数量
+            default_size: 默认每页数量
+
+        Returns:
+            tuple[int, int]: 规范化后的 (page, page_size)
+        """
+        page = max(1, page)
+        if page_size < 1:
+            page_size = default_size
+        page_size = min(page_size, max_size)
+        return page, page_size
+
+    @staticmethod
+    def _escape_like(value: str) -> str:
+        """转义 LIKE/ILIKE 模式中的特殊字符。
+
+        Args:
+            value: 原始搜索字符串
+
+        Returns:
+            str: 转义后的字符串，可安全用于 LIKE 模式
+        """
+        return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
     async def get(self, db: AsyncSession, id: UUID) -> ModelType | None:
         """
         通过 ID 获取单个记录。
@@ -198,7 +229,16 @@ class CRUDBase[ModelType: Base, CreateSchemaType: BaseModel, UpdateSchemaType: B
                     await db.delete(obj)
 
                 success_count += 1
-            except Exception:
+            except Exception as e:
+                from app.core.logger import logger
+
+                logger.warning(
+                    "批量删除记录失败",
+                    record_id=str(id_),
+                    model=self.model.__name__,
+                    error_type=type(e).__name__,
+                    error_message=str(e),
+                )
                 failed_ids.append(id_)
 
         await db.flush()

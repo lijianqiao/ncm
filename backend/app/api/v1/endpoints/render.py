@@ -16,7 +16,7 @@ from app.api.deps import DeviceCRUDDep, RenderServiceDep, SessionDep, TemplateSe
 from app.core.permissions import PermissionCode
 from app.schemas.common import ResponseBase
 
-router = APIRouter(prefix="/render", tags=["配置渲染"])
+router = APIRouter(tags=["配置渲染"])
 
 
 class RenderRequest(BaseModel):

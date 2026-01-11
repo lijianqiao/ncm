@@ -8,17 +8,16 @@
 
 import { request } from '@/utils/request'
 import type { ResponseBase, PaginatedResponse } from '@/types/api'
+import type {
+  AlertTypeType,
+  AlertSeverityType,
+  AlertStatusType,
+} from '@/types/enums'
 
-// ==================== 枚举类型 ====================
-
-/** 告警类型 */
-export type AlertType = 'device_offline' | 'config_change' | 'threshold' | 'security'
-
-/** 告警级别 */
-export type AlertSeverity = 'info' | 'warning' | 'critical'
-
-/** 告警状态 */
-export type AlertStatus = 'open' | 'acknowledged' | 'closed'
+// 重新导出枚举类型供外部使用
+export type { AlertTypeType as AlertType }
+export type { AlertSeverityType as AlertSeverity }
+export type { AlertStatusType as AlertStatus }
 
 // ==================== 接口定义 ====================
 
@@ -27,9 +26,9 @@ export interface Alert {
   id: string
   title: string
   content: string | null
-  alert_type: AlertType
-  severity: AlertSeverity
-  status: AlertStatus
+  alert_type: AlertTypeType
+  severity: AlertSeverityType
+  status: AlertStatusType
   related_device_id: string | null
   related_device_name: string | null
   acknowledged_by: string | null
@@ -45,9 +44,9 @@ export interface AlertSearchParams {
   page?: number
   page_size?: number
   keyword?: string
-  alert_type?: AlertType
-  severity?: AlertSeverity
-  status?: AlertStatus
+  alert_type?: AlertTypeType
+  severity?: AlertSeverityType
+  status?: AlertStatusType
   related_device_id?: string
 }
 

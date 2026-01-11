@@ -12,12 +12,11 @@ import {
   NSelect,
   NTreeSelect,
   NSpace,
-  NStatistic,
-  NCard,
-  NGrid,
-  NGridItem,
   NDatePicker,
   type DropdownOption,
+  NGrid,
+  NGridItem,
+  NForm,
 } from 'naive-ui'
 import { $alert } from '@/utils/alert'
 import {
@@ -49,6 +48,7 @@ import {
 import { getDeptTree, type Dept } from '@/api/depts'
 import { formatDateTime } from '@/utils/date'
 import ProTable, { type FilterConfig } from '@/components/common/ProTable.vue'
+import { DeviceStatistics } from './components'
 
 defineOptions({
   name: 'DeviceManagement',
@@ -497,41 +497,13 @@ const handleBatchRestore = async () => {
 <template>
   <div class="device-management p-4">
     <!-- 生命周期统计卡片 -->
-    <n-card class="stats-card" :bordered="false" size="small">
-      <n-grid :cols="5" :x-gap="16">
-        <n-grid-item>
-          <n-statistic label="总设备数" :value="lifecycleStats.total" />
-        </n-grid-item>
-        <n-grid-item>
-          <n-statistic label="入库">
-            <template #default>
-              <span style="color: #909399">{{ lifecycleStats.stock }}</span>
-            </template>
-          </n-statistic>
-        </n-grid-item>
-        <n-grid-item>
-          <n-statistic label="运行中">
-            <template #default>
-              <span style="color: #18a058">{{ lifecycleStats.running }}</span>
-            </template>
-          </n-statistic>
-        </n-grid-item>
-        <n-grid-item>
-          <n-statistic label="维护中">
-            <template #default>
-              <span style="color: #f0a020">{{ lifecycleStats.maintenance }}</span>
-            </template>
-          </n-statistic>
-        </n-grid-item>
-        <n-grid-item>
-          <n-statistic label="已报废">
-            <template #default>
-              <span style="color: #d03050">{{ lifecycleStats.retired }}</span>
-            </template>
-          </n-statistic>
-        </n-grid-item>
-      </n-grid>
-    </n-card>
+    <DeviceStatistics
+      :stock="lifecycleStats.stock"
+      :running="lifecycleStats.running"
+      :maintenance="lifecycleStats.maintenance"
+      :retired="lifecycleStats.retired"
+      :total="lifecycleStats.total"
+    />
 
     <!-- 设备列表 -->
     <ProTable
@@ -798,9 +770,5 @@ const handleBatchRestore = async () => {
 
 .p-4 {
   padding: 16px;
-}
-
-.stats-card {
-  border-radius: 8px;
 }
 </style>

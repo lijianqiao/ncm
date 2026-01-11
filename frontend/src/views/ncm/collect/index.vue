@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onUnmounted } from 'vue'
+import { ref } from 'vue'
 import {
   NButton,
   NModal,
@@ -31,6 +31,7 @@ import {
 } from '@/api/collect'
 import { getDevices, type Device } from '@/api/devices'
 import { formatDateTime } from '@/utils/date'
+import { useTaskPolling } from '@/composables'
 
 defineOptions({
   name: 'CollectManagement',
@@ -99,8 +100,14 @@ const batchCollectModel = ref({
   collect_mac: true,
   otp_code: '',
 })
-const batchTaskStatus = ref<CollectTaskStatus | null>(null)
-const batchTaskPolling = ref<ReturnType<typeof setInterval> | null>(null)
+
+// 使用 useTaskPolling composable
+const {
+  taskStatus: batchTaskStatus,
+  start: startPollingTaskStatus,
+  stop: stopPollingTaskStatus,
+  reset: resetBatchTask,
+} = useTaskPolling<CollectTaskStatus>((taskId) => getCollectTaskStatus(taskId))
 
 const handleBatchCollect = async () => {
   await fetchDevices()
@@ -110,7 +117,7 @@ const handleBatchCollect = async () => {
     collect_mac: true,
     otp_code: '',
   }
-  batchTaskStatus.value = null
+  resetBatchTask()
   showBatchCollectModal.value = true
 }
 
@@ -133,44 +140,10 @@ const submitBatchCollect = async () => {
   }
 }
 
-const startPollingTaskStatus = (taskId: string) => {
-  batchTaskStatus.value = {
-    task_id: taskId,
-    status: 'PENDING',
-    progress: 0,
-    result: null,
-    error: null,
-  }
-
-  batchTaskPolling.value = setInterval(async () => {
-    try {
-      const res = await getCollectTaskStatus(taskId)
-      batchTaskStatus.value = res.data
-
-      if (res.data.status === 'SUCCESS' || res.data.status === 'FAILURE') {
-        stopPollingTaskStatus()
-      }
-    } catch {
-      stopPollingTaskStatus()
-    }
-  }, 2000)
-}
-
-const stopPollingTaskStatus = () => {
-  if (batchTaskPolling.value) {
-    clearInterval(batchTaskPolling.value)
-    batchTaskPolling.value = null
-  }
-}
-
-onUnmounted(() => {
-  stopPollingTaskStatus()
-})
-
 const closeBatchCollectModal = () => {
   stopPollingTaskStatus()
   showBatchCollectModal.value = false
-  batchTaskStatus.value = null
+  resetBatchTask()
 }
 
 // ==================== 查看 ARP/MAC 表 ====================

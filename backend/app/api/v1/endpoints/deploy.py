@@ -23,7 +23,7 @@ from app.schemas.deploy import (
     DeployTaskResponse,
 )
 
-router = APIRouter(prefix="/deploy", tags=["安全批量下发"])
+router = APIRouter(tags=["安全批量下发"])
 
 
 @router.post(

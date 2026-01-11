@@ -9,17 +9,16 @@
 import { request } from '@/utils/request'
 import type { ResponseBase, PaginatedResponse } from '@/types/api'
 import type { DeviceVendor } from './devices'
+import type {
+  TemplateTypeType,
+  TemplateStatusType,
+  DeviceTypeType,
+} from '@/types/enums'
 
-// ==================== 枚举类型 ====================
-
-/** 模板类型 */
-export type TemplateType = 'config' | 'command' | 'script'
-
-/** 模板状态 */
-export type TemplateStatus = 'draft' | 'pending' | 'approved' | 'rejected'
-
-/** 设备类型 */
-export type DeviceType = 'router' | 'switch' | 'firewall' | 'wireless' | 'server' | 'other'
+// 重新导出枚举类型供外部使用
+export type { TemplateTypeType as TemplateType }
+export type { TemplateStatusType as TemplateStatus }
+export type { DeviceTypeType as DeviceType }
 
 // ==================== 接口定义 ====================
 
@@ -28,12 +27,12 @@ export interface Template {
   id: string
   name: string
   description: string | null
-  template_type: TemplateType
+  template_type: TemplateTypeType
   content: string
   vendors: DeviceVendor[]
-  device_type: DeviceType | null
+  device_type: DeviceTypeType | null
   parameters: string | null
-  status: TemplateStatus
+  status: TemplateStatusType
   version: number
   parent_id: string | null
   created_by: string | null
@@ -46,10 +45,10 @@ export interface Template {
 export interface TemplateCreate {
   name: string
   description?: string
-  template_type?: TemplateType
+  template_type?: TemplateTypeType
   content: string
   vendors: DeviceVendor[]
-  device_type?: DeviceType
+  device_type?: DeviceTypeType
   parameters?: string
 }
 
@@ -57,12 +56,12 @@ export interface TemplateCreate {
 export interface TemplateUpdate {
   name?: string
   description?: string
-  template_type?: TemplateType
+  template_type?: TemplateTypeType
   content?: string
   vendors?: DeviceVendor[]
-  device_type?: DeviceType
+  device_type?: DeviceTypeType
   parameters?: string
-  status?: TemplateStatus
+  status?: TemplateStatusType
 }
 
 /** 模板查询参数 */
@@ -70,8 +69,8 @@ export interface TemplateSearchParams {
   page?: number
   page_size?: number
   vendor?: DeviceVendor
-  template_type?: TemplateType
-  status?: TemplateStatus
+  template_type?: TemplateTypeType
+  status?: TemplateStatusType
 }
 
 /** 新版本请求 */

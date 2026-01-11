@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, h, onUnmounted } from 'vue'
+import { ref, h } from 'vue'
 import {
   NButton,
   NModal,
@@ -29,6 +29,7 @@ import {
 import { getDevices, type Device } from '@/api/devices'
 import { getDeviceLatestDiff, type DiffResponse } from '@/api/diff'
 import { formatDateTime } from '@/utils/date'
+import { useTaskPolling } from '@/composables'
 import ProTable, { type FilterConfig } from '@/components/common/ProTable.vue'
 
 defineOptions({
@@ -250,13 +251,28 @@ const batchBackupModel = ref({
   device_ids: [] as string[],
   backup_type: 'running' as BackupType,
 })
-const batchTaskStatus = ref<BackupTaskStatus | null>(null)
-const batchTaskPolling = ref<ReturnType<typeof setInterval> | null>(null)
+
+// 使用 useTaskPolling composable
+const {
+  taskStatus: batchTaskStatus,
+  start: startPollingTaskStatus,
+  stop: stopPollingTaskStatus,
+  reset: resetBatchTask,
+} = useTaskPolling<BackupTaskStatus>(
+  (taskId) => getBackupTaskStatus(taskId),
+  {
+    onComplete: (status) => {
+      if (status.status === 'success') {
+        tableRef.value?.reload()
+      }
+    },
+  },
+)
 
 const handleBatchBackup = async () => {
   deviceLoading.value = true
   showBatchBackupModal.value = true
-  batchTaskStatus.value = null
+  resetBatchTask()
   try {
     const res = await getDevices({ page_size: 100, status: 'active' })
     deviceOptions.value = res.data.items.map((d: Device) => ({
@@ -288,46 +304,11 @@ const submitBatchBackup = async () => {
   }
 }
 
-const startPollingTaskStatus = (taskId: string) => {
-  batchTaskStatus.value = {
-    task_id: taskId,
-    status: 'pending',
-    progress: 0,
-    result: null,
-    error: null,
-  }
-
-  batchTaskPolling.value = setInterval(async () => {
-    try {
-      const res = await getBackupTaskStatus(taskId)
-      batchTaskStatus.value = res.data
-
-      if (res.data.status === 'success' || res.data.status === 'failed') {
-        stopPollingTaskStatus()
-        tableRef.value?.reload()
-      }
-    } catch {
-      stopPollingTaskStatus()
-    }
-  }, 2000)
-}
-
-const stopPollingTaskStatus = () => {
-  if (batchTaskPolling.value) {
-    clearInterval(batchTaskPolling.value)
-    batchTaskPolling.value = null
-  }
-}
-
-onUnmounted(() => {
-  stopPollingTaskStatus()
-})
-
 const closeBatchBackupModal = () => {
   stopPollingTaskStatus()
   showBatchBackupModal.value = false
   batchBackupModel.value = { device_ids: [], backup_type: 'running' }
-  batchTaskStatus.value = null
+  resetBatchTask()
 }
 </script>
 

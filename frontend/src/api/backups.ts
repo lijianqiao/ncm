@@ -8,11 +8,10 @@
 
 import { request } from '@/utils/request'
 import type { ResponseBase, PaginatedResponse } from '@/types/api'
+import type { BackupTypeType } from '@/types/enums'
 
-// ==================== 枚举类型 ====================
-
-/** 备份类型 */
-export type BackupType = 'running' | 'startup' | 'full'
+// 重新导出枚举类型供外部使用
+export type { BackupTypeType as BackupType }
 
 // ==================== 接口定义 ====================
 
@@ -21,7 +20,7 @@ export interface Backup {
   id: string
   device_id: string
   device_name: string | null
-  backup_type: BackupType
+  backup_type: BackupTypeType
   config_hash: string
   file_size: number
   created_at: string
@@ -31,7 +30,7 @@ export interface Backup {
 export interface BackupContentResponse {
   id: string
   device_name: string | null
-  backup_type: BackupType
+  backup_type: BackupTypeType
   content: string
   config_hash: string
   created_at: string
@@ -42,13 +41,13 @@ export interface BackupSearchParams {
   page?: number
   page_size?: number
   device_id?: string
-  backup_type?: BackupType
+  backup_type?: BackupTypeType
 }
 
 /** 批量备份请求 */
 export interface BatchBackupRequest {
   device_ids: string[]
-  backup_type?: BackupType
+  backup_type?: BackupTypeType
   resume_task_id?: string
   skip_device_ids?: string[]
 }

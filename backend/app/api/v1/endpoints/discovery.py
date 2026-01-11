@@ -35,7 +35,7 @@ from app.schemas.discovery import (
     ScanTaskStatus,
 )
 
-router = APIRouter(prefix="/discovery", tags=["设备发现"])
+router = APIRouter(tags=["设备发现"])
 
 
 # ===== 扫描相关 =====

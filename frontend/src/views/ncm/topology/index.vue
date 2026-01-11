@@ -24,6 +24,7 @@ import {
   type TopologyLinkResponse,
   type TopologyTaskStatus,
 } from '@/api/topology'
+import { useTaskPolling } from '@/composables'
 
 defineOptions({
   name: 'TopologyManagement',
@@ -170,7 +171,6 @@ onUnmounted(() => {
     networkInstance.destroy()
     networkInstance = null
   }
-  stopPollingTaskStatus()
 })
 
 // ==================== 节点详情 ====================
@@ -201,8 +201,19 @@ const handleShowLinks = async () => {
 // ==================== 刷新拓扑 ====================
 
 const showRefreshModal = ref(false)
-const taskStatus = ref<TopologyTaskStatus | null>(null)
-const taskPolling = ref<ReturnType<typeof setInterval> | null>(null)
+
+// 使用 useTaskPolling composable
+const {
+  taskStatus,
+  start: startPollingTaskStatus,
+  stop: stopPollingTaskStatus,
+  reset: resetTask,
+} = useTaskPolling<TopologyTaskStatus>(
+  (taskId) => getTopologyTaskStatus(taskId),
+  {
+    onComplete: () => fetchTopology(),
+  }
+)
 
 const handleRefreshTopology = () => {
   dialog.info({
@@ -228,43 +239,10 @@ const handleRefreshTopology = () => {
   })
 }
 
-const startPollingTaskStatus = (taskId: string) => {
-  taskStatus.value = {
-    task_id: taskId,
-    status: 'PENDING',
-    progress: 0,
-    result: null,
-    error: null,
-  }
-
-  taskPolling.value = setInterval(async () => {
-    try {
-      const res = await getTopologyTaskStatus(taskId)
-      taskStatus.value = res
-
-      if (res.status === 'SUCCESS' || res.status === 'FAILURE') {
-        stopPollingTaskStatus()
-        if (res.status === 'SUCCESS') {
-          fetchTopology()
-        }
-      }
-    } catch {
-      stopPollingTaskStatus()
-    }
-  }, 2000)
-}
-
-const stopPollingTaskStatus = () => {
-  if (taskPolling.value) {
-    clearInterval(taskPolling.value)
-    taskPolling.value = null
-  }
-}
-
 const closeRefreshModal = () => {
   stopPollingTaskStatus()
   showRefreshModal.value = false
-  taskStatus.value = null
+  resetTask()
 }
 
 // ==================== 重建缓存 ====================

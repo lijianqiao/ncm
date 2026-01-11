@@ -64,6 +64,7 @@ class Settings(BaseSettings):
     POSTGRES_DB: str = "admin_rbac"
     DB_POOL_SIZE: int = 5  # 连接池大小
     DB_MAX_OVERFLOW: int = 10  # 最大溢出连接数
+    DB_POOL_RECYCLE: int = 3600  # 连接回收时间（秒），防止数据库端断开空闲连接
 
     # 初始化超级管理员 (Initial Superuser)
     FIRST_SUPERUSER: str = "admin"
@@ -88,7 +89,10 @@ class Settings(BaseSettings):
         """
         根据配置生成 Redis 连接 URI.
         """
-        password_part = f":{self.REDIS_PASSWORD}@" if self.REDIS_PASSWORD else ""
+        from urllib.parse import quote
+
+        # 转义密码中的特殊字符（如 @, :, / 等）
+        password_part = f":{quote(self.REDIS_PASSWORD, safe='')}@" if self.REDIS_PASSWORD else ""
         return RedisDsn(f"redis://{password_part}{self.REDIS_HOST}:{self.REDIS_PORT}/{self.REDIS_DB}")
 
     # Celery 配置
@@ -148,7 +152,9 @@ class Settings(BaseSettings):
         """
         Celery 消息代理 URL (使用独立的 Redis DB).
         """
-        password_part = f":{self.REDIS_PASSWORD}@" if self.REDIS_PASSWORD else ""
+        from urllib.parse import quote
+
+        password_part = f":{quote(self.REDIS_PASSWORD, safe='')}@" if self.REDIS_PASSWORD else ""
         return RedisDsn(f"redis://{password_part}{self.REDIS_HOST}:{self.REDIS_PORT}/{self.CELERY_BROKER_DB}")
 
     @computed_field
@@ -157,7 +163,9 @@ class Settings(BaseSettings):
         """
         Celery 结果后端 URL (使用独立的 Redis DB).
         """
-        password_part = f":{self.REDIS_PASSWORD}@" if self.REDIS_PASSWORD else ""
+        from urllib.parse import quote
+
+        password_part = f":{quote(self.REDIS_PASSWORD, safe='')}@" if self.REDIS_PASSWORD else ""
         return RedisDsn(f"redis://{password_part}{self.REDIS_HOST}:{self.REDIS_PORT}/{self.CELERY_RESULT_DB}")
 
     @computed_field

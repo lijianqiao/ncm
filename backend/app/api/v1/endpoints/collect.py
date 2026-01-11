@@ -24,7 +24,7 @@ from app.schemas.collect import (
 )
 from app.schemas.common import ResponseBase
 
-router = APIRouter(prefix="/collect", tags=["ARP/MAC采集"])
+router = APIRouter(tags=["ARP/MAC采集"])
 
 
 # ===== 手动采集 =====

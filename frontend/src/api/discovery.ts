@@ -8,11 +8,11 @@
 
 import { request } from '@/utils/request'
 import type { ResponseBase, PaginatedResponse } from '@/types/api'
+import { DiscoveryStatus } from '@/types/enums'
+import type { DiscoveryStatusType } from '@/types/enums'
 
-// ==================== 枚举类型 ====================
-
-/** 发现状态 */
-export type DiscoveryStatus = 'new' | 'ignored' | 'matched'
+// 重新导出枚举类型供外部使用
+export type { DiscoveryStatusType as DiscoveryStatus }
 
 // ==================== 接口定义 ====================
 
@@ -30,7 +30,7 @@ export interface DiscoveryRecord {
   first_seen_at: string
   last_seen_at: string
   offline_days: number
-  status: DiscoveryStatus
+  status: DiscoveryStatusType
   matched_device_id: string | null
   matched_device_name: string | null
   matched_device_ip: string | null
@@ -43,7 +43,7 @@ export interface DiscoveryRecord {
 export interface DiscoverySearchParams {
   page?: number
   page_size?: number
-  status?: DiscoveryStatus
+  status?: DiscoveryStatusType
   keyword?: string
   scan_source?: string
 }

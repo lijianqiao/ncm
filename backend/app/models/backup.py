@@ -47,7 +47,7 @@ class Backup(AuditableModel):
         String(20), default=BackupType.MANUAL.value, nullable=False, comment="备份类型"
     )
     status: Mapped[str] = mapped_column(
-        String(20), default=BackupStatus.SUCCESS.value, nullable=False, comment="备份状态"
+        String(20), default=BackupStatus.SUCCESS.value, nullable=False, index=True, comment="备份状态"
     )
     md5_hash: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True, comment="MD5 哈希值")
 

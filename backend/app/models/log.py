@@ -9,7 +9,7 @@
 import uuid
 from typing import Any
 
-from sqlalchemy import JSON, Boolean, Float, ForeignKey, Integer, String
+from sqlalchemy import JSON, Boolean, Float, ForeignKey, Index, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import AuditableModel
@@ -17,6 +17,10 @@ from app.models.base import AuditableModel
 
 class LoginLog(AuditableModel):
     __tablename__ = "sys_login_log"
+    __table_args__ = (
+        Index("ix_sys_login_log_created_at", "created_at"),
+        {"comment": "登录日志表"},
+    )
 
     user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("sys_user.id", ondelete="SET NULL"), nullable=True)
     username: Mapped[str | None] = mapped_column(String(50), nullable=True)
@@ -31,6 +35,10 @@ class LoginLog(AuditableModel):
 
 class OperationLog(AuditableModel):
     __tablename__ = "sys_operation_log"
+    __table_args__ = (
+        Index("ix_sys_operation_log_created_at", "created_at"),
+        {"comment": "操作日志表"},
+    )
 
     user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("sys_user.id", ondelete="SET NULL"), nullable=True)
     username: Mapped[str | None] = mapped_column(String(50), nullable=True)
