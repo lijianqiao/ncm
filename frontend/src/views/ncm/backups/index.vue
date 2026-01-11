@@ -255,6 +255,7 @@ const batchBackupModel = ref({
 // 使用 useTaskPolling composable
 const {
   taskStatus: batchTaskStatus,
+  isPolling: batchTaskPolling,
   start: startPollingTaskStatus,
   stop: stopPollingTaskStatus,
   reset: resetBatchTask,

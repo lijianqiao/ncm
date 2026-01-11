@@ -10,11 +10,12 @@ from typing import Annotated, Any
 
 from celery.result import AsyncResult
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.api.deps import get_current_active_superuser
 from app.celery.app import celery_app
 from app.models.user import User
+from app.schemas.common import ResponseBase
 
 router = APIRouter()
 
@@ -73,8 +74,14 @@ async def get_task_status(task_id: str, _: SuperuserDep) -> TaskResponse:
     return response
 
 
-@router.delete("/{task_id}")
-async def revoke_task(task_id: str, _: SuperuserDep) -> dict:
+class RevokeResponse(BaseModel):
+    """任务撤销响应。"""
+
+    message: str = Field(..., description="操作结果消息")
+
+
+@router.delete("/{task_id}", response_model=ResponseBase[RevokeResponse])
+async def revoke_task(task_id: str, _: SuperuserDep) -> ResponseBase[RevokeResponse]:
     """撤销或强制终止正在执行的任务。
 
     仅限超级管理员访问。
@@ -84,10 +91,10 @@ async def revoke_task(task_id: str, _: SuperuserDep) -> dict:
         _ (User): 超级管理员权限验证。
 
     Returns:
-        dict: 操作确认信息。
+        ResponseBase[RevokeResponse]: 操作确认信息。
     """
     celery_app.control.revoke(task_id, terminate=True)
-    return {"message": f"任务 {task_id} 已被撤销"}
+    return ResponseBase(data=RevokeResponse(message=f"任务 {task_id} 已被撤销"))
 
 
 # ==================== 测试任务 ====================
@@ -160,8 +167,16 @@ async def trigger_long_running(_: SuperuserDep, duration: int = 10) -> TaskRespo
 # ==================== Worker 状态 ====================
 
 
-@router.get("/workers/stats")
-async def get_worker_stats(_: SuperuserDep) -> dict:
+class WorkerStatsResponse(BaseModel):
+    """Worker 统计响应。"""
+
+    workers: list[str] = Field(default_factory=list, description="Worker 列表")
+    active_tasks: dict[str, int] = Field(default_factory=dict, description="各 Worker 活跃任务数")
+    stats: dict[str, Any] = Field(default_factory=dict, description="详细统计信息")
+
+
+@router.get("/workers/stats", response_model=ResponseBase[WorkerStatsResponse])
+async def get_worker_stats(_: SuperuserDep) -> ResponseBase[WorkerStatsResponse]:
     """实时获取当前已注册的所有 Celery Worker 节点的统计状态。
 
     仅限超级管理员访问。返回包括并发设置、已完成任务数、运行中的任务等。
@@ -170,7 +185,7 @@ async def get_worker_stats(_: SuperuserDep) -> dict:
         _ (User): 超级管理员权限验证。
 
     Returns:
-        dict: 包含 workers 列表、stats 统计和活动任务详情。
+        ResponseBase[WorkerStatsResponse]: 包含 workers 列表、stats 统计和活动任务详情。
     """
     inspect = celery_app.control.inspect()
 
@@ -178,8 +193,10 @@ async def get_worker_stats(_: SuperuserDep) -> dict:
     active_workers = inspect.active() or {}
     stats = inspect.stats() or {}
 
-    return {
-        "workers": list(active_workers.keys()),
-        "active_tasks": {worker: len(tasks) for worker, tasks in active_workers.items()},
-        "stats": stats,
-    }
+    return ResponseBase(
+        data=WorkerStatsResponse(
+            workers=list(active_workers.keys()),
+            active_tasks={worker: len(tasks) for worker, tasks in active_workers.items()},
+            stats=stats,
+        )
+    )

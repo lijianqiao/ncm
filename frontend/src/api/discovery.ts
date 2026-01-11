@@ -64,6 +64,13 @@ export interface ScanResult {
   matched_hosts: number
 }
 
+/** 扫描任务响应 */
+export interface ScanTaskResponse {
+  task_id: string
+  status: string
+  message: string
+}
+
 /** 扫描任务状态 */
 export interface ScanTaskStatus {
   task_id: string
@@ -96,7 +103,7 @@ export interface OfflineDevice {
 
 /** 触发网络扫描 */
 export function triggerScan(data: ScanRequest) {
-  return request<ResponseBase<{ task_id?: string; result?: ScanResult }>>({
+  return request<ResponseBase<ScanTaskResponse>>({
     url: '/discovery/scan',
     method: 'post',
     data,
@@ -105,7 +112,7 @@ export function triggerScan(data: ScanRequest) {
 
 /** 查询扫描任务状态 */
 export function getScanTaskStatus(taskId: string) {
-  return request<ScanTaskStatus>({
+  return request<ResponseBase<ScanTaskStatus>>({
     url: `/discovery/scan/task/${taskId}`,
     method: 'get',
   })
@@ -113,7 +120,7 @@ export function getScanTaskStatus(taskId: string) {
 
 /** 获取发现记录列表 */
 export function getDiscoveryRecords(params?: DiscoverySearchParams) {
-  return request<PaginatedResponse<DiscoveryRecord>>({
+  return request<ResponseBase<PaginatedResponse<DiscoveryRecord>>>({
     url: '/discovery/',
     method: 'get',
     params,
@@ -122,7 +129,7 @@ export function getDiscoveryRecords(params?: DiscoverySearchParams) {
 
 /** 获取发现记录详情 */
 export function getDiscoveryRecord(id: string) {
-  return request<DiscoveryRecord>({
+  return request<ResponseBase<DiscoveryRecord>>({
     url: `/discovery/${id}`,
     method: 'get',
   })
@@ -130,7 +137,7 @@ export function getDiscoveryRecord(id: string) {
 
 /** 删除发现记录 */
 export function deleteDiscoveryRecord(id: string) {
-  return request<ResponseBase<unknown>>({
+  return request<ResponseBase<{ message: string }>>({
     url: `/discovery/${id}`,
     method: 'delete',
   })
@@ -138,7 +145,7 @@ export function deleteDiscoveryRecord(id: string) {
 
 /** 纳管设备 */
 export function adoptDevice(discoveryId: string, data: AdoptDeviceRequest) {
-  return request<ResponseBase<{ device_id: string }>>({
+  return request<ResponseBase<{ message: string; device_id: string; device_name: string }>>({
     url: `/discovery/${discoveryId}/adopt`,
     method: 'post',
     data,
@@ -147,7 +154,7 @@ export function adoptDevice(discoveryId: string, data: AdoptDeviceRequest) {
 
 /** 获取影子资产列表 */
 export function getShadowAssets(params?: { page?: number; page_size?: number }) {
-  return request<PaginatedResponse<DiscoveryRecord>>({
+  return request<ResponseBase<PaginatedResponse<DiscoveryRecord>>>({
     url: '/discovery/shadow',
     method: 'get',
     params,
@@ -165,7 +172,7 @@ export function getOfflineDevices(daysThreshold?: number) {
 
 /** 执行 CMDB 比对 */
 export function compareCMDB(asyncMode: boolean = true) {
-  return request<ResponseBase<{ task_id?: string; result?: unknown }>>({
+  return request<ResponseBase<ScanTaskResponse>>({
     url: '/discovery/compare',
     method: 'post',
     params: { async_mode: asyncMode },

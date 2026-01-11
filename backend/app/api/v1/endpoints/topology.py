@@ -27,11 +27,14 @@ from app.celery.tasks.topology import (
     collect_topology,
 )
 from app.core.permissions import PermissionCode
+from app.schemas.common import ResponseBase
 from app.schemas.topology import (
     DeviceNeighborsResponse,
     TopologyCollectRequest,
     TopologyCollectResult,
+    TopologyLinksResponse,
     TopologyResponse,
+    TopologyTaskResponse,
     TopologyTaskStatus,
 )
 
@@ -44,13 +47,13 @@ router = APIRouter(tags=["网络拓扑"])
 @router.get(
     "/",
     summary="获取拓扑数据",
-    response_model=TopologyResponse,
+    response_model=ResponseBase[TopologyResponse],
     dependencies=[Depends(require_permissions([PermissionCode.TOPOLOGY_VIEW.value]))],
 )
 async def get_topology(
     db: SessionDep,
     topology_service: TopologyServiceDep,
-) -> TopologyResponse:
+) -> ResponseBase[TopologyResponse]:
     """获取完整的网络拓扑数据，用于前端 vis.js 或相关拓扑引擎渲染。
 
     Args:
@@ -58,14 +61,16 @@ async def get_topology(
         topology_service (TopologyService): 拓扑服务依赖。
 
     Returns:
-        TopologyResponse: 包含节点 (nodes)、边 (edges) 和统计数据的对象。
+        ResponseBase[TopologyResponse]: 包含节点 (nodes)、边 (edges) 和统计数据的对象。
     """
-    return await topology_service.build_topology(db)
+    data = await topology_service.build_topology(db)
+    return ResponseBase(data=data)
 
 
 @router.get(
     "/links",
     summary="获取链路列表",
+    response_model=ResponseBase[TopologyLinksResponse],
     dependencies=[Depends(require_permissions([PermissionCode.TOPOLOGY_VIEW.value]))],
 )
 async def list_topology_links(
@@ -73,7 +78,7 @@ async def list_topology_links(
     topology_service: TopologyServiceDep,
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
-) -> dict[str, Any]:
+) -> ResponseBase[TopologyLinksResponse]:
     """分页获取所有已发现的网络链路列表。
 
     Args:
@@ -83,42 +88,46 @@ async def list_topology_links(
         page_size (int): 每页条数。
 
     Returns:
-        dict[str, Any]: 包含 links 列表和分页信息的字典。
+        ResponseBase[TopologyLinksResponse]: 包含 links 列表和分页信息的响应。
     """
     links, total = await topology_service.get_all_links(db, page=page, page_size=page_size)
 
-    return {
-        "items": [
-            {
-                "id": str(link.id),
-                "source_device_id": str(link.source_device_id),
-                "source_interface": link.source_interface,
-                "target_device_id": str(link.target_device_id) if link.target_device_id else None,
-                "target_interface": link.target_interface,
-                "target_hostname": link.target_hostname,
-                "target_ip": link.target_ip,
-                "link_type": link.link_type,
-                "collected_at": link.collected_at.isoformat() if link.collected_at else None,
-            }
-            for link in links
-        ],
-        "total": total,
-        "page": page,
-        "page_size": page_size,
-    }
+    items = [
+        {
+            "id": str(link.id),
+            "source_device_id": str(link.source_device_id),
+            "source_interface": link.source_interface,
+            "target_device_id": str(link.target_device_id) if link.target_device_id else None,
+            "target_interface": link.target_interface,
+            "target_hostname": link.target_hostname,
+            "target_ip": link.target_ip,
+            "link_type": link.link_type,
+            "collected_at": link.collected_at.isoformat() if link.collected_at else None,
+        }
+        for link in links
+    ]
+
+    return ResponseBase(
+        data=TopologyLinksResponse(
+            items=items,
+            total=total,
+            page=page,
+            page_size=page_size,
+        )
+    )
 
 
 @router.get(
     "/device/{device_id}/neighbors",
     summary="获取设备邻居",
-    response_model=DeviceNeighborsResponse,
+    response_model=ResponseBase[DeviceNeighborsResponse],
     dependencies=[Depends(require_permissions([PermissionCode.TOPOLOGY_VIEW.value]))],
 )
 async def get_device_neighbors(
     db: SessionDep,
     device_id: UUID,
     topology_service: TopologyServiceDep,
-) -> DeviceNeighborsResponse:
+) -> ResponseBase[DeviceNeighborsResponse]:
     """获取指定设备的所有直接连接的邻居链路。
 
     Args:
@@ -127,9 +136,10 @@ async def get_device_neighbors(
         topology_service (TopologyService): 拓扑服务依赖。
 
     Returns:
-        DeviceNeighborsResponse: 邻居链路列表。
+        ResponseBase[DeviceNeighborsResponse]: 邻居链路列表。
     """
-    return await topology_service.get_device_neighbors(db, device_id=device_id)
+    data = await topology_service.get_device_neighbors(db, device_id=device_id)
+    return ResponseBase(data=data)
 
 
 @router.get(
@@ -166,13 +176,13 @@ async def export_topology(
 @router.post(
     "/refresh",
     summary="刷新拓扑",
-    response_model=dict[str, Any],
+    response_model=ResponseBase[TopologyTaskResponse],
     dependencies=[Depends(require_permissions([PermissionCode.TOPOLOGY_REFRESH.value]))],
 )
 async def refresh_topology(
     request: TopologyCollectRequest,
     current_user: CurrentUser,
-) -> dict[str, Any]:
+) -> ResponseBase[TopologyTaskResponse]:
     """触发全局或指定范围的拓扑发现任务。
 
     Args:
@@ -180,34 +190,42 @@ async def refresh_topology(
         current_user (User): 当前操作用户。
 
     Returns:
-        dict[str, Any]: 任务 ID 或同步执行结果。
+        ResponseBase[TopologyTaskResponse]: 任务 ID 或同步执行结果。
     """
     device_ids = [str(d) for d in request.device_ids] if request.device_ids else None
 
     if request.async_mode:
         task = cast(Any, collect_topology).delay(device_ids=device_ids)
-        return {
-            "task_id": task.id,
-            "status": "pending",
-            "message": "拓扑采集任务已提交",
-        }
+        return ResponseBase(
+            data=TopologyTaskResponse(
+                task_id=task.id,
+                status="pending",
+                message="拓扑采集任务已提交",
+            )
+        )
     else:
         # 同步执行
         result = cast(Any, collect_topology).apply(kwargs={"device_ids": device_ids})
-        return result.get()
+        return ResponseBase(
+            data=TopologyTaskResponse(
+                task_id=result.id if result else "",
+                status="success",
+                message="同步拓扑采集完成",
+            )
+        )
 
 
 @router.post(
     "/device/{device_id}/collect",
     summary="采集单设备拓扑",
-    response_model=dict[str, Any],
+    response_model=ResponseBase[TopologyTaskResponse],
     dependencies=[Depends(require_permissions([PermissionCode.TOPOLOGY_REFRESH.value]))],
 )
 async def collect_single_device_topology(
     device_id: UUID,
     current_user: CurrentUser,
     async_mode: bool = Query(True),
-) -> dict[str, Any]:
+) -> ResponseBase[TopologyTaskResponse]:
     """针对单个特定设备执行 LLDP 邻居采集。
 
     Args:
@@ -216,34 +234,42 @@ async def collect_single_device_topology(
         async_mode (bool): 是否异步模式。
 
     Returns:
-        dict[str, Any]: 任务 ID 或执行信息。
+        ResponseBase[TopologyTaskResponse]: 任务 ID 或执行信息。
     """
     if async_mode:
         task = cast(Any, collect_device_topology).delay(device_id=str(device_id))
-        return {
-            "task_id": task.id,
-            "status": "pending",
-            "message": "设备拓扑采集任务已提交",
-        }
+        return ResponseBase(
+            data=TopologyTaskResponse(
+                task_id=task.id,
+                status="pending",
+                message="设备拓扑采集任务已提交",
+            )
+        )
     else:
         result = cast(Any, collect_device_topology).apply(args=[str(device_id)])
-        return result.get()
+        return ResponseBase(
+            data=TopologyTaskResponse(
+                task_id=result.id if result else "",
+                status="success",
+                message="同步设备拓扑采集完成",
+            )
+        )
 
 
 @router.get(
     "/task/{task_id}",
     summary="查询拓扑任务状态",
-    response_model=TopologyTaskStatus,
+    response_model=ResponseBase[TopologyTaskStatus],
     dependencies=[Depends(require_permissions([PermissionCode.TOPOLOGY_VIEW.value]))],
 )
-async def get_topology_task_status(task_id: str) -> TopologyTaskStatus:
+async def get_topology_task_status(task_id: str) -> ResponseBase[TopologyTaskStatus]:
     """查询拓扑采集后台任务的执行实时状态。
 
     Args:
         task_id (str): Celery 任务 ID。
 
     Returns:
-        TopologyTaskStatus: 任务状态和（如有）结果数据。
+        ResponseBase[TopologyTaskStatus]: 任务状态和（如有）结果数据。
     """
     result = AsyncResult(task_id)
 
@@ -259,28 +285,31 @@ async def get_topology_task_status(task_id: str) -> TopologyTaskStatus:
         else:
             status.error = str(result.result)
 
-    return status
+    return ResponseBase(data=status)
 
 
 @router.post(
     "/cache/rebuild",
     summary="重建拓扑缓存",
+    response_model=ResponseBase[TopologyTaskResponse],
     dependencies=[Depends(require_permissions([PermissionCode.TOPOLOGY_REFRESH.value]))],
 )
 async def rebuild_topology_cache(
     current_user: CurrentUser,
-) -> dict[str, Any]:
+) -> ResponseBase[TopologyTaskResponse]:
     """强制重新从数据库构建拓扑缓存并更新到 Redis。
 
     Args:
         current_user (User): 当前用户。
 
     Returns:
-        dict[str, Any]: 任务 ID 信息。
+        ResponseBase[TopologyTaskResponse]: 任务 ID 信息。
     """
     task = cast(Any, build_topology_cache).delay()
-    return {
-        "task_id": task.id,
-        "status": "pending",
-        "message": "拓扑缓存重建任务已提交",
-    }
+    return ResponseBase(
+        data=TopologyTaskResponse(
+            task_id=task.id,
+            status="pending",
+            message="拓扑缓存重建任务已提交",
+        )
+    )

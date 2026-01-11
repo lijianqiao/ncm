@@ -87,6 +87,28 @@ class ScanTaskStatus(BaseModel):
     error: str | None = Field(default=None, description="错误信息")
 
 
+class ScanTaskResponse(BaseModel):
+    """扫描任务提交响应。"""
+
+    task_id: str = Field(..., description="任务ID")
+    status: str = Field(default="pending", description="任务状态")
+    message: str = Field(default="扫描任务已提交", description="提示信息")
+
+
+class AdoptResponse(BaseModel):
+    """设备纳管响应。"""
+
+    message: str = Field(default="设备纳管成功", description="操作结果消息")
+    device_id: str = Field(..., description="新设备ID")
+    device_name: str = Field(..., description="设备名称")
+
+
+class DeleteResponse(BaseModel):
+    """删除操作响应。"""
+
+    message: str = Field(default="删除成功", description="操作结果消息")
+
+
 # ===== Discovery CRUD =====
 
 

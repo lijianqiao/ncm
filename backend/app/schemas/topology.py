@@ -163,6 +163,23 @@ class TopologyTaskStatus(BaseModel):
     error: str | None = Field(default=None, description="错误信息")
 
 
+class TopologyTaskResponse(BaseModel):
+    """拓扑任务提交响应。"""
+
+    task_id: str = Field(..., description="任务ID")
+    status: str = Field(default="pending", description="任务状态")
+    message: str = Field(default="任务已提交", description="提示信息")
+
+
+class TopologyLinksResponse(BaseModel):
+    """拓扑链路列表响应。"""
+
+    items: list[dict] = Field(default_factory=list, description="链路列表")
+    total: int = Field(default=0, description="总数")
+    page: int = Field(default=1, description="当前页")
+    page_size: int = Field(default=50, description="每页数量")
+
+
 # ===== 邻居查询 =====
 
 
