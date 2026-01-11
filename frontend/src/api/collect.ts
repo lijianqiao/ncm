@@ -95,7 +95,7 @@ export interface BatchCollectRequest {
 /** 手动采集单设备 */
 export function collectDevice(deviceId: string) {
   return request<ResponseBase<DeviceCollectResult>>({
-    url: `/collect/collect/device/${deviceId}`,
+    url: `/collect/device/${deviceId}`,
     method: 'post',
     data: {},
   })
@@ -104,7 +104,7 @@ export function collectDevice(deviceId: string) {
 /** 批量采集设备 */
 export function batchCollect(data: BatchCollectRequest) {
   return request<ResponseBase<CollectResult>>({
-    url: '/collect/collect/batch',
+    url: '/collect/batch',
     method: 'post',
     data,
   })
@@ -113,7 +113,7 @@ export function batchCollect(data: BatchCollectRequest) {
 /** 异步批量采集 */
 export function batchCollectAsync(data: BatchCollectRequest) {
   return request<ResponseBase<CollectTaskStatus>>({
-    url: '/collect/collect/batch/async',
+    url: '/collect/batch/async',
     method: 'post',
     data,
   })
@@ -122,7 +122,7 @@ export function batchCollectAsync(data: BatchCollectRequest) {
 /** 查询采集任务状态 */
 export function getCollectTaskStatus(taskId: string) {
   return request<ResponseBase<CollectTaskStatus>>({
-    url: `/collect/collect/task/${taskId}`,
+    url: `/collect/task/${taskId}`,
     method: 'get',
   })
 }
@@ -130,7 +130,7 @@ export function getCollectTaskStatus(taskId: string) {
 /** 获取设备 ARP 表 */
 export function getDeviceARPTable(deviceId: string) {
   return request<ResponseBase<ARPTableResponse>>({
-    url: `/collect/collect/device/${deviceId}/arp`,
+    url: `/collect/device/${deviceId}/arp`,
     method: 'get',
   })
 }
@@ -138,7 +138,7 @@ export function getDeviceARPTable(deviceId: string) {
 /** 获取设备 MAC 表 */
 export function getDeviceMACTable(deviceId: string) {
   return request<ResponseBase<MACTableResponse>>({
-    url: `/collect/collect/device/${deviceId}/mac`,
+    url: `/collect/device/${deviceId}/mac`,
     method: 'get',
   })
 }
@@ -146,7 +146,7 @@ export function getDeviceMACTable(deviceId: string) {
 /** IP 地址定位 */
 export function locateIP(ipAddress: string) {
   return request<ResponseBase<LocateResponse>>({
-    url: `/collect/collect/locate/ip/${encodeURIComponent(ipAddress)}`,
+    url: `/collect/locate/ip/${encodeURIComponent(ipAddress)}`,
     method: 'get',
   })
 }
@@ -154,7 +154,7 @@ export function locateIP(ipAddress: string) {
 /** MAC 地址定位 */
 export function locateMAC(macAddress: string) {
   return request<ResponseBase<LocateResponse>>({
-    url: `/collect/collect/locate/mac/${encodeURIComponent(macAddress)}`,
+    url: `/collect/locate/mac/${encodeURIComponent(macAddress)}`,
     method: 'get',
   })
 }

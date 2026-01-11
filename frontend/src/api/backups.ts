@@ -75,7 +75,7 @@ export interface BackupTaskStatus {
 /** 获取备份列表 */
 export function getBackups(params?: BackupSearchParams) {
   return request<ResponseBase<PaginatedResponse<Backup>>>({
-    url: '/backups/backups/',
+    url: '/backups/',
     method: 'get',
     params,
   })
@@ -84,7 +84,7 @@ export function getBackups(params?: BackupSearchParams) {
 /** 获取备份详情 */
 export function getBackup(id: string) {
   return request<ResponseBase<Backup>>({
-    url: `/backups/backups/${id}`,
+    url: `/backups/${id}`,
     method: 'get',
   })
 }
@@ -92,7 +92,7 @@ export function getBackup(id: string) {
 /** 获取备份配置内容 */
 export function getBackupContent(id: string) {
   return request<ResponseBase<BackupContentResponse>>({
-    url: `/backups/backups/${id}/content`,
+    url: `/backups/${id}/content`,
     method: 'get',
   })
 }
@@ -100,7 +100,7 @@ export function getBackupContent(id: string) {
 /** 删除备份 */
 export function deleteBackup(id: string) {
   return request<ResponseBase<unknown>>({
-    url: `/backups/backups/${id}`,
+    url: `/backups/${id}`,
     method: 'delete',
   })
 }
@@ -108,7 +108,7 @@ export function deleteBackup(id: string) {
 /** 手动备份单设备 */
 export function backupDevice(deviceId: string) {
   return request<ResponseBase<Backup>>({
-    url: `/backups/backups/device/${deviceId}`,
+    url: `/backups/device/${deviceId}`,
     method: 'post',
     data: {},
   })
@@ -117,7 +117,7 @@ export function backupDevice(deviceId: string) {
 /** 批量备份设备 */
 export function batchBackup(data: BatchBackupRequest) {
   return request<ResponseBase<BackupBatchResult>>({
-    url: '/backups/backups/batch',
+    url: '/backups/batch',
     method: 'post',
     data,
   })
@@ -126,7 +126,7 @@ export function batchBackup(data: BatchBackupRequest) {
 /** 查询备份任务状态 */
 export function getBackupTaskStatus(taskId: string) {
   return request<ResponseBase<BackupTaskStatus>>({
-    url: `/backups/backups/task/${taskId}`,
+    url: `/backups/task/${taskId}`,
     method: 'get',
   })
 }
@@ -134,7 +134,7 @@ export function getBackupTaskStatus(taskId: string) {
 /** 获取设备最新备份 */
 export function getDeviceLatestBackup(deviceId: string) {
   return request<ResponseBase<Backup>>({
-    url: `/backups/backups/device/${deviceId}/latest`,
+    url: `/backups/device/${deviceId}/latest`,
     method: 'get',
   })
 }
@@ -145,7 +145,7 @@ export function getDeviceBackupHistory(
   params?: { page?: number; page_size?: number },
 ) {
   return request<ResponseBase<PaginatedResponse<Backup>>>({
-    url: `/backups/backups/device/${deviceId}/history`,
+    url: `/backups/device/${deviceId}/history`,
     method: 'get',
     params,
   })
@@ -154,5 +154,5 @@ export function getDeviceBackupHistory(
 /** 下载备份配置文件 */
 export function downloadBackup(id: string) {
   // 返回下载 URL，由前端处理下载
-  return `/backups/backups/${id}/download`
+  return `/backups/${id}/download`
 }

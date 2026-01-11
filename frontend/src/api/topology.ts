@@ -95,7 +95,7 @@ export interface TopologyTaskStatus {
 /** 获取拓扑数据 */
 export function getTopology() {
   return request<TopologyResponse>({
-    url: '/topology/topology/',
+    url: '/topology/',
     method: 'get',
   })
 }
@@ -103,7 +103,7 @@ export function getTopology() {
 /** 获取链路列表 */
 export function getTopologyLinks(params?: { page?: number; page_size?: number }) {
   return request<{ links: TopologyLinkResponse[]; total: number; page: number; page_size: number }>({
-    url: '/topology/topology/links',
+    url: '/topology/links',
     method: 'get',
     params,
   })
@@ -112,7 +112,7 @@ export function getTopologyLinks(params?: { page?: number; page_size?: number })
 /** 获取设备邻居 */
 export function getDeviceNeighbors(deviceId: string) {
   return request<DeviceNeighborsResponse>({
-    url: `/topology/topology/device/${deviceId}/neighbors`,
+    url: `/topology/device/${deviceId}/neighbors`,
     method: 'get',
   })
 }
@@ -120,7 +120,7 @@ export function getDeviceNeighbors(deviceId: string) {
 /** 导出拓扑数据 */
 export function exportTopology() {
   return request<Blob>({
-    url: '/topology/topology/export',
+    url: '/topology/export',
     method: 'get',
     responseType: 'blob',
   })
@@ -129,7 +129,7 @@ export function exportTopology() {
 /** 刷新拓扑（全局采集） */
 export function refreshTopology(data?: TopologyCollectRequest) {
   return request<ResponseBase<{ task_id?: string; result?: TopologyCollectResult }>>({
-    url: '/topology/topology/refresh',
+    url: '/topology/refresh',
     method: 'post',
     data: data || {},
   })
@@ -138,7 +138,7 @@ export function refreshTopology(data?: TopologyCollectRequest) {
 /** 采集单设备拓扑 */
 export function collectDeviceTopology(deviceId: string, asyncMode: boolean = true) {
   return request<ResponseBase<{ task_id?: string; result?: unknown }>>({
-    url: `/topology/topology/device/${deviceId}/collect`,
+    url: `/topology/device/${deviceId}/collect`,
     method: 'post',
     params: { async_mode: asyncMode },
   })
@@ -147,7 +147,7 @@ export function collectDeviceTopology(deviceId: string, asyncMode: boolean = tru
 /** 查询拓扑任务状态 */
 export function getTopologyTaskStatus(taskId: string) {
   return request<TopologyTaskStatus>({
-    url: `/topology/topology/task/${taskId}`,
+    url: `/topology/task/${taskId}`,
     method: 'get',
   })
 }
@@ -155,7 +155,7 @@ export function getTopologyTaskStatus(taskId: string) {
 /** 重建拓扑缓存 */
 export function rebuildTopologyCache() {
   return request<ResponseBase<{ task_id?: string }>>({
-    url: '/topology/topology/cache/rebuild',
+    url: '/topology/cache/rebuild',
     method: 'post',
   })
 }

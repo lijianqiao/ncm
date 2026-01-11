@@ -114,7 +114,7 @@ export interface DeploySearchParams {
 /** 获取下发任务列表 */
 export function getDeployTasks(params?: DeploySearchParams) {
   return request<ResponseBase<PaginatedResponse<DeployTask>>>({
-    url: '/deploy/deploy/',
+    url: '/deploy/',
     method: 'get',
     params,
   })
@@ -123,7 +123,7 @@ export function getDeployTasks(params?: DeploySearchParams) {
 /** 获取下发任务详情 */
 export function getDeployTask(id: string) {
   return request<ResponseBase<DeployTask>>({
-    url: `/deploy/deploy/${id}`,
+    url: `/deploy/${id}`,
     method: 'get',
   })
 }
@@ -131,7 +131,7 @@ export function getDeployTask(id: string) {
 /** 创建下发任务 */
 export function createDeployTask(data: DeployCreateRequest) {
   return request<ResponseBase<DeployTask>>({
-    url: '/deploy/deploy/',
+    url: '/deploy/',
     method: 'post',
     data,
   })
@@ -140,7 +140,7 @@ export function createDeployTask(data: DeployCreateRequest) {
 /** 审批下发任务 */
 export function approveDeployTask(id: string, data: DeployApproveRequest) {
   return request<ResponseBase<DeployTask>>({
-    url: `/deploy/deploy/${id}/approve`,
+    url: `/deploy/${id}/approve`,
     method: 'post',
     data,
   })
@@ -149,7 +149,7 @@ export function approveDeployTask(id: string, data: DeployApproveRequest) {
 /** 执行下发任务 */
 export function executeDeployTask(id: string) {
   return request<ResponseBase<DeployTask>>({
-    url: `/deploy/deploy/${id}/execute`,
+    url: `/deploy/${id}/execute`,
     method: 'post',
   })
 }
@@ -157,7 +157,7 @@ export function executeDeployTask(id: string) {
 /** 回滚下发任务 */
 export function rollbackDeployTask(id: string) {
   return request<ResponseBase<DeployRollbackResponse>>({
-    url: `/deploy/deploy/${id}/rollback`,
+    url: `/deploy/${id}/rollback`,
     method: 'post',
   })
 }

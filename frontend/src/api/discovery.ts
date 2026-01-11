@@ -97,7 +97,7 @@ export interface OfflineDevice {
 /** 触发网络扫描 */
 export function triggerScan(data: ScanRequest) {
   return request<ResponseBase<{ task_id?: string; result?: ScanResult }>>({
-    url: '/discovery/discovery/scan',
+    url: '/discovery/scan',
     method: 'post',
     data,
   })
@@ -106,7 +106,7 @@ export function triggerScan(data: ScanRequest) {
 /** 查询扫描任务状态 */
 export function getScanTaskStatus(taskId: string) {
   return request<ScanTaskStatus>({
-    url: `/discovery/discovery/scan/task/${taskId}`,
+    url: `/discovery/scan/task/${taskId}`,
     method: 'get',
   })
 }
@@ -114,7 +114,7 @@ export function getScanTaskStatus(taskId: string) {
 /** 获取发现记录列表 */
 export function getDiscoveryRecords(params?: DiscoverySearchParams) {
   return request<PaginatedResponse<DiscoveryRecord>>({
-    url: '/discovery/discovery/',
+    url: '/discovery/',
     method: 'get',
     params,
   })
@@ -123,7 +123,7 @@ export function getDiscoveryRecords(params?: DiscoverySearchParams) {
 /** 获取发现记录详情 */
 export function getDiscoveryRecord(id: string) {
   return request<DiscoveryRecord>({
-    url: `/discovery/discovery/${id}`,
+    url: `/discovery/${id}`,
     method: 'get',
   })
 }
@@ -131,7 +131,7 @@ export function getDiscoveryRecord(id: string) {
 /** 删除发现记录 */
 export function deleteDiscoveryRecord(id: string) {
   return request<ResponseBase<unknown>>({
-    url: `/discovery/discovery/${id}`,
+    url: `/discovery/${id}`,
     method: 'delete',
   })
 }
@@ -139,7 +139,7 @@ export function deleteDiscoveryRecord(id: string) {
 /** 纳管设备 */
 export function adoptDevice(discoveryId: string, data: AdoptDeviceRequest) {
   return request<ResponseBase<{ device_id: string }>>({
-    url: `/discovery/discovery/${discoveryId}/adopt`,
+    url: `/discovery/${discoveryId}/adopt`,
     method: 'post',
     data,
   })
@@ -148,7 +148,7 @@ export function adoptDevice(discoveryId: string, data: AdoptDeviceRequest) {
 /** 获取影子资产列表 */
 export function getShadowAssets(params?: { page?: number; page_size?: number }) {
   return request<PaginatedResponse<DiscoveryRecord>>({
-    url: '/discovery/discovery/shadow',
+    url: '/discovery/shadow',
     method: 'get',
     params,
   })
@@ -157,7 +157,7 @@ export function getShadowAssets(params?: { page?: number; page_size?: number }) 
 /** 获取离线设备列表 */
 export function getOfflineDevices(daysThreshold?: number) {
   return request<ResponseBase<OfflineDevice[]>>({
-    url: '/discovery/discovery/offline',
+    url: '/discovery/offline',
     method: 'get',
     params: daysThreshold ? { days_threshold: daysThreshold } : undefined,
   })
@@ -166,7 +166,7 @@ export function getOfflineDevices(daysThreshold?: number) {
 /** 执行 CMDB 比对 */
 export function compareCMDB(asyncMode: boolean = true) {
   return request<ResponseBase<{ task_id?: string; result?: unknown }>>({
-    url: '/discovery/discovery/compare',
+    url: '/discovery/compare',
     method: 'post',
     params: { async_mode: asyncMode },
   })

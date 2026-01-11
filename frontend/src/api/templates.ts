@@ -89,7 +89,7 @@ export interface TemplateSubmitRequest {
 /** 获取模板列表 */
 export function getTemplates(params?: TemplateSearchParams) {
   return request<ResponseBase<PaginatedResponse<Template>>>({
-    url: '/templates/templates/',
+    url: '/templates/',
     method: 'get',
     params,
   })
@@ -98,7 +98,7 @@ export function getTemplates(params?: TemplateSearchParams) {
 /** 获取模板详情 */
 export function getTemplate(id: string) {
   return request<ResponseBase<Template>>({
-    url: `/templates/templates/${id}`,
+    url: `/templates/${id}`,
     method: 'get',
   })
 }
@@ -106,7 +106,7 @@ export function getTemplate(id: string) {
 /** 创建模板 */
 export function createTemplate(data: TemplateCreate) {
   return request<ResponseBase<Template>>({
-    url: '/templates/templates/',
+    url: '/templates/',
     method: 'post',
     data,
   })
@@ -115,7 +115,7 @@ export function createTemplate(data: TemplateCreate) {
 /** 更新模板 */
 export function updateTemplate(id: string, data: TemplateUpdate) {
   return request<ResponseBase<Template>>({
-    url: `/templates/templates/${id}`,
+    url: `/templates/${id}`,
     method: 'put',
     data,
   })
@@ -124,7 +124,7 @@ export function updateTemplate(id: string, data: TemplateUpdate) {
 /** 删除模板 */
 export function deleteTemplate(id: string) {
   return request<ResponseBase<Template>>({
-    url: `/templates/templates/${id}`,
+    url: `/templates/${id}`,
     method: 'delete',
   })
 }
@@ -132,7 +132,7 @@ export function deleteTemplate(id: string) {
 /** 创建新版本 */
 export function createTemplateVersion(id: string, data?: TemplateNewVersionRequest) {
   return request<ResponseBase<Template>>({
-    url: `/templates/templates/${id}/new-version`,
+    url: `/templates/${id}/new-version`,
     method: 'post',
     data: data || {},
   })
@@ -141,7 +141,7 @@ export function createTemplateVersion(id: string, data?: TemplateNewVersionReque
 /** 提交模板审批 */
 export function submitTemplate(id: string, data?: TemplateSubmitRequest) {
   return request<ResponseBase<Template>>({
-    url: `/templates/templates/${id}/submit`,
+    url: `/templates/${id}/submit`,
     method: 'post',
     data: data || {},
   })
