@@ -133,6 +133,7 @@ async def _deploy_task_async(self, task_id: str) -> dict[str, Any]:
             task.status = TaskStatus.FAILED.value
             task.error_message = "没有可下发的设备"
             await db.flush()
+            await db.commit()
             return {"status": "failed", "error": task.error_message}
 
         # 预渲染 + 校验（逐台）
@@ -158,6 +159,7 @@ async def _deploy_task_async(self, task_id: str) -> dict[str, Any]:
             task.result = {"failed_devices": failed_devices, "stage": "render"}
             task.error_message = "部分设备渲染/校验失败"
             await db.flush()
+            await db.commit()
             return {"status": "failed", "failed_devices": failed_devices}
 
         if dry_run:
@@ -168,6 +170,7 @@ async def _deploy_task_async(self, task_id: str) -> dict[str, Any]:
             task.result = {"render_hash": rendered_hash, "dry_run": True}
             task.finished_at = datetime.now(UTC)
             await db.flush()
+            await db.commit()
             return {"status": "success", "dry_run": True, "devices": len(rendered_map)}
 
         # 执行：按 batch 做灰度（每批并发执行）

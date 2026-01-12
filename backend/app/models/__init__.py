@@ -27,6 +27,7 @@ from .rbac import Menu, Role, RoleMenu, UserRole
 from .task import Task
 from .task_approval import TaskApprovalStep
 from .template import Template
+from .template_approval import TemplateApprovalStep
 from .topology import TopologyLink
 from .user import User
 
@@ -67,6 +68,7 @@ __all__ = [
     "TemplateType",
     "TemplateStatus",
     "DeviceType",
+    "TemplateApprovalStep",
     # 设备发现
     "Discovery",
     "DiscoveryStatus",

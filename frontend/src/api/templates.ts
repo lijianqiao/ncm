@@ -39,6 +39,14 @@ export interface Template {
   created_by_name: string | null
   created_at: string
   updated_at: string | null
+  approvals?: Array<{
+    level: number
+    approver_id: string | null
+    approver_name: string | null
+    status: 'pending' | 'approved' | 'rejected'
+    comment: string | null
+    approved_at: string | null
+  }>
 }
 
 /** 创建模板参数 */
@@ -81,6 +89,14 @@ export interface TemplateNewVersionRequest {
 
 /** 提交审批请求 */
 export interface TemplateSubmitRequest {
+  comment?: string
+  approver_ids?: string[]
+}
+
+/** 审批请求 */
+export interface TemplateApproveRequest {
+  level: number
+  approve: boolean
   comment?: string
 }
 
@@ -144,5 +160,14 @@ export function submitTemplate(id: string, data?: TemplateSubmitRequest) {
     url: `/templates/${id}/submit`,
     method: 'post',
     data: data || {},
+  })
+}
+
+/** 审批模板（三级审批） */
+export function approveTemplate(id: string, data: TemplateApproveRequest) {
+  return request<ResponseBase<Template>>({
+    url: `/templates/${id}/approve`,
+    method: 'post',
+    data,
   })
 }

@@ -11,7 +11,20 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.core.enums import DeviceType, DeviceVendor, TemplateStatus, TemplateType
+from app.core.enums import ApprovalStatus, DeviceType, DeviceVendor, TemplateStatus, TemplateType
+
+
+class TemplateApprovalRecord(BaseModel):
+    """模板审批记录（单级）。"""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    level: int
+    approver_id: UUID | None = None
+    approver_name: str | None = None
+    status: str = ApprovalStatus.PENDING.value
+    comment: str | None = None
+    approved_at: datetime | None = None
 
 
 class TemplateBase(BaseModel):
@@ -62,7 +75,12 @@ class TemplateResponse(BaseModel):
     parent_id: UUID | None = None
     status: str
     creator_id: UUID | None = None
+    created_by: UUID | None = None
+    created_by_name: str | None = None
     usage_count: int
+    approval_status: str | None = None
+    current_approval_level: int | None = None
+    approvals: list[TemplateApprovalRecord] = Field(default_factory=list)
     created_at: datetime
     updated_at: datetime
 
@@ -88,4 +106,12 @@ class TemplateSubmitRequest(BaseModel):
     """提交模板审批。"""
 
     comment: str | None = Field(default=None, description="提交说明(可选)")
+    approver_ids: list[UUID] | None = Field(default=None, description="三级审批人ID列表（长度=3，可选）")
 
+
+class TemplateApproveRequest(BaseModel):
+    """审批某一级。"""
+
+    level: int = Field(..., ge=1, le=3)
+    approve: bool = Field(..., description="true=通过 false=拒绝")
+    comment: str | None = None

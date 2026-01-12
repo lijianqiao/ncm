@@ -54,6 +54,8 @@ from app.crud.crud_task_approval import CRUDTaskApprovalStep
 from app.crud.crud_task_approval import task_approval_crud as task_approval_crud_instance
 from app.crud.crud_template import CRUDTemplate
 from app.crud.crud_template import template as template_instance
+from app.crud.crud_template_approval import CRUDTemplateApprovalStep
+from app.crud.crud_template_approval import template_approval_crud as template_approval_crud_instance
 from app.crud.crud_topology import CRUDTopology
 from app.crud.crud_topology import topology_crud as topology_instance
 from app.crud.crud_user import CRUDUser
@@ -437,11 +439,16 @@ def get_template_crud() -> CRUDTemplate:
     return template_instance
 
 
+def get_template_approval_crud() -> CRUDTemplateApprovalStep:
+    return template_approval_crud_instance
+
+
 def get_template_service(
     db: SessionDep,
     template_crud: Annotated[CRUDTemplate, Depends(get_template_crud)],
+    template_approval_crud: Annotated[CRUDTemplateApprovalStep, Depends(get_template_approval_crud)],
 ) -> TemplateService:
-    return TemplateService(db, template_crud)
+    return TemplateService(db, template_crud, template_approval_crud)
 
 
 def get_render_service() -> RenderService:

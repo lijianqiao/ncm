@@ -1,6 +1,6 @@
-# Admin RBAC Frontend
+# NCM 管理后台（前端）
 
-基于 Vue 3 + Naive UI + Vite + Pinia + TypeScript 构建的后台管理系统前端。
+基于 Vue 3 + Naive UI + Vite + Pinia + TypeScript 构建的管理后台前端。
 
 ## 主要特性
 
@@ -30,10 +30,19 @@ pnpm install
 
 ### 3. 环境配置
 
-复制 `.env.example` 并按需修改（如后端地址、端口等）：
+复制 `.env.example` 并按需修改：
+
+- `VITE_API_BASE_URL`：接口基础路径，默认 `/api/v1`
+- `VITE_PROXY_TARGET`：开发环境代理目标（后端真实地址），默认 `http://127.0.0.1:8000`
 
 ```bash
 cp .env.example .env.development
+```
+
+Windows PowerShell 可用：
+
+```bash
+Copy-Item .env.example .env.development
 ```
 
 ### 4. 启动开发
@@ -41,6 +50,8 @@ cp .env.example .env.development
 ```bash
 pnpm dev
 ```
+
+启动后默认访问：http://127.0.0.1:5173
 
 ## 常用命令
 
@@ -50,6 +61,11 @@ pnpm dev
 | `pnpm build`  | 打包构建生产环境      |
 | `pnpm lint`   | 代码检查与修复        |
 | `pnpm format` | 代码格式化 (Prettier) |
+
+## 联调说明
+
+- 前端默认通过 Vite proxy 转发请求到后端：`VITE_PROXY_TARGET`。
+- 后端启动后可访问 Swagger：http://127.0.0.1:8000/docs
 
 ## 目录结构
 

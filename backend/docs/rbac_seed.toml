@@ -1020,13 +1020,26 @@ permission = "template:submit"
 parent_key = "templates"
 
 [[menus]]
+key = "perm_template_approve"
+title = "模板-审批"
+name = "PermTemplateApprove"
+path = ""
+component = ""
+icon = "KeyOutline"
+sort = 2046
+type = "PERMISSION"
+is_hidden = true
+permission = "template:approve"
+parent_key = "templates"
+
+[[menus]]
 key = "perm_render_view"
 title = "渲染-预览"
 name = "PermRenderView"
 path = ""
 component = ""
 icon = "KeyOutline"
-sort = 2046
+sort = 2047
 type = "PERMISSION"
 is_hidden = true
 permission = "render:view"
@@ -1436,6 +1449,7 @@ permissions = [
   "template:update",
   "template:delete",
   "template:submit",
+  "template:approve",
   "render:view",
   "deploy:view",
   "deploy:create",

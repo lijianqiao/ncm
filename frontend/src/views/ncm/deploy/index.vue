@@ -34,6 +34,7 @@ import { getTemplates, type Template } from '@/api/templates'
 import { getDevices, type Device } from '@/api/devices'
 import { getUsers, type User } from '@/api/users'
 import { formatDateTime } from '@/utils/date'
+import { formatUserDisplayName } from '@/utils/user'
 import ProTable, { type FilterConfig } from '@/components/common/ProTable.vue'
 
 defineOptions({
@@ -50,9 +51,13 @@ const statusOptions = [
   { label: '审批中', value: 'approving' },
   { label: '已批准', value: 'approved' },
   { label: '已拒绝', value: 'rejected' },
+  { label: '执行中', value: 'running' },
   { label: '执行中', value: 'executing' },
   { label: '成功', value: 'success' },
+  { label: '部分成功', value: 'partial' },
   { label: '失败', value: 'failed' },
+  { label: '已暂停', value: 'paused' },
+  { label: '已取消', value: 'cancelled' },
   { label: '已回滚', value: 'rollback' },
 ]
 
@@ -61,21 +66,62 @@ const statusLabelMap: Record<DeployTaskStatus, string> = {
   approving: '审批中',
   approved: '已批准',
   rejected: '已拒绝',
+  running: '执行中',
   executing: '执行中',
   success: '成功',
   failed: '失败',
+  partial: '部分成功',
+  paused: '已暂停',
+  cancelled: '已取消',
   rollback: '已回滚',
 }
 
-const statusColorMap: Record<DeployTaskStatus, 'default' | 'info' | 'success' | 'error' | 'warning'> = {
+const statusColorMap: Record<
+  DeployTaskStatus,
+  'default' | 'info' | 'success' | 'error' | 'warning'
+> = {
   pending: 'default',
   approving: 'info',
   approved: 'info',
   rejected: 'error',
+  running: 'warning',
   executing: 'warning',
   success: 'success',
   failed: 'error',
+  partial: 'warning',
+  paused: 'warning',
+  cancelled: 'default',
   rollback: 'warning',
+}
+
+const approvalStatusLabelMap: Record<string, string> = {
+  pending: '待审批',
+  approved: '已批准',
+  rejected: '已拒绝',
+}
+
+const approvalStatusColorMap: Record<string, 'default' | 'info' | 'success' | 'error' | 'warning'> = {
+  pending: 'default',
+  approved: 'success',
+  rejected: 'error',
+}
+
+const getTaskDeviceIds = (row: DeployTask): string[] => {
+  return row.target_devices?.device_ids || row.device_ids || []
+}
+
+const getTaskDeviceCount = (row: DeployTask): number => {
+  if (typeof row.total_devices === 'number') return row.total_devices
+  return getTaskDeviceIds(row).length
+}
+
+const formatJson = (value: unknown): string => {
+  if (value === null || value === undefined) return ''
+  try {
+    return JSON.stringify(value, null, 2)
+  } catch {
+    return String(value)
+  }
 }
 
 // ==================== 表格列定义 ====================
@@ -94,7 +140,27 @@ const columns: DataTableColumns<DeployTask> = [
     title: '设备数',
     key: 'device_count',
     width: 80,
-    render: (row) => row.device_ids.length,
+    render: (row) => getTaskDeviceCount(row),
+  },
+  {
+    title: '审批状态',
+    key: 'approval_status',
+    width: 100,
+    render: (row) => {
+      const s = row.approval_status || '-'
+      if (s === '-') return '-'
+      return h(
+        NTag,
+        { type: approvalStatusColorMap[s] || 'info', bordered: false, size: 'small' },
+        { default: () => approvalStatusLabelMap[s] || s },
+      )
+    },
+  },
+  {
+    title: '审批进度',
+    key: 'current_approval_level',
+    width: 90,
+    render: (row) => `${row.current_approval_level ?? 0}/3`,
   },
   {
     title: '状态',
@@ -115,10 +181,40 @@ const columns: DataTableColumns<DeployTask> = [
     render: (row) => row.created_by_name || '-',
   },
   {
+    title: '成功/失败',
+    key: 'result_count',
+    width: 100,
+    render: (row) => `${row.success_count ?? 0}/${row.failed_count ?? 0}`,
+  },
+  {
+    title: '干跑',
+    key: 'dry_run',
+    width: 70,
+    render: (row) => (row.deploy_plan?.dry_run ? '是' : '否'),
+  },
+  {
+    title: '并发',
+    key: 'concurrency',
+    width: 70,
+    render: (row) => row.deploy_plan?.concurrency ?? '-',
+  },
+  {
+    title: '批次',
+    key: 'batch_size',
+    width: 70,
+    render: (row) => row.deploy_plan?.batch_size ?? '-',
+  },
+  {
     title: '创建时间',
     key: 'created_at',
     width: 180,
     render: (row) => formatDateTime(row.created_at),
+  },
+  {
+    title: '更新时间',
+    key: 'updated_at',
+    width: 180,
+    render: (row) => formatDateTime(row.updated_at),
   },
 ]
 
@@ -221,7 +317,7 @@ const handleCreate = async () => {
       value: d.id,
     }))
     userOptions.value = usersRes.data.items.map((u: User) => ({
-      label: u.nickname || u.username,
+      label: formatUserDisplayName(u),
       value: u.id,
     }))
   } catch {
@@ -263,7 +359,10 @@ const submitCreate = async () => {
       change_description: createModel.value.change_description || undefined,
       impact_scope: createModel.value.impact_scope || undefined,
       rollback_plan: createModel.value.rollback_plan || undefined,
-      approver_ids: createModel.value.approver_ids.length > 0 ? createModel.value.approver_ids : undefined,
+      approver_ids:
+        createModel.value.approver_ids.length > 0
+          ? createModel.value.approver_ids
+          : undefined,
     })
     $alert.success('下发任务创建成功')
     showCreateModal.value = false
@@ -280,7 +379,7 @@ const approveModel = ref({
   task_id: '',
   task_name: '',
   level: 1,
-  approve: true,
+  decision: 'approve' as 'approve' | 'reject',
   comment: '',
 })
 
@@ -290,12 +389,12 @@ const handleApprove = (row: DeployTask) => {
     return
   }
   // 找到待审批的级别
-  const pendingApproval = row.approvals.find((a) => a.status === 'pending')
+  const pendingApproval = (row.approvals || []).find((a) => a.status === 'pending')
   approveModel.value = {
     task_id: row.id,
     task_name: row.name,
     level: pendingApproval?.level || 1,
-    approve: true,
+    decision: 'approve',
     comment: '',
   }
   showApproveModal.value = true
@@ -305,10 +404,10 @@ const submitApprove = async () => {
   try {
     await approveDeployTask(approveModel.value.task_id, {
       level: approveModel.value.level,
-      approve: approveModel.value.approve,
+      approve: approveModel.value.decision === 'approve',
       comment: approveModel.value.comment || undefined,
     })
-    $alert.success(approveModel.value.approve ? '已批准' : '已拒绝')
+    $alert.success(approveModel.value.decision === 'approve' ? '已批准' : '已拒绝')
     showApproveModal.value = false
     tableRef.value?.reload()
   } catch {
@@ -323,9 +422,10 @@ const handleExecute = (row: DeployTask) => {
     $alert.warning('只能执行已批准的任务')
     return
   }
+  const count = getTaskDeviceCount(row)
   dialog.warning({
     title: '执行下发',
-    content: `确定要执行下发任务 "${row.name}" 吗？这将向 ${row.device_ids.length} 台设备下发配置。`,
+    content: `确定要执行下发任务 "${row.name}" 吗？这将向 ${count} 台设备下发配置。`,
     positiveText: '确认',
     negativeText: '取消',
     onPositiveClick: async () => {
@@ -379,7 +479,7 @@ const handleRollback = (row: DeployTask) => {
       @add="handleCreate"
       @context-menu-select="handleContextMenuSelect"
       show-add
-      :scroll-x="1000"
+      :scroll-x="1500"
     />
 
     <!-- 查看详情 Modal -->
@@ -400,25 +500,36 @@ const handleRollback = (row: DeployTask) => {
                 {{ statusLabelMap[viewData.status] }}
               </n-tag>
             </n-descriptions-item>
-            <n-descriptions-item label="设备数">{{ viewData.device_ids.length }}</n-descriptions-item>
+            <n-descriptions-item label="Celery任务ID" :span="2">{{ viewData.celery_task_id || '-' }}</n-descriptions-item>
+            <n-descriptions-item label="设备数">{{ getTaskDeviceCount(viewData) }}</n-descriptions-item>
             <n-descriptions-item label="创建人">{{ viewData.created_by_name || '-' }}</n-descriptions-item>
             <n-descriptions-item label="变更说明" :span="2">{{ viewData.change_description || '-' }}</n-descriptions-item>
             <n-descriptions-item label="影响范围" :span="2">{{ viewData.impact_scope || '-' }}</n-descriptions-item>
             <n-descriptions-item label="回退方案" :span="2">{{ viewData.rollback_plan || '-' }}</n-descriptions-item>
+            <n-descriptions-item label="错误信息" :span="2">{{ viewData.error_message || '-' }}</n-descriptions-item>
           </n-descriptions>
 
           <!-- 审批流程 -->
-          <div v-if="viewData.approvals.length > 0">
+          <div v-if="(viewData.approvals || []).length > 0">
             <h4>审批流程</h4>
             <n-timeline>
               <n-timeline-item
-                v-for="approval in viewData.approvals"
+                v-for="approval in viewData.approvals || []"
                 :key="approval.level"
                 :type="approval.status === 'approved' ? 'success' : approval.status === 'rejected' ? 'error' : 'default'"
                 :title="`第 ${approval.level} 级审批`"
               >
                 <p>审批人: {{ approval.approver_name || '待指定' }}</p>
-                <p>状态: {{ approval.status === 'approved' ? '已批准' : approval.status === 'rejected' ? '已拒绝' : '待审批' }}</p>
+                <p>
+                  状态:
+                  {{
+                    approval.status === 'approved'
+                      ? '已批准'
+                      : approval.status === 'rejected'
+                        ? '已拒绝'
+                        : '待审批'
+                  }}
+                </p>
                 <p v-if="approval.comment">备注: {{ approval.comment }}</p>
                 <p v-if="approval.approved_at">时间: {{ formatDateTime(approval.approved_at) }}</p>
               </n-timeline-item>
@@ -428,11 +539,25 @@ const handleRollback = (row: DeployTask) => {
           <!-- 渲染后的配置 -->
           <div v-if="viewData.rendered_content">
             <h4>渲染后配置</h4>
-            <n-code :code="viewData.rendered_content" language="text" style="max-height: 300px; overflow: auto" />
+            <n-code
+              :code="viewData.rendered_content"
+              language="text"
+              style="max-height: 300px; overflow: auto"
+            />
+          </div>
+
+          <!-- 执行结果（后端 result JSON） -->
+          <div v-if="viewData.result || viewData.status === 'running' || viewData.status === 'partial'">
+            <h4>执行结果</h4>
+            <n-code
+              :code="viewData.result ? formatJson(viewData.result) : viewData.status === 'running' ? '执行中，暂无结果，请稍后刷新' : '-'"
+              language="json"
+              style="max-height: 300px; overflow: auto"
+            />
           </div>
 
           <!-- 设备执行结果 -->
-          <div v-if="viewData.device_results.length > 0">
+          <div v-if="(viewData.device_results || []).length > 0">
             <h4>设备执行结果</h4>
             <n-table :bordered="false" :single-line="false">
               <thead>
@@ -444,7 +569,7 @@ const handleRollback = (row: DeployTask) => {
                 </tr>
               </thead>
               <tbody>
-                <tr v-for="result in viewData.device_results" :key="result.device_id">
+                <tr v-for="result in viewData.device_results || []" :key="result.device_id">
                   <td>{{ result.device_name || result.device_id }}</td>
                   <td>
                     <n-tag
@@ -555,10 +680,10 @@ const handleRollback = (row: DeployTask) => {
       <n-space vertical style="width: 100%">
         <n-form-item label="审批结果">
           <n-select
-            v-model:value="approveModel.approve"
+            v-model:value="approveModel.decision"
             :options="[
-              { label: '批准', value: true },
-              { label: '拒绝', value: false },
+              { label: '批准', value: 'approve' },
+              { label: '拒绝', value: 'reject' },
             ]"
           />
         </n-form-item>
@@ -574,10 +699,10 @@ const handleRollback = (row: DeployTask) => {
       <template #action>
         <n-button @click="showApproveModal = false">取消</n-button>
         <n-button
-          :type="approveModel.approve ? 'success' : 'error'"
+          :type="approveModel.decision === 'approve' ? 'success' : 'error'"
           @click="submitApprove"
         >
-          {{ approveModel.approve ? '批准' : '拒绝' }}
+          {{ approveModel.decision === 'approve' ? '批准' : '拒绝' }}
         </n-button>
       </template>
     </n-modal>

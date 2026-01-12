@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.db import AsyncSessionLocal, engine
 from app.core.enums import DataScope, MenuType
+from app.core.permissions import PermissionCode
 from app.crud.crud_dept import dept_crud
 from app.crud.crud_menu import menu as menu_crud
 from app.crud.crud_role import role as role_crud
@@ -197,6 +198,8 @@ async def init_rbac(db: AsyncSession) -> None:
     menus_seed: list[dict] = seed.get("menus", [])
     roles_seed: list[dict] = seed.get("roles", [])
 
+    _validate_seed_permissions(menus_seed)
+
     # 1) 初始化菜单（支持 parent_key）
     key_to_menu: dict[str, Menu] = {}
     for m in menus_seed:
@@ -333,6 +336,35 @@ async def init_rbac(db: AsyncSession) -> None:
 
     await db.commit()
     logger.info("RBAC 菜单/角色初始化完成。")
+
+
+def _validate_seed_permissions(menus_seed: list[dict]) -> None:
+    """校验：代码中注册的权限码是否都在种子文件中定义。
+
+    目的：新增 PermissionCode 时，如果忘记在 rbac_seed.toml 中补齐对应 [[menus]] 权限点，
+    初始化会悄悄缺权限，导致角色权限分配不完整。
+    """
+
+    seed_permissions: set[str] = set()
+    for m in menus_seed:
+        p = _to_none_if_empty(m.get("permission"))
+        if p:
+            seed_permissions.add(p)
+
+    code_permissions: set[str] = {c.value for c in PermissionCode}
+    missing = sorted(code_permissions - seed_permissions)
+    if missing:
+        raise ValueError(
+            "rbac_seed.toml 缺少权限点定义（请在 [[menus]] 中补齐 permission）：\n"
+            + "\n".join(f"- {p}" for p in missing)
+        )
+
+    extra = sorted(seed_permissions - code_permissions)
+    if extra:
+        logger.warning(
+            "rbac_seed.toml 存在未在 PermissionCode 中注册的权限点（建议保持以代码为源）：%s",
+            extra,
+        )
 
 
 def main() -> None:

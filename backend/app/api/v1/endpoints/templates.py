@@ -15,6 +15,7 @@ from app.core.enums import DeviceVendor, TemplateStatus, TemplateType
 from app.core.permissions import PermissionCode
 from app.schemas.common import PaginatedResponse, ResponseBase
 from app.schemas.template import (
+    TemplateApproveRequest,
     TemplateCreate,
     TemplateNewVersionRequest,
     TemplateResponse,
@@ -188,7 +189,32 @@ async def submit_template(
     Returns:
         ResponseBase[TemplateResponse]: 更新状态后的模板详情。
     """
-    template = await service.submit(template_id, comment=body.comment)
+    template = await service.submit(template_id, comment=body.comment, approver_ids=body.approver_ids)
+    return ResponseBase(data=TemplateResponse.model_validate(template))
+
+
+@router.post(
+    "/{template_id}/approve",
+    response_model=ResponseBase[TemplateResponse],
+    dependencies=[Depends(require_permissions([PermissionCode.TEMPLATE_APPROVE.value]))],
+    summary="审批模板(某一级)",
+)
+async def approve_template(
+    template_id: UUID,
+    body: TemplateApproveRequest,
+    service: TemplateServiceDep,
+    user: CurrentUser,
+) -> ResponseBase[TemplateResponse]:
+    """对指定模板进行单级审批操作（三级审批）。"""
+
+    template = await service.approve_step(
+        template_id,
+        level=body.level,
+        approve=body.approve,
+        comment=body.comment,
+        actor_user_id=user.id,
+        is_superuser=user.is_superuser,
+    )
     return ResponseBase(data=TemplateResponse.model_validate(template))
 
 

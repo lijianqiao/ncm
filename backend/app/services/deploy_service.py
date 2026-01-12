@@ -33,7 +33,7 @@ class DeployService:
         self.task_approval_crud = task_approval_crud
 
     async def get_task(self, task_id: UUID) -> Task:
-        task = await self.task_crud.get(self.db, id=task_id)
+        task = await self.task_crud.get_with_related(self.db, id=task_id)
         if not task:
             raise NotFoundException("任务不存在")
         return task
@@ -80,7 +80,10 @@ class DeployService:
 
         await self.db.flush()
         await self.db.refresh(task)
-        return task
+        task_with_related = await self.task_crud.get_with_related(self.db, id=task.id)
+        if not task_with_related:
+            raise NotFoundException("任务不存在")
+        return task_with_related
 
     @transactional()
     async def approve_step(
@@ -125,7 +128,10 @@ class DeployService:
 
         await self.db.flush()
         await self.db.refresh(task)
-        return task
+        task_with_related = await self.task_crud.get_with_related(self.db, id=task.id)
+        if not task_with_related:
+            raise NotFoundException("任务不存在")
+        return task_with_related
 
     @transactional()
     async def bind_celery_task(self, task_id: UUID, celery_task_id: str) -> Task:
@@ -135,7 +141,10 @@ class DeployService:
         task.started_at = datetime.now(UTC)
         await self.db.flush()
         await self.db.refresh(task)
-        return task
+        task_with_related = await self.task_crud.get_with_related(self.db, id=task.id)
+        if not task_with_related:
+            raise NotFoundException("任务不存在")
+        return task_with_related
 
     @transactional()
     async def mark_paused(self, task_id: UUID, *, reason: str, details: dict | None = None) -> Task:
@@ -145,7 +154,10 @@ class DeployService:
         task.result = details or {}
         await self.db.flush()
         await self.db.refresh(task)
-        return task
+        task_with_related = await self.task_crud.get_with_related(self.db, id=task.id)
+        if not task_with_related:
+            raise NotFoundException("任务不存在")
+        return task_with_related
 
     @transactional()
     async def mark_finished(
@@ -158,4 +170,7 @@ class DeployService:
         task.error_message = error
         await self.db.flush()
         await self.db.refresh(task)
-        return task
+        task_with_related = await self.task_crud.get_with_related(self.db, id=task.id)
+        if not task_with_related:
+            raise NotFoundException("任务不存在")
+        return task_with_related

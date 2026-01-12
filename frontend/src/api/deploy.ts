@@ -17,9 +17,13 @@ export type DeployTaskStatus =
   | 'approving'
   | 'approved'
   | 'rejected'
+  | 'running'
   | 'executing'
   | 'success'
   | 'failed'
+  | 'partial'
+  | 'paused'
+  | 'cancelled'
   | 'rollback'
 
 // ==================== 接口定义 ====================
@@ -29,6 +33,9 @@ export interface DeployPlan {
   scheduled_at?: string
   execute_mode?: 'serial' | 'parallel'
   batch_size?: number
+  concurrency?: number
+  strict_allowlist?: boolean
+  dry_run?: boolean
 }
 
 /** 审批记录 */
@@ -55,24 +62,35 @@ export interface DeviceDeployResult {
 export interface DeployTask {
   id: string
   name: string
+  task_type?: string
   description: string | null
   template_id: string
-  template_name: string | null
+  template_name?: string | null
   template_params: Record<string, unknown> | null
-  rendered_content: string | null
-  device_ids: string[]
+  rendered_content?: string | null
+  device_ids?: string[]
+  target_devices?: {
+    device_ids: string[]
+  } | null
+  total_devices?: number
+  success_count?: number
+  failed_count?: number
   status: DeployTaskStatus
+  approval_status?: 'pending' | 'approved' | 'rejected' | string
+  current_approval_level?: number
   change_description: string | null
   impact_scope: string | null
   rollback_plan: string | null
   deploy_plan: DeployPlan | null
-  approvals: ApprovalRecord[]
-  device_results: DeviceDeployResult[]
+  approvals?: ApprovalRecord[]
+  device_results?: DeviceDeployResult[]
   celery_task_id: string | null
   created_by: string | null
-  created_by_name: string | null
+  created_by_name?: string | null
   created_at: string
   updated_at: string | null
+  result?: unknown
+  error_message?: string | null
 }
 
 /** 创建下发任务参数 */

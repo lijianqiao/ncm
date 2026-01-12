@@ -55,6 +55,19 @@ class DeployExecuteResponse(BaseModel):
     status: TaskStatus
 
 
+class DeployApprovalRecord(BaseModel):
+    """下发任务审批记录（单级）。"""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    level: int
+    approver_id: UUID | None = None
+    approver_name: str | None = None
+    status: str
+    comment: str | None = None
+    approved_at: datetime | None = None
+
+
 class DeployTaskResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -66,6 +79,7 @@ class DeployTaskResponse(BaseModel):
     current_approval_level: int
     celery_task_id: str | None = None
     template_id: UUID | None = None
+    template_name: str | None = None
     template_params: dict | None = None
     deploy_plan: dict | None = None
     target_devices: dict | None = None
@@ -74,6 +88,9 @@ class DeployTaskResponse(BaseModel):
     failed_count: int
     result: dict | None = None
     error_message: str | None = None
+    created_by: UUID | None = None
+    created_by_name: str | None = None
+    approvals: list[DeployApprovalRecord] = Field(default_factory=list)
     created_at: datetime
     updated_at: datetime
 

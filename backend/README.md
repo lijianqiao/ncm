@@ -1,6 +1,6 @@
-# NCM 网络配置管理系统 (后端)
+# NCM 网络配置管理系统（后端）
 
-基于 FastAPI + SQLAlchemy 2.0 (Async) 构建的高性能网络自动化与管理系统后端。
+基于 FastAPI + SQLAlchemy 2.0（Async）构建的网络配置管理系统后端，提供 RBAC、审计、网络自动化等能力。
 
 ## ✨ 核心特性
 
@@ -20,23 +20,44 @@
 ## 🚀 快速开始
 
 ### 1. 环境准备
+
+- Python >= 3.13
+- PostgreSQL >= 16
+- Redis >= 6
+
 ```bash
 uv venv --python 3.13
 uv sync
 ```
 
+Windows 说明：一般无需手动 activate，直接使用 `uv run ...` 即可。
+
 ### 2. 初始化环境
 ```bash
 cp .env.example .env
-# 配置 SQLALCHEMY_DATABASE_URI, REDIS_URL, CELERY_BROKER_URL 等
+# 按需修改：数据库、Redis、SECRET_KEY、CORS 等
+```
+
+Windows PowerShell 可用：
+
+```bash
+Copy-Item .env.example .env
 ```
 
 ### 3. 数据库与数据
 ```bash
-# 生成并应用迁移
-uv run alembic revision --autogenerate -m "init"
+# 应用现有迁移
 uv run alembic upgrade head
+
+# 初始化管理员账号（默认：admin/123123，详见 .env）
 uv run initial_data.py --init  # 初始账号: admin/123123
+```
+
+如需开发新增迁移（仅开发者使用）：
+
+```bash
+uv run alembic revision --autogenerate -m "your_message"
+uv run alembic upgrade head
 ```
 
 ### 4. 启动服务
@@ -47,6 +68,29 @@ uv run start.py
 # 启动 Celery Worker (处理网络采集任务)
 uv run start_worker.py
 ```
+
+API 文档：http://127.0.0.1:8000/docs
+
+## 🧩 常见问题
+
+### 1) Alembic 迁移报 Multiple head revisions
+
+并行开发导致迁移分叉时会出现此错误。
+
+```bash
+uv run alembic heads
+```
+
+- 若存在多个 head：需要创建 merge revision 合并；确保拉取到最新代码后再执行：
+
+```bash
+uv run alembic upgrade head
+```
+
+### 2) 数据库连接失败
+
+- 优先检查 `.env` 中 POSTGRES_* 配置与 PostgreSQL 是否可连接。
+- 若你使用容器/远程数据库，注意端口、用户名与网络访问策略。
 
 ## 📂 目录结构 (简)
 *   `app/api/v1/endpoints/`: 业务接口（含备份、资产、巡检等）。

@@ -106,6 +106,7 @@ class PermissionCode(str, Enum):
     TEMPLATE_UPDATE = "template:update"
     TEMPLATE_DELETE = "template:delete"
     TEMPLATE_SUBMIT = "template:submit"
+    TEMPLATE_APPROVE = "template:approve"
 
     RENDER_VIEW = "render:view"
 
@@ -203,6 +204,7 @@ PERMISSION_DEFS: tuple[PermissionDef, ...] = (
     PermissionDef(PermissionCode.TEMPLATE_UPDATE, "模板-更新"),
     PermissionDef(PermissionCode.TEMPLATE_DELETE, "模板-删除"),
     PermissionDef(PermissionCode.TEMPLATE_SUBMIT, "模板-提交审批"),
+    PermissionDef(PermissionCode.TEMPLATE_APPROVE, "模板-审批", "模板三级审批"),
     PermissionDef(PermissionCode.RENDER_VIEW, "渲染-预览", "模板渲染预览(Dry-Run)"),
     PermissionDef(PermissionCode.DEPLOY_VIEW, "下发-查看", "查看下发任务与执行结果"),
     PermissionDef(PermissionCode.DEPLOY_CREATE, "下发-创建", "创建下发任务"),

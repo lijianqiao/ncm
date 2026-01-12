@@ -18,10 +18,12 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.enums import ApprovalStatus, TaskStatus
 from app.models.base import AuditableModel
+from app.utils.user_display import format_user_display_name
 
 if TYPE_CHECKING:
     from app.models.backup import Backup
     from app.models.task_approval import TaskApprovalStep
+    from app.models.template import Template
     from app.models.user import User
 
 
@@ -69,6 +71,8 @@ class Task(AuditableModel):
         comment="模板ID",
     )
     template_params: Mapped[dict | None] = mapped_column(JSON, nullable=True, comment="模板参数(JSON)")
+
+    template: Mapped[Optional["Template"]] = relationship("Template", foreign_keys=[template_id], lazy="selectin")
 
     # 审批信息
     approval_status: Mapped[str] = mapped_column(
@@ -123,6 +127,26 @@ class Task(AuditableModel):
     approval_steps: Mapped[list["TaskApprovalStep"]] = relationship(
         "TaskApprovalStep", back_populates="task", lazy="selectin", cascade="all, delete-orphan"
     )
+
+    @property
+    def created_by(self) -> uuid.UUID | None:
+        return self.submitter_id
+
+    @property
+    def created_by_name(self) -> str | None:
+        if not self.submitter:
+            return None
+        return format_user_display_name(self.submitter.nickname, self.submitter.username)
+
+    @property
+    def template_name(self) -> str | None:
+        if not self.template:
+            return None
+        return self.template.name
+
+    @property
+    def approvals(self) -> list["TaskApprovalStep"]:
+        return sorted(self.approval_steps or [], key=lambda x: x.level)
 
     def __repr__(self) -> str:
         return f"<Task(name={self.name}, type={self.task_type}, status={self.status})>"

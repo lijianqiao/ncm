@@ -175,6 +175,7 @@ async def list_deploy_tasks(
         page=page,
         page_size=page_size,
         task_type=TaskType.DEPLOY.value,
+        with_related=True,
     )
     return ResponseBase(
         data=PaginatedResponse(

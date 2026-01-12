@@ -1,9 +1,9 @@
 """
 @Author: li
 @Email: lijianqiao2906@live.com
-@FileName: task_approval.py
-@DateTime: 2026-01-09 23:00:00
-@Docs: 下发任务审批步骤模型 (TaskApprovalStep).
+@FileName: template_approval.py
+@DateTime: 2026-01-12 00:00:00
+@Docs: 模板审批步骤模型 (TemplateApprovalStep).
 """
 
 import uuid
@@ -15,24 +15,23 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.enums import ApprovalStatus
 from app.models.base import AuditableModel
-from app.utils.user_display import format_user_display_name
 
 if TYPE_CHECKING:
-    from app.models.task import Task
+    from app.models.template import Template
     from app.models.user import User
 
 
-class TaskApprovalStep(AuditableModel):
-    """任务审批步骤（用于三级审批）。"""
+class TemplateApprovalStep(AuditableModel):
+    """模板审批步骤（用于三级审批）。"""
 
-    __tablename__ = "ncm_task_approval_step"
-    __table_args__ = (UniqueConstraint("task_id", "level", name="uq_task_level"),)
+    __tablename__ = "ncm_template_approval_step"
+    __table_args__ = (UniqueConstraint("template_id", "level", name="uq_template_level"),)
 
-    task_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("ncm_task.id", ondelete="CASCADE"),
+    template_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("ncm_template.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
-        comment="任务ID",
+        comment="模板ID",
     )
     level: Mapped[int] = mapped_column(Integer, nullable=False, comment="审批级别(1-3)")
 
@@ -54,11 +53,15 @@ class TaskApprovalStep(AuditableModel):
     approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, comment="审批时间")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False, comment="是否启用(保留字段)")
 
-    task: Mapped["Task"] = relationship("Task", back_populates="approval_steps", lazy="selectin")
+    template: Mapped["Template"] = relationship("Template", back_populates="approval_steps", lazy="selectin")
     approver: Mapped[Optional["User"]] = relationship("User", foreign_keys=[approver_id], lazy="selectin")
 
     @property
     def approver_name(self) -> str | None:
         if not self.approver:
             return None
-        return format_user_display_name(self.approver.nickname, self.approver.username)
+        nickname = (self.approver.nickname or "").strip()
+        username = (self.approver.username or "").strip()
+        if nickname and username:
+            return f"{nickname}({username})"
+        return nickname or username or None

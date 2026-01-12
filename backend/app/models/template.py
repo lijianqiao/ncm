@@ -11,14 +11,16 @@
 import uuid
 from typing import TYPE_CHECKING, Optional
 
-from sqlalchemy import ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, ForeignKey, Integer, String, Text
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.core.enums import DeviceType, TemplateStatus, TemplateType
+from app.core.enums import ApprovalStatus, DeviceType, TemplateStatus, TemplateType
 from app.models.base import AuditableModel
+from app.utils.user_display import format_user_display_name
 
 if TYPE_CHECKING:
+    from app.models.template_approval import TemplateApprovalStep
     from app.models.user import User
 
 
@@ -48,9 +50,7 @@ class Template(AuditableModel):
     )
 
     # 参数定义（JSON Schema 格式）
-    parameters: Mapped[str | None] = mapped_column(
-        Text, nullable=True, comment="参数定义(JSON Schema)"
-    )
+    parameters: Mapped[str | None] = mapped_column(Text, nullable=True, comment="参数定义(JSON Schema)")
 
     # 版本管理
     version: Mapped[int] = mapped_column(Integer, default=1, nullable=False, comment="版本号")
@@ -65,6 +65,26 @@ class Template(AuditableModel):
         String(20), default=TemplateStatus.DRAFT.value, nullable=False, comment="模板状态"
     )
 
+    # Phase 4: 复用“下发任务”三级审批模型（最小字段）
+    approval_required: Mapped[bool] = mapped_column(
+        Boolean,
+        default=True,
+        nullable=False,
+        comment="是否需要审批(模板默认需要)",
+    )
+    approval_status: Mapped[str] = mapped_column(
+        String(20),
+        default=ApprovalStatus.NONE.value,
+        nullable=False,
+        comment="审批状态",
+    )
+    current_approval_level: Mapped[int] = mapped_column(
+        Integer,
+        default=0,
+        nullable=False,
+        comment="当前已通过的审批级别(0-3)",
+    )
+
     # 创建人
     creator_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("sys_user.id", ondelete="SET NULL"),
@@ -77,9 +97,28 @@ class Template(AuditableModel):
 
     # 关联关系
     creator: Mapped[Optional["User"]] = relationship("User", lazy="selectin")
-    parent: Mapped[Optional["Template"]] = relationship(
-        "Template", remote_side="Template.id", lazy="selectin"
+    parent: Mapped[Optional["Template"]] = relationship("Template", remote_side="Template.id", lazy="selectin")
+
+    approval_steps: Mapped[list["TemplateApprovalStep"]] = relationship(
+        "TemplateApprovalStep",
+        back_populates="template",
+        lazy="selectin",
+        cascade="all, delete-orphan",
     )
+
+    @property
+    def created_by(self) -> uuid.UUID | None:
+        return self.creator_id
+
+    @property
+    def created_by_name(self) -> str | None:
+        if not self.creator:
+            return None
+        return format_user_display_name(self.creator.nickname, self.creator.username)
+
+    @property
+    def approvals(self) -> list["TemplateApprovalStep"]:
+        return sorted(self.approval_steps or [], key=lambda x: x.level)
 
     def __repr__(self) -> str:
         return f"<Template(name={self.name}, version={self.version}, status={self.status})>"
