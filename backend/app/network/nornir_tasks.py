@@ -11,6 +11,7 @@
 from typing import Any
 
 from nornir.core import Nornir
+from nornir.core.exceptions import NornirSubTaskError
 from nornir.core.task import AggregatedResult, MultiResult, Result, Task
 from nornir_scrapli.tasks import send_command, send_commands, send_configs
 
@@ -111,8 +112,36 @@ def deploy_from_host_data(task: Task) -> Result:
     if not configs:
         return Result(host=task.host, result={"status": "skipped", "message": "no deploy configs"}, changed=False)
 
-    result = task.run(task=send_configs, configs=configs)
-    return Result(host=task.host, result=result.result, changed=True)
+    try:
+        result = task.run(task=send_configs, configs=configs)
+        return Result(host=task.host, result=result.result, changed=True)
+    except NornirSubTaskError as e:
+        # nornir_scrapli 的子任务异常默认只会给出 "Subtask ... failed"，这里尽量提取底层异常信息
+        detail_parts: list[str] = [str(e)]
+        sub = getattr(e, "result", None)
+        if sub is not None:
+            sub_name = getattr(sub, "name", None)
+            sub_exc = getattr(sub, "exception", None)
+            if sub_name:
+                detail_parts.append(f"子任务: {sub_name}")
+            if sub_exc:
+                detail_parts.append(f"异常: {sub_exc}")
+        error_text = "\n".join([x for x in detail_parts if x])
+        logger.error("下发子任务失败", host=str(task.host), error=error_text, exc_info=True)
+        return Result(
+            host=task.host,
+            result={"error": error_text},
+            changed=False,
+            failed=True,
+        )
+    except Exception as e:
+        logger.error("下发任务失败", host=str(task.host), error=str(e), exc_info=True)
+        return Result(
+            host=task.host,
+            result={"error": str(e)},
+            changed=False,
+            failed=True,
+        )
 
 
 def get_arp_table(task: Task) -> MultiResult:
@@ -177,9 +206,21 @@ def aggregate_results(results: AggregatedResult) -> dict[str, Any]:
     for host, multi_result in results.items():
         if multi_result.failed:
             failed_hosts.append(host)
+
+            error_text = "Unknown error"
+            if multi_result.exception:
+                error_text = str(multi_result.exception)
+            elif multi_result:
+                # 若任务函数内部捕获并返回了 failed Result，则从最后一个结果里取 error
+                last_result = multi_result[-1]
+                if isinstance(last_result.result, dict) and last_result.result.get("error"):
+                    error_text = str(last_result.result.get("error"))
+                elif last_result.exception:
+                    error_text = str(last_result.exception)
+
             host_results[host] = {
                 "status": "failed",
-                "error": str(multi_result.exception) if multi_result.exception else "Unknown error",
+                "error": error_text,
             }
         else:
             success_hosts.append(host)

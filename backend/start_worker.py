@@ -10,7 +10,7 @@
     uv run start_worker.py
 
     # 启动指定队列的 Worker
-    uv run start_worker.py --queues backup,discovery
+    uv run start_worker.py --queues deploy,backup,discovery
 
     # 启动并指定并发数
     uv run start_worker.py --concurrency 8
@@ -151,8 +151,8 @@ def main() -> int:
     parser.add_argument(
         "--queues",
         "-Q",
-        default="celery,backup,discovery,topology",
-        help="要处理的队列列表，逗号分隔 (默认: celery,backup,discovery,topology)",
+        default="celery,backup,discovery,topology,deploy",
+        help="要处理的队列列表，逗号分隔 (默认: celery,backup,discovery,topology,deploy)",
     )
     parser.add_argument(
         "--concurrency",

@@ -467,8 +467,10 @@ def get_deploy_service(
     db: SessionDep,
     task_crud: Annotated[CRUDTask, Depends(get_task_crud)],
     task_approval_crud: Annotated[CRUDTaskApprovalStep, Depends(get_task_approval_crud)],
+    device_crud: Annotated[CRUDDevice, Depends(get_device_crud)],
+    credential_crud: Annotated[CRUDCredential, Depends(get_credential_crud)],
 ) -> DeployService:
-    return DeployService(db, task_crud, task_approval_crud)
+    return DeployService(db, task_crud, task_approval_crud, device_crud, credential_crud)
 
 
 def get_inventory_audit_crud() -> CRUDInventoryAudit:

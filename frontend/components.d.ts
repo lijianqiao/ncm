@@ -23,6 +23,7 @@ declare module 'vue' {
     NLayoutSider: typeof import('naive-ui')['NLayoutSider']
     NMenu: typeof import('naive-ui')['NMenu']
     NSpace: typeof import('naive-ui')['NSpace']
+    OtpModal: typeof import('./src/components/common/OtpModal.vue')['default']
     ProTable: typeof import('./src/components/common/ProTable.vue')['default']
     RouterLink: typeof import('vue-router')['RouterLink']
     RouterView: typeof import('vue-router')['RouterView']

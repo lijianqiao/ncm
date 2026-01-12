@@ -3,7 +3,6 @@ import { ref, h, computed } from 'vue'
 import {
   NButton,
   NModal,
-  NInputOtp,
   NFormItem,
   useDialog,
   type DataTableColumns,
@@ -36,6 +35,7 @@ import { formatDateTime } from '@/utils/date'
 import { useTaskPolling } from '@/composables'
 import ProTable, { type FilterConfig } from '@/components/common/ProTable.vue'
 import UnifiedDiffViewer from '@/components/common/UnifiedDiffViewer.vue'
+import OtpModal from '@/components/common/OtpModal.vue'
 
 defineOptions({
   name: 'BackupManagement',
@@ -375,7 +375,6 @@ const submitManualBackup = async () => {
     }
     pendingBackupDeviceId.value = backupModel.value.device_id
     pendingBatchBackup.value = false
-    otpChars.value = createEmptyOtpChars()
     showOTPModal.value = true
     return
   }
@@ -396,7 +395,6 @@ const submitManualBackup = async () => {
         failed_devices: details.failed_devices || [],
       }
       pendingBackupDeviceId.value = backupModel.value.device_id
-      otpChars.value = createEmptyOtpChars()
       showOTPModal.value = true
     }
   }
@@ -411,9 +409,6 @@ interface OTPRequiredDetails {
 }
 
 const showOTPModal = ref(false)
-
-const createEmptyOtpChars = (): string[] => Array.from({ length: 6 }, () => '')
-const otpChars = ref<string[]>(createEmptyOtpChars())
 const otpLoading = ref(false)
 const otpRequiredInfo = ref<OTPRequiredDetails | null>(null)
 const pendingBackupDeviceId = ref<string>('')
@@ -425,8 +420,7 @@ const deviceGroupLabels: Record<string, string> = {
   access: '接入层',
 }
 
-const submitOTP = async () => {
-  const otpCode = otpChars.value.join('').trim()
+const submitOTP = async (otpCode: string) => {
   if (!/^\d{6}$/.test(otpCode)) {
     $alert.warning('请输入有效的 OTP 验证码（6位数字）')
     return
@@ -541,7 +535,6 @@ const submitBatchBackupInternal = async () => {
         failed_devices: details.failed_devices || [],
       }
       pendingBatchBackup.value = true
-      otpChars.value = createEmptyOtpChars()
       showOTPModal.value = true
     }
   }
@@ -743,42 +736,21 @@ const closeBatchBackupModal = () => {
       </template>
     </n-modal>
 
-    <!-- OTP 输入 Modal -->
-    <n-modal
+    <!-- OTP 输入 Modal（通用组件） -->
+    <OtpModal
       v-model:show="showOTPModal"
-      preset="card"
+      :loading="otpLoading"
       title="需要 OTP 验证码"
-      style="width: 450px"
-      :closable="!otpLoading"
-      :mask-closable="!otpLoading"
-    >
-      <n-space vertical style="width: 100%">
-        <n-alert type="warning" title="设备需要 OTP 认证">
-          <template v-if="otpRequiredInfo">
-            <p>部门设备分组 <strong>{{ deviceGroupLabels[otpRequiredInfo.device_group] || otpRequiredInfo.device_group }}</strong> 配置为手动输入 OTP 认证方式。</p>
-            <p>请输入当前有效的 OTP 验证码以继续操作。</p>
-          </template>
-        </n-alert>
-        <n-form-item label="OTP 验证码" required>
-          <div class="otp-center">
-            <n-input-otp
-              v-model:value="otpChars"
-              :length="6"
-              :disabled="otpLoading"
-              @finish="submitOTP"
-            />
-          </div>
-        </n-form-item>
-        <template v-if="otpRequiredInfo && otpRequiredInfo.failed_devices.length > 0">
-          <n-alert type="info" title="断点续传">
-            上次操作中以下设备未完成，输入 OTP 后将继续处理：
-            <ul style="margin: 8px 0 0 16px; padding: 0">
-              <li v-for="device in otpRequiredInfo.failed_devices" :key="device">{{ device }}</li>
-            </ul>
-          </n-alert>
-        </template>
-      </n-space>
-    </n-modal>
+      alert-title="设备需要 OTP 认证"
+      alert-text="请输入当前有效的 OTP 验证码以继续操作。"
+      :info-items="otpRequiredInfo
+        ? [
+            { label: '设备分组', value: deviceGroupLabels[otpRequiredInfo.device_group] || otpRequiredInfo.device_group },
+          ]
+        : []"
+      confirm-text="确认"
+      @confirm="submitOTP"
+    />
   </div>
 </template>
 

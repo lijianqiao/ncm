@@ -12,14 +12,43 @@ Nornir 是专为网络自动化设计的框架，提供：
 - 插件化架构 (支持 Scrapli/Netmiko/NAPALM)
 """
 
+import importlib
 from typing import Any
 
-from nornir import InitNornir
 from nornir.core import Nornir
+from nornir.core.exceptions import PluginAlreadyRegistered
 from nornir.core.inventory import ConnectionOptions, Defaults, Group, Groups, Host, Hosts, Inventory, ParentGroups
+from nornir.core.plugins.connections import ConnectionPluginRegister
+from nornir.plugins.runners import ThreadedRunner
 
 from app.core.config import settings
 from app.core.logger import logger
+
+
+def _ensure_scrapli_plugin_registered() -> None:
+    """确保 nornir_scrapli 的 scrapli connection plugin 已注册。
+
+    注意：我们在 init_nornir 中绕过 InitNornir 直接构造 Nornir，
+    这会跳过一些插件加载逻辑，因此需要在运行任务前显式注册。
+    """
+
+    # 显式导入并注册 scrapli connection plugin
+    # 注意：nornir_scrapli.connection.Scrapli 是 scrapli 驱动类（需要 platform/host 参数），
+    # 真正的 Nornir 连接插件是 ScrapliCore（无参构造，open/close 由 Nornir 调用）。
+    module = importlib.import_module("nornir_scrapli.connection")
+    plugin_cls = getattr(module, "ScrapliCore", None)
+    if plugin_cls is None:
+        raise RuntimeError("nornir_scrapli.connection 中未找到 ScrapliCore 连接插件")
+
+    existing = ConnectionPluginRegister.available.get("scrapli")
+    if existing == plugin_cls:
+        return
+
+    try:
+        ConnectionPluginRegister.register("scrapli", plugin_cls)
+    except PluginAlreadyRegistered:
+        # 若之前错误注册了 Scrapli（驱动类）等，强制覆盖为 ScrapliCore
+        ConnectionPluginRegister.available["scrapli"] = plugin_cls
 
 
 def create_nornir_inventory(
@@ -113,7 +142,7 @@ def create_nornir_inventory(
                     extras={
                         "auth_strict_key": False,
                         "ssh_config_file": False,
-                        "transport": "asyncssh",
+                        "transport": "paramiko",
                     }
                 )
             },
@@ -128,7 +157,7 @@ def create_nornir_inventory(
                 extras={
                     "auth_strict_key": False,
                     "ssh_config_file": False,
-                    "transport": "asyncssh",
+                    "transport": "paramiko",
                 }
             )
         },
@@ -153,15 +182,14 @@ def init_nornir(
     Returns:
         Nornir: 初始化完成的 Nornir 实例
     """
+    _ensure_scrapli_plugin_registered()
     inventory = create_nornir_inventory(hosts_data, groups_data)
 
-    nr = InitNornir(
-        runner={
-            "plugin": "threaded",
-            "options": {"num_workers": num_workers},
-        },
+    # nornir.InitNornir() 会走 Config.from_dict()，要求 inventory 为 dict 配置。
+    # 这里我们是动态构造 Inventory 实例，因此直接构造 Nornir。
+    nr = Nornir(
         inventory=inventory,
-        logging={"enabled": False},  # 使用 structlog 代替
+        runner=ThreadedRunner(num_workers=num_workers),
     )
 
     logger.info(

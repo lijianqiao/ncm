@@ -204,6 +204,13 @@ class TemplateService:
         if step.approver_id and step.approver_id != actor_user_id and not is_superuser:
             raise ForbiddenException("当前用户不是该级审批人")
 
+        # 未指定审批人时，记录实际审批账号
+        if step.approver_id is None:
+            step.approver_id = actor_user_id
+        elif step.approver_id != actor_user_id and is_superuser:
+            # 超级管理员代审：以实际操作账号为准
+            step.approver_id = actor_user_id
+
         step.status = ApprovalStatus.APPROVED.value if approve else ApprovalStatus.REJECTED.value
         step.comment = comment
         step.approved_at = datetime.now(UTC)

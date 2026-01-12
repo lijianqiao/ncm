@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { ref, h } from 'vue'
+import { ref, h, computed } from 'vue'
 import {
   NButton,
+  NAlert,
   NModal,
   NFormItem,
   NInput,
@@ -30,12 +31,14 @@ import {
   type DeploySearchParams,
   type DeployTaskStatus,
 } from '@/api/deploy'
+import { cacheOTP } from '@/api/credentials'
 import { getTemplates, type Template } from '@/api/templates'
 import { getDevices, type Device } from '@/api/devices'
 import { getUsers, type User } from '@/api/users'
 import { formatDateTime } from '@/utils/date'
 import { formatUserDisplayName } from '@/utils/user'
 import ProTable, { type FilterConfig } from '@/components/common/ProTable.vue'
+import OtpModal from '@/components/common/OtpModal.vue'
 
 defineOptions({
   name: 'DeployManagement',
@@ -238,6 +241,7 @@ const loadData = async (params: DeploySearchParams) => {
 
 const contextMenuOptions: DropdownOption[] = [
   { label: '查看详情', key: 'view' },
+  { label: '查看结果', key: 'result' },
   { label: '审批', key: 'approve' },
   { label: '执行', key: 'execute' },
   { label: '回滚', key: 'rollback' },
@@ -245,6 +249,7 @@ const contextMenuOptions: DropdownOption[] = [
 
 const handleContextMenuSelect = (key: string | number, row: DeployTask) => {
   if (key === 'view') handleView(row)
+  if (key === 'result') handleView(row)
   if (key === 'approve') handleApprove(row)
   if (key === 'execute') handleExecute(row)
   if (key === 'rollback') handleRollback(row)
@@ -383,6 +388,91 @@ const approveModel = ref({
   comment: '',
 })
 
+// ==================== OTP（手动输入） ====================
+
+const showOtpModal = ref(false)
+const otpLoading = ref(false)
+const otpModel = ref({
+  task_id: '',
+  task_name: '',
+  dept_id: '',
+  device_group: '' as any,
+})
+
+const otpAlertText = computed(() => {
+  const name = otpModel.value.task_name || ''
+  return `任务 "${name}" 需要 OTP 验证码才能继续执行。`
+})
+
+const otpInfoItems = computed(() => {
+  return [
+    { label: '部门ID', value: otpModel.value.dept_id },
+    { label: '设备分组', value: String(otpModel.value.device_group || '-') },
+  ]
+})
+
+const extractOtpRequiredGroups = (task: DeployTask): Array<{ dept_id: string; device_group: any }> => {
+  const result: any = (task as any).result
+  if (!result || typeof result !== 'object') return []
+  const groups = (result as any).otp_required_groups
+  if (!Array.isArray(groups)) return []
+  return groups
+    .filter((g: any) => g && typeof g === 'object' && typeof g.dept_id === 'string' && g.device_group)
+    .map((g: any) => ({ dept_id: g.dept_id, device_group: g.device_group }))
+}
+
+const openOtpModal = (task: DeployTask) => {
+  const groups = extractOtpRequiredGroups(task)
+  if (!groups.length) {
+    $alert.warning('任务需要 OTP，但未返回分组信息')
+    return
+  }
+  const first = groups[0]!
+  otpModel.value = {
+    task_id: task.id,
+    task_name: task.name,
+    dept_id: first.dept_id,
+    device_group: first.device_group,
+  }
+  showOtpModal.value = true
+}
+
+const submitOtpAndRetry = async (otpCode: string) => {
+  if (!/^[0-9]{6,8}$/.test(otpCode)) {
+    $alert.warning('请输入有效 OTP 验证码')
+    return
+  }
+
+  otpLoading.value = true
+  try {
+    const cacheRes = await cacheOTP({
+      dept_id: otpModel.value.dept_id,
+      device_group: otpModel.value.device_group,
+      otp_code: otpCode,
+    })
+
+    if (!cacheRes.data?.success) {
+      $alert.error(cacheRes.data?.message || 'OTP 缓存失败')
+      return
+    }
+
+    const execRes = await executeDeployTask(otpModel.value.task_id)
+    const updatedTask = execRes.data
+    if (updatedTask.status === 'paused') {
+      openOtpModal(updatedTask)
+      return
+    }
+
+    showOtpModal.value = false
+    $alert.success('OTP 已提交，下发任务已开始执行')
+    tableRef.value?.reload()
+  } catch {
+    // Error handled
+  } finally {
+    otpLoading.value = false
+  }
+}
+
 const handleApprove = (row: DeployTask) => {
   if (row.status !== 'pending' && row.status !== 'approving') {
     $alert.warning('该任务不在审批阶段')
@@ -430,7 +520,13 @@ const handleExecute = (row: DeployTask) => {
     negativeText: '取消',
     onPositiveClick: async () => {
       try {
-        await executeDeployTask(row.id)
+        const res = await executeDeployTask(row.id)
+        const task = res.data
+        if (task.status === 'paused') {
+          $alert.warning('需要输入 OTP 验证码')
+          openOtpModal(task)
+          return
+        }
         $alert.success('下发任务已提交执行')
         tableRef.value?.reload()
       } catch {
@@ -503,11 +599,58 @@ const handleRollback = (row: DeployTask) => {
             <n-descriptions-item label="Celery任务ID" :span="2">{{ viewData.celery_task_id || '-' }}</n-descriptions-item>
             <n-descriptions-item label="设备数">{{ getTaskDeviceCount(viewData) }}</n-descriptions-item>
             <n-descriptions-item label="创建人">{{ viewData.created_by_name || '-' }}</n-descriptions-item>
-            <n-descriptions-item label="变更说明" :span="2">{{ viewData.change_description || '-' }}</n-descriptions-item>
-            <n-descriptions-item label="影响范围" :span="2">{{ viewData.impact_scope || '-' }}</n-descriptions-item>
-            <n-descriptions-item label="回退方案" :span="2">{{ viewData.rollback_plan || '-' }}</n-descriptions-item>
-            <n-descriptions-item label="错误信息" :span="2">{{ viewData.error_message || '-' }}</n-descriptions-item>
+            <n-descriptions-item label="变更说明" :span="2">
+              <div style="white-space: pre-wrap; word-break: break-word">
+                {{ viewData.change_description || '-' }}
+              </div>
+            </n-descriptions-item>
+            <n-descriptions-item label="影响范围" :span="2">
+              <div style="white-space: pre-wrap; word-break: break-word">
+                {{ viewData.impact_scope || '-' }}
+              </div>
+            </n-descriptions-item>
+            <n-descriptions-item label="回退方案" :span="2">
+              <div style="white-space: pre-wrap; word-break: break-word">
+                {{ viewData.rollback_plan || '-' }}
+              </div>
+            </n-descriptions-item>
+            <n-descriptions-item label="错误信息" :span="2">
+              <div style="white-space: pre-wrap; word-break: break-word">
+                {{ viewData.error_message || '-' }}
+              </div>
+            </n-descriptions-item>
           </n-descriptions>
+
+          <!-- 参数定义（模板参数 / 下发计划 / 目标设备） -->
+          <div>
+            <h4>参数定义</h4>
+            <n-space vertical size="small">
+              <div>
+                <div style="font-weight: 600; margin-bottom: 6px">模板参数 (template_params)</div>
+                <n-code
+                  :code="viewData.template_params ? formatJson(viewData.template_params) : '{}'"
+                  language="json"
+                  style="max-height: 220px; overflow: auto"
+                />
+              </div>
+              <div>
+                <div style="font-weight: 600; margin-bottom: 6px">下发计划 (deploy_plan)</div>
+                <n-code
+                  :code="viewData.deploy_plan ? formatJson(viewData.deploy_plan) : '{}'"
+                  language="json"
+                  style="max-height: 220px; overflow: auto"
+                />
+              </div>
+              <div>
+                <div style="font-weight: 600; margin-bottom: 6px">目标设备 (target_devices)</div>
+                <n-code
+                  :code="viewData.target_devices ? formatJson(viewData.target_devices) : '{}'"
+                  language="json"
+                  style="max-height: 220px; overflow: auto"
+                />
+              </div>
+            </n-space>
+          </div>
 
           <!-- 审批流程 -->
           <div v-if="(viewData.approvals || []).length > 0">
@@ -547,7 +690,7 @@ const handleRollback = (row: DeployTask) => {
           </div>
 
           <!-- 执行结果（后端 result JSON） -->
-          <div v-if="viewData.result || viewData.status === 'running' || viewData.status === 'partial'">
+          <div v-if="viewData.result || viewData.status === 'running' || viewData.status === 'partial' || viewData.status === 'success' || viewData.status === 'failed'">
             <h4>执行结果</h4>
             <n-code
               :code="viewData.result ? formatJson(viewData.result) : viewData.status === 'running' ? '执行中，暂无结果，请稍后刷新' : '-'"
@@ -706,6 +849,18 @@ const handleRollback = (row: DeployTask) => {
         </n-button>
       </template>
     </n-modal>
+
+    <!-- OTP 输入 Modal（通用组件） -->
+    <OtpModal
+      v-model:show="showOtpModal"
+      :loading="otpLoading"
+      :title="'需要 OTP 验证码'"
+      :alert-title="'需要 OTP'"
+      :alert-text="otpAlertText"
+      :info-items="otpInfoItems"
+      confirm-text="提交并继续"
+      @confirm="submitOtpAndRetry"
+    />
   </div>
 </template>
 

@@ -12,6 +12,7 @@ from typing import Any
 from uuid import UUID
 
 from sqlalchemy import select
+from sqlalchemy.orm.exc import StaleDataError
 
 from app.celery.app import celery_app
 from app.celery.base import BaseTask, run_async
@@ -91,27 +92,83 @@ async def _save_pre_change_backup(db, device: Device, config_content: str) -> Ba
 )
 def deploy_task(self, task_id: str) -> dict[str, Any]:
     """执行下发任务（灰度/并发/OTP断点续传）。"""
-    logger.info("开始下发任务", task_id=self.request.id, deploy_task_id=task_id)
-    self.update_state(state="PROGRESS", meta={"stage": "initializing"})
+    celery_task_id = getattr(self.request, "id", None)
+    logger.info("开始下发任务", task_id=celery_task_id, deploy_task_id=task_id)
+    if celery_task_id:
+        self.update_state(task_id=celery_task_id, state="PROGRESS", meta={"stage": "initializing"})
 
-    return run_async(_deploy_task_async(self, task_id))
+    try:
+        return run_async(_deploy_task_async(self, task_id, celery_task_id=celery_task_id))
+    except Exception as e:
+        error_text = str(e)
+        logger.error("下发任务执行异常", deploy_task_id=task_id, error=error_text, exc_info=True)
+
+        async def _mark_failed(error_message: str = error_text) -> None:
+            async with AsyncSessionLocal() as db:
+                task_uuid = UUID(task_id)
+                task = await db.get(Task, task_uuid)
+                if not task:
+                    return
+                task.status = TaskStatus.FAILED.value
+                task.error_message = error_message
+                task.finished_at = datetime.now(UTC)
+                await db.flush()
+                await db.commit()
+
+        try:
+            run_async(_mark_failed())
+        except Exception:
+            pass
+        raise
 
 
-async def _deploy_task_async(self, task_id: str) -> dict[str, Any]:
+async def _deploy_task_async(self, task_id: str, *, celery_task_id: str | None) -> dict[str, Any]:
     render_service = RenderService()
+
+    def _update_progress(meta: dict[str, Any]) -> None:
+        if not celery_task_id:
+            return
+        try:
+            self.update_state(task_id=celery_task_id, state="PROGRESS", meta=meta)
+        except Exception:
+            return
 
     async with AsyncSessionLocal() as db:
         task_uuid = UUID(task_id)
-        task = await db.get(Task, task_uuid)
-        if not task:
-            raise ValueError("任务不存在")
-        if task.task_type != TaskType.DEPLOY.value:
-            raise ValueError("非下发任务")
+        # 注意：Task 启用了 version_id 乐观锁；API 侧可能已写入 RUNNING/started_at。
+        # 这里仅在必要时更新，并在并发冲突时回滚重试，避免 StaleDataError 直接让任务失败。
+        task: Task | None = None
+        for attempt in range(2):
+            task = await db.get(Task, task_uuid)
+            if not task:
+                raise ValueError("任务不存在")
+            if task.task_type != TaskType.DEPLOY.value:
+                raise ValueError("非下发任务")
 
-        task.status = TaskStatus.RUNNING.value
-        task.started_at = datetime.now(UTC)
-        await db.flush()
-        await db.commit()
+            changed = False
+            if task.status != TaskStatus.RUNNING.value:
+                task.status = TaskStatus.RUNNING.value
+                changed = True
+            if task.started_at is None:
+                task.started_at = datetime.now(UTC)
+                changed = True
+
+            if not changed:
+                break
+
+            try:
+                await db.flush()
+                await db.commit()
+                break
+            except StaleDataError:
+                logger.warning("任务状态更新发生并发冲突，准备重试", deploy_task_id=task_id, attempt=attempt + 1)
+                await db.rollback()
+                if attempt >= 1:
+                    raise
+                continue
+
+        if task is None:
+            raise ValueError("任务不存在")
 
         template = await db.get(Template, task.template_id) if task.template_id else None
         if not template:
@@ -141,7 +198,7 @@ async def _deploy_task_async(self, task_id: str) -> dict[str, Any]:
         rendered_hash: dict[str, str] = {}
         failed_devices: list[str] = []
         for idx, device in enumerate(devices, start=1):
-            self.update_state(state="PROGRESS", meta={"stage": "rendering", "progress": idx, "total": len(devices)})
+            _update_progress({"stage": "rendering", "progress": idx, "total": len(devices)})
             try:
                 rendered = render_service.render(template, task.template_params or {}, device=device)
                 cmds = normalize_rendered_config(rendered)
@@ -178,9 +235,8 @@ async def _deploy_task_async(self, task_id: str) -> dict[str, Any]:
         pre_change_backup_ids: dict[str, str] = {}
         for start in range(0, len(devices), batch_size):
             batch = devices[start : start + batch_size]
-            self.update_state(
-                state="PROGRESS",
-                meta={"stage": "executing", "batch_start": start, "batch_size": len(batch), "total": len(devices)},
+            _update_progress(
+                {"stage": "executing", "batch_start": start, "batch_size": len(batch), "total": len(devices)}
             )
 
             hosts_data: list[dict[str, Any]] = []
@@ -209,10 +265,9 @@ async def _deploy_task_async(self, task_id: str) -> dict[str, Any]:
                 await db.commit()
                 return {"status": "paused", "otp_required": e.details}
 
-            nr = init_nornir(hosts_data, num_workers=min(concurrency, len(hosts_data)))
-
-            # 变更前备份（best-effort）：在同一批次内先备份再下发
-            backup_results = nr.run(task=backup_config)
+            # 变更前备份（best-effort）：使用独立 Nornir 实例，避免失败状态影响后续下发
+            nr_backup = init_nornir(hosts_data, num_workers=min(concurrency, len(hosts_data)))
+            backup_results = nr_backup.run(task=backup_config)
             backup_summary = aggregate_results(backup_results)
             for d in batch:
                 host_key = str(d.id)
@@ -224,10 +279,20 @@ async def _deploy_task_async(self, task_id: str) -> dict[str, Any]:
                         task.rollback_backup_id = b.id
             await db.commit()
 
-            # 下发
-            deploy_results = nr.run(task=deploy_from_host_data)
+            # 下发：使用新的 Nornir 实例，确保每台设备都会被选择执行
+            nr_deploy = init_nornir(hosts_data, num_workers=min(concurrency, len(hosts_data)))
+            deploy_results = nr_deploy.run(task=deploy_from_host_data)
             deploy_summary = aggregate_results(deploy_results)
             all_results["results"].update(deploy_summary.get("results", {}))
+
+            # 兜底：若聚合结果里缺失某些 host，补记为失败，避免 success/failed 统计为 0
+            for d in batch:
+                host_key = str(d.id)
+                if host_key not in all_results["results"]:
+                    all_results["results"][host_key] = {
+                        "status": "failed",
+                        "error": "下发未执行或结果缺失",
+                    }
 
         # 汇总
         success_count = 0

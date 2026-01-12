@@ -33,7 +33,16 @@ import {
   type DeviceSearchParams,
   type DeviceLifecycleStatsResponse,
 } from '@/api/devices'
-import { DeviceVendor, DeviceStatus, DeviceGroup, AuthType } from '@/types/enums'
+import {
+  DeviceVendor,
+  DeviceStatus,
+  DeviceGroup,
+  AuthType,
+  type DeviceVendorType,
+  type DeviceStatusType,
+  type DeviceGroupType,
+  type AuthTypeType,
+} from '@/types/enums'
 import {
   DeviceVendorOptions,
   DeviceStatusOptions,
@@ -212,16 +221,16 @@ const createModel = ref({
   id: '',
   name: '',
   ip_address: '',
-  vendor: null as DeviceVendor | null,
+  vendor: null as DeviceVendorType | null,
   model: '',
   platform: '',
   location: '',
   description: '',
   ssh_port: 22,
-  auth_type: AuthType.OTP_SEED as `${AuthType}`,
+  auth_type: AuthType.OTP_SEED as AuthTypeType,
   dept_id: null as string | null,
-  device_group: null as `${DeviceGroup}` | null,
-  status: DeviceStatus.IN_STOCK as `${DeviceStatus}`,
+  device_group: null as DeviceGroupType | null,
+  status: DeviceStatus.IN_STOCK as DeviceStatusType,
   username: '',
   password: '',
   serial_number: '',
@@ -247,10 +256,10 @@ const handleCreate = () => {
     location: '',
     description: '',
     ssh_port: 22,
-    auth_type: AuthType.OTP_SEED,
+    auth_type: AuthType.OTP_SEED as AuthTypeType,
     dept_id: null,
     device_group: null,
-    status: DeviceStatus.IN_STOCK,
+    status: DeviceStatus.IN_STOCK as DeviceStatusType,
     username: '',
     password: '',
     serial_number: '',
@@ -366,8 +375,8 @@ const showTransitionModal = ref(false)
 const transitionModel = ref({
   id: '',
   name: '',
-  currentStatus: '' as DeviceStatus,
-  toStatus: '' as DeviceStatus,
+  currentStatus: '' as DeviceStatusType,
+  toStatus: '' as DeviceStatusType,
   reason: '',
 })
 
@@ -406,7 +415,7 @@ const submitTransition = async () => {
 const showBatchTransitionModal = ref(false)
 const batchTransitionModel = ref({
   ids: [] as string[],
-  toStatus: DeviceStatus.ACTIVE as `${DeviceStatus}`,
+  toStatus: DeviceStatus.ACTIVE as DeviceStatusType,
   reason: '',
 })
 

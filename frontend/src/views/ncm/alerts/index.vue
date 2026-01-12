@@ -37,50 +37,48 @@ const tableRef = ref()
 const alertTypeOptions = [
   { label: '设备离线', value: 'device_offline' },
   { label: '配置变更', value: 'config_change' },
-  { label: '阈值告警', value: 'threshold' },
-  { label: '安全告警', value: 'security' },
+  { label: '影子资产', value: 'shadow_asset' },
 ]
 
 const severityOptions = [
-  { label: '信息', value: 'info' },
-  { label: '警告', value: 'warning' },
-  { label: '严重', value: 'critical' },
+  { label: '低', value: 'low' },
+  { label: '中', value: 'medium' },
+  { label: '高', value: 'high' },
 ]
 
 const statusOptions = [
   { label: '未处理', value: 'open' },
-  { label: '已确认', value: 'acknowledged' },
+  { label: '已确认', value: 'ack' },
   { label: '已关闭', value: 'closed' },
 ]
 
 const alertTypeLabelMap: Record<AlertType, string> = {
   device_offline: '设备离线',
   config_change: '配置变更',
-  threshold: '阈值告警',
-  security: '安全告警',
+  shadow_asset: '影子资产',
 }
 
 const severityLabelMap: Record<AlertSeverity, string> = {
-  info: '信息',
-  warning: '警告',
-  critical: '严重',
+  low: '低',
+  medium: '中',
+  high: '高',
 }
 
 const statusLabelMap: Record<AlertStatus, string> = {
   open: '未处理',
-  acknowledged: '已确认',
+  ack: '已确认',
   closed: '已关闭',
 }
 
 const severityColorMap: Record<AlertSeverity, 'info' | 'warning' | 'error'> = {
-  info: 'info',
-  warning: 'warning',
-  critical: 'error',
+  low: 'info',
+  medium: 'warning',
+  high: 'error',
 }
 
 const statusColorMap: Record<AlertStatus, 'error' | 'warning' | 'success'> = {
   open: 'error',
-  acknowledged: 'warning',
+  ack: 'warning',
   closed: 'success',
 }
 

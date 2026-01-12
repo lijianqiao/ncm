@@ -61,7 +61,8 @@ export interface OTPCacheRequest {
 
 /** OTP 缓存响应 */
 export interface OTPCacheResponse {
-  cached: boolean
+  success: boolean
+  message: string
   expires_in: number
 }
 

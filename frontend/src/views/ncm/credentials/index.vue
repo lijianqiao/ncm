@@ -22,7 +22,7 @@ import {
   type Credential,
   type CredentialSearchParams,
 } from '@/api/credentials'
-import { DeviceGroup, AuthType } from '@/types/enums'
+import { DeviceGroup, AuthType, type DeviceGroupType } from '@/types/enums'
 import {
   DeviceGroupOptions,
   AuthTypeOptions,
@@ -262,7 +262,7 @@ const handleDelete = (row: Credential) => {
 const showOTPModal = ref(false)
 const otpModel = ref({
   dept_id: '',
-  device_group: 'core' as DeviceGroup,
+  device_group: DeviceGroup.CORE as DeviceGroupType,
   otp_code: '',
   dept_name: '',
 })
@@ -288,11 +288,11 @@ const submitCacheOTP = async () => {
       device_group: otpModel.value.device_group,
       otp_code: otpModel.value.otp_code,
     })
-    if (res.data.cached) {
-      $alert.success(`OTP 已缓存，有效期 ${res.data.expires_in} 秒`)
+    if (res.data.success) {
+      $alert.success(res.data.message || `OTP 已缓存，有效期 ${res.data.expires_in} 秒`)
       showOTPModal.value = false
     } else {
-      $alert.error('OTP 缓存失败')
+      $alert.error(res.data.message || 'OTP 缓存失败')
     }
   } catch {
     // Error handled

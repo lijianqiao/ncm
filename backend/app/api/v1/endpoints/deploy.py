@@ -13,7 +13,6 @@ from fastapi import APIRouter, Depends, Query
 
 from app.api.deps import CurrentUser, DeployServiceDep, require_permissions
 from app.core.enums import TaskStatus, TaskType
-from app.core.exceptions import BadRequestException
 from app.core.permissions import PermissionCode
 from app.schemas.common import PaginatedResponse, ResponseBase
 from app.schemas.deploy import (
@@ -110,16 +109,7 @@ async def execute_task(task_id: UUID, service: DeployServiceDep) -> ResponseBase
     Returns:
         ResponseBase[DeployTaskResponse]: 已绑定 Celery 任务 ID 的详情。
     """
-    task = await service.get_task(task_id)
-    if task.task_type != TaskType.DEPLOY.value:
-        raise BadRequestException("仅支持下发任务")
-    if task.status != TaskStatus.APPROVED.value:
-        raise BadRequestException("任务未审批通过")
-
-    from app.celery.tasks.deploy import deploy_task
-
-    celery_result = cast(Any, deploy_task).delay(task_id=str(task_id))  # type: ignore[attr-defined]
-    task = await service.bind_celery_task(task_id, celery_task_id=celery_result.id)
+    task = await service.execute_task(task_id)
     return ResponseBase(data=DeployTaskResponse.model_validate(task))
 
 

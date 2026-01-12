@@ -7,7 +7,7 @@
 """
 
 import asyncio
-import concurrent.futures
+import threading
 from collections.abc import Coroutine
 from typing import Any, TypeVar
 
@@ -16,6 +16,72 @@ from celery import Task
 from app.core.logger import logger
 
 T = TypeVar("T")
+
+_ASYNC_LOOP: asyncio.AbstractEventLoop | None = None
+_ASYNC_THREAD: threading.Thread | None = None
+_ASYNC_THREAD_STARTED = threading.Event()
+_ASYNC_LOCK = threading.Lock()
+
+
+def init_celery_async_runtime() -> None:
+    """初始化 Celery Worker 进程的异步运行时（后台事件循环线程）。
+
+    目标：
+    - Celery 在 Windows 或 threads pool 下可能在不同线程中执行任务。
+    - 直接在调用线程创建/复用事件循环容易导致 asyncpg 的连接 Future 绑定到不同 loop。
+    - 这里用“单后台线程 + 单事件循环”，所有协程都提交到该 loop 执行。
+    """
+
+    global _ASYNC_LOOP, _ASYNC_THREAD
+
+    with _ASYNC_LOCK:
+        if _ASYNC_THREAD and _ASYNC_THREAD.is_alive() and _ASYNC_LOOP and not _ASYNC_LOOP.is_closed():
+            return
+
+        _ASYNC_THREAD_STARTED.clear()
+
+        def _thread_main() -> None:
+            global _ASYNC_LOOP
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            _ASYNC_LOOP = loop
+            _ASYNC_THREAD_STARTED.set()
+            loop.run_forever()
+
+            pending = asyncio.all_tasks(loop)
+            for t in pending:
+                t.cancel()
+            if pending:
+                try:
+                    loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+                except Exception:
+                    pass
+            loop.close()
+
+        _ASYNC_THREAD = threading.Thread(target=_thread_main, name="celery-async-runtime", daemon=True)
+        _ASYNC_THREAD.start()
+
+    _ASYNC_THREAD_STARTED.wait(timeout=10)
+
+
+def close_celery_async_runtime() -> None:
+    """关闭 Celery Worker 进程异步运行时。"""
+
+    global _ASYNC_LOOP, _ASYNC_THREAD
+
+    with _ASYNC_LOCK:
+        loop = _ASYNC_LOOP
+        thread = _ASYNC_THREAD
+        _ASYNC_LOOP = None
+        _ASYNC_THREAD = None
+
+    if loop and not loop.is_closed():
+        try:
+            loop.call_soon_threadsafe(loop.stop)
+        except Exception:
+            pass
+    if thread and thread.is_alive():
+        thread.join(timeout=5)
 
 
 def run_async[T](coro: Coroutine[Any, Any, T]) -> T:
@@ -40,17 +106,22 @@ def run_async[T](coro: Coroutine[Any, Any, T]) -> T:
             return run_async(_async_work())
     """
     try:
-        loop = asyncio.get_running_loop()
+        asyncio.get_running_loop()
     except RuntimeError:
-        loop = None
-
-    if loop and loop.is_running():
-        # 已有事件循环运行，在线程池中执行
-        with concurrent.futures.ThreadPoolExecutor() as pool:
-            future = pool.submit(asyncio.run, coro)
-            return future.result()
+        pass
     else:
-        return asyncio.run(coro)
+        raise RuntimeError("禁止在运行中的事件循环中调用 run_async()")
+
+    init_celery_async_runtime()
+    loop = _ASYNC_LOOP
+    thread = _ASYNC_THREAD
+    if not loop or loop.is_closed() or not thread or not thread.is_alive():
+        raise RuntimeError("Celery 异步运行时未初始化")
+    if threading.get_ident() == thread.ident:
+        raise RuntimeError("禁止在 Celery 异步运行时线程内调用 run_async()")
+
+    future = asyncio.run_coroutine_threadsafe(coro, loop)
+    return future.result()
 
 
 class BaseTask(Task):

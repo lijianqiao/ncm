@@ -6,10 +6,62 @@
 @Docs: Celery 应用配置 (Celery Application Configuration).
 """
 
+import multiprocessing
+import os
+
 from celery import Celery
 from celery.schedules import crontab
+from celery.signals import worker_init, worker_process_init, worker_shutdown
 
 from app.core.config import settings
+
+
+@worker_init.connect
+def _init_worker_redis(**_kwargs) -> None:
+    """初始化 Worker 需要的外部资源（如 Redis）。"""
+    # Linux prefork(fork) 场景下，worker_init 发生在主进程，事件循环不应在 fork 前初始化。
+    if os.name != "nt":
+        try:
+            start_method = multiprocessing.get_start_method(allow_none=True)
+        except Exception:
+            start_method = None
+        if start_method == "fork":
+            return
+
+    try:
+        from app.celery.base import init_celery_async_runtime, run_async
+        from app.core.cache import init_redis
+
+        init_celery_async_runtime()
+        run_async(init_redis())
+    except Exception:
+        # 初始化失败不阻断 worker 启动（任务会降级运行）
+        return
+
+
+@worker_process_init.connect
+def _init_worker_process_redis(**_kwargs) -> None:
+    """prefork 模式下的子进程初始化。"""
+    try:
+        from app.celery.base import init_celery_async_runtime, run_async
+        from app.core.cache import init_redis
+
+        init_celery_async_runtime()
+        run_async(init_redis())
+    except Exception:
+        return
+
+
+@worker_shutdown.connect
+def _close_worker_redis(**_kwargs) -> None:
+    try:
+        from app.celery.base import close_celery_async_runtime, run_async
+        from app.core.cache import close_redis
+
+        run_async(close_redis())
+        close_celery_async_runtime()
+    except Exception:
+        return
 
 
 def create_celery_app() -> Celery:

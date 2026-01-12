@@ -21,7 +21,7 @@ import {
   getTopologyTaskStatus,
   rebuildTopologyCache,
   type TopologyResponse,
-  type TopologyLinkResponse,
+  type TopologyLinkItem,
   type TopologyTaskStatus,
 } from '@/api/topology'
 import { useTaskPolling } from '@/composables'
@@ -44,7 +44,7 @@ const fetchTopology = async () => {
   loading.value = true
   try {
     const res = await getTopology()
-    topologyData.value = res
+    topologyData.value = res.data
     await nextTick()
     renderNetwork()
   } catch {
@@ -78,7 +78,8 @@ const renderNetwork = async () => {
         to: edge.to,
         title: `${edge.local_port || ''} <-> ${edge.remote_port || ''}`,
         arrows: 'to,from',
-        smooth: { type: 'continuous' },
+        // vis-network 类型要求包含 enabled/roundness，避免 vue-tsc 报错
+        smooth: { enabled: true, type: 'continuous', roundness: 0.3 },
       })),
     )
 
@@ -118,9 +119,9 @@ const renderNetwork = async () => {
 
     networkInstance = new Network(networkContainer.value, { nodes, edges }, options)
 
-    networkInstance.on('click', (params: { nodes: string[] }) => {
+    networkInstance.on('click', (params: { nodes: Array<string | number> }) => {
       if (params.nodes.length > 0) {
-        const nodeId = params.nodes[0]
+        const nodeId = String(params.nodes[0])
         const node = topologyData.value?.nodes.find((n) => n.id === nodeId)
         if (node) {
           selectedNode.value = node
@@ -182,7 +183,7 @@ const selectedNode = ref<any>(null)
 // ==================== 链路列表 ====================
 
 const showLinksModal = ref(false)
-const links = ref<TopologyLinkResponse[]>([])
+const links = ref<TopologyLinkItem[]>([])
 const linksLoading = ref(false)
 
 const handleShowLinks = async () => {
@@ -190,7 +191,7 @@ const handleShowLinks = async () => {
   showLinksModal.value = true
   try {
     const res = await getTopologyLinks({ page_size: 100 })
-    links.value = res.links || []
+    links.value = res.data.items || []
   } catch {
     showLinksModal.value = false
   } finally {
@@ -208,12 +209,15 @@ const {
   start: startPollingTaskStatus,
   stop: stopPollingTaskStatus,
   reset: resetTask,
+  isPolling,
 } = useTaskPolling<TopologyTaskStatus>(
   (taskId) => getTopologyTaskStatus(taskId),
   {
     onComplete: () => fetchTopology(),
   }
 )
+
+const taskPolling = isPolling
 
 const handleRefreshTopology = () => {
   dialog.info({
@@ -228,8 +232,8 @@ const handleRefreshTopology = () => {
           $alert.success('拓扑采集任务已提交')
           showRefreshModal.value = true
           startPollingTaskStatus(res.data.task_id)
-        } else if (res.data.result) {
-          $alert.success('拓扑刷新完成')
+        } else {
+          $alert.success('拓扑刷新请求已完成')
           fetchTopology()
         }
       } catch {
@@ -373,19 +377,19 @@ const handleFitView = () => {
         <n-table :bordered="false" :single-line="false">
           <thead>
             <tr>
-              <th>源设备</th>
+              <th>源设备ID</th>
               <th>源端口</th>
-              <th>目标设备</th>
+              <th>目标设备ID</th>
               <th>目标端口</th>
               <th>链路类型</th>
             </tr>
           </thead>
           <tbody>
             <tr v-for="link in links" :key="link.id">
-              <td>{{ link.source_device_name || link.source_device_id }}</td>
-              <td>{{ link.source_port }}</td>
-              <td>{{ link.target_device_name || link.target_device_id }}</td>
-              <td>{{ link.target_port }}</td>
+              <td>{{ link.source_device_id }}</td>
+              <td>{{ link.source_interface }}</td>
+              <td>{{ link.target_device_id || '-' }}</td>
+              <td>{{ link.target_interface || '-' }}</td>
               <td>{{ link.link_type || '-' }}</td>
             </tr>
             <tr v-if="links.length === 0">

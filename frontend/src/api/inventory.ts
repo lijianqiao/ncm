@@ -56,7 +56,7 @@ export interface InventoryAuditCreate {
 export interface InventoryAuditSearchParams {
   page?: number
   page_size?: number
-  status?: InventoryAuditStatus
+  status?: InventoryAuditStatusType
 }
 
 /** 盘点报告详情 */
