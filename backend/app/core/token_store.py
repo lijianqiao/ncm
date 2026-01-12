@@ -3,18 +3,18 @@
 @Email: lijianqiao2906@live.com
 @FileName: token_store.py
 @DateTime: 2026-01-07 00:00:00
-@Docs: Refresh Token 存储与撤销（主流方案：Redis 优先，降级内存存储）。
+@Docs: Refresh Token 存储与撤销（主流方案：Redis 优先，降级内存存储）
 
 说明：
-- 主要用于 Refresh Token 的“单端有效 + 轮换（rotation）+ 可撤销（revocation）”。
-- 优先使用 Redis 以支持多进程/多实例；若 Redis 不可用则降级为进程内内存存储（仅适合本地/测试）。
+- 主要用于 Refresh Token 的“单端有效 + 轮换（rotation）+ 可撤销（revocation）”方案
+- 优先使用 Redis 以支持多进程/多实例；若 Redis 不可用则降级为进程内内存存储（仅适合本地/测试）
 """
 
 import asyncio
 import time
 from collections.abc import Iterable
 
-from app.core.cache import redis_client
+from app.core import cache as cache_module
 from app.core.config import settings
 from app.core.logger import logger
 
@@ -47,20 +47,20 @@ def _refresh_key(user_id: str) -> str:
 
 class RedisRefreshTokenStore(RefreshTokenStore):
     async def set_current_jti(self, user_id: str, jti: str, ttl_seconds: int) -> None:
-        if redis_client is None:
+        if cache_module.redis_client is None:
             return
         key = _refresh_key(user_id)
         try:
-            await redis_client.setex(key, ttl_seconds, jti)
+            await cache_module.redis_client.setex(key, ttl_seconds, jti)
         except Exception as e:
             logger.warning(f"refresh token 存储失败(REDIS): {e}")
 
     async def get_current_jti(self, user_id: str) -> str | None:
-        if redis_client is None:
+        if cache_module.redis_client is None:
             return None
         key = _refresh_key(user_id)
         try:
-            value = await redis_client.get(key)
+            value = await cache_module.redis_client.get(key)
             if value:
                 if isinstance(value, (bytes, bytearray)):
                     return value.decode("utf-8")
@@ -70,16 +70,16 @@ class RedisRefreshTokenStore(RefreshTokenStore):
         return None
 
     async def revoke_user(self, user_id: str) -> None:
-        if redis_client is None:
+        if cache_module.redis_client is None:
             return
         key = _refresh_key(user_id)
         try:
-            await redis_client.setex(key, _default_ttl_seconds(), _REVOKED_JTI)
+            await cache_module.redis_client.setex(key, _default_ttl_seconds(), _REVOKED_JTI)
         except Exception as e:
             logger.warning(f"refresh token 撤销失败(REDIS): {e}")
 
 
-# ---- Access Token 即时失效阈值（revoked_after） ----
+# ---- Access Token 即时失效阈值（revoked_after）----
 
 
 def _revoked_after_key(user_id: str) -> str:
@@ -103,20 +103,20 @@ class AccessGate:
 
 class RedisAccessGate(AccessGate):
     async def set_revoked_after(self, user_id: str, ts_seconds: float) -> None:
-        if redis_client is None:
+        if cache_module.redis_client is None:
             return
         key = _revoked_after_key(user_id)
         try:
-            await redis_client.setex(key, _REVOKED_AFTER_TTL_SECONDS, str(int(ts_seconds)))
+            await cache_module.redis_client.setex(key, _REVOKED_AFTER_TTL_SECONDS, str(int(ts_seconds)))
         except Exception as e:
             logger.warning(f"revoked_after 写入失败(REDIS): {e}")
 
     async def get_revoked_after(self, user_id: str) -> float | None:
-        if redis_client is None:
+        if cache_module.redis_client is None:
             return None
         key = _revoked_after_key(user_id)
         try:
-            v = await redis_client.get(key)
+            v = await cache_module.redis_client.get(key)
             if not v:
                 return None
             try:
@@ -159,7 +159,7 @@ class MemoryAccessGate(AccessGate):
 
 
 class MemoryRefreshTokenStore(RefreshTokenStore):
-    """进程内 Refresh Token 存储（仅用于本地/测试降级）。"""
+    """进程内 Refresh Token 存储（仅用于本地/测试降级）"""
 
     def __init__(self) -> None:
         self._lock = asyncio.Lock()
@@ -196,12 +196,12 @@ _redis_gate = RedisAccessGate()
 
 
 def get_refresh_token_store() -> RefreshTokenStore:
-    # Redis 可用时优先；否则降级内存。
-    return _redis_store if redis_client is not None else _memory_store
+    # Redis 可用时优先；否则降级内存存储
+    return _redis_store if cache_module.redis_client is not None else _memory_store
 
 
 def get_access_gate() -> AccessGate:
-    return _redis_gate if redis_client is not None else _memory_gate
+    return _redis_gate if cache_module.redis_client is not None else _memory_gate
 
 
 async def set_user_refresh_jti(*, user_id: str, jti: str, ttl_seconds: int) -> None:
@@ -220,7 +220,7 @@ async def revoke_users_refresh(*, user_ids: Iterable[str]) -> None:
     await get_refresh_token_store().revoke_users(user_ids)
 
 
-# ---- 外部使用的 Access Gate 方法 ----
+# ---- 外部使用 Access Gate 方法 ----
 
 
 async def set_user_revoked_after(*, user_id: str, ts_seconds: float) -> None:

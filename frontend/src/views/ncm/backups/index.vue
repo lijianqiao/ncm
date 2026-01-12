@@ -1,18 +1,22 @@
 <script setup lang="ts">
-import { ref, h } from 'vue'
+import { ref, h, computed } from 'vue'
 import {
   NButton,
   NModal,
+  NInputOtp,
+  NFormItem,
   useDialog,
   type DataTableColumns,
   NTag,
   NSelect,
   NSpace,
-  NCode,
   NProgress,
   NAlert,
   type DropdownOption,
 } from 'naive-ui'
+import hljs from 'highlight.js/lib/core'
+import plaintext from 'highlight.js/lib/languages/plaintext'
+import diff from 'highlight.js/lib/languages/diff'
 import { $alert } from '@/utils/alert'
 import {
   getBackups,
@@ -28,6 +32,7 @@ import {
 } from '@/api/backups'
 import { getDevices, type Device } from '@/api/devices'
 import { getDeviceLatestDiff, type DiffResponse } from '@/api/diff'
+import { cacheOTP, type OTPCacheRequest } from '@/api/credentials'
 import { formatDateTime } from '@/utils/date'
 import { useTaskPolling } from '@/composables'
 import ProTable, { type FilterConfig } from '@/components/common/ProTable.vue'
@@ -36,27 +41,33 @@ defineOptions({
   name: 'BackupManagement',
 })
 
+hljs.registerLanguage('plaintext', plaintext)
+hljs.registerLanguage('diff', diff)
+
 const dialog = useDialog()
 const tableRef = ref()
 
 // ==================== 常量定义 ====================
 
 const backupTypeOptions = [
-  { label: 'Running', value: 'running' },
-  { label: 'Startup', value: 'startup' },
-  { label: 'Full', value: 'full' },
+  { label: '定时备份', value: 'scheduled' },
+  { label: '手动备份', value: 'manual' },
+  { label: '变更前备份', value: 'pre_change' },
+  { label: '增量备份', value: 'incremental' },
 ]
 
 const backupTypeLabelMap: Record<BackupType, string> = {
-  running: 'Running',
-  startup: 'Startup',
-  full: 'Full',
+  scheduled: '定时备份',
+  manual: '手动备份',
+  pre_change: '变更前备份',
+  incremental: '增量备份',
 }
 
 const backupTypeColorMap: Record<BackupType, 'info' | 'success' | 'warning'> = {
-  running: 'info',
-  startup: 'success',
-  full: 'warning',
+  scheduled: 'info',
+  manual: 'success',
+  pre_change: 'warning',
+  incremental: 'info',
 }
 
 // 格式化文件大小
@@ -72,10 +83,10 @@ const columns: DataTableColumns<Backup> = [
   { type: 'selection', fixed: 'left' },
   {
     title: '设备名称',
-    key: 'device_name',
+    key: 'device',
     width: 150,
     ellipsis: { tooltip: true },
-    render: (row) => row.device_name || '-',
+    render: (row) => row.device?.name || row.device_name || row.device_id,
   },
   {
     title: '备份类型',
@@ -91,16 +102,19 @@ const columns: DataTableColumns<Backup> = [
   },
   {
     title: '配置 Hash',
-    key: 'config_hash',
+    key: 'md5_hash',
     width: 140,
     ellipsis: { tooltip: true },
-    render: (row) => row.config_hash.substring(0, 12) + '...',
+    render: (row) => {
+      const hash = row.md5_hash || row.config_hash || ''
+      return hash ? hash.substring(0, 12) + '...' : '-'
+    },
   },
   {
     title: '文件大小',
-    key: 'file_size',
+    key: 'content_size',
     width: 100,
-    render: (row) => formatFileSize(row.file_size),
+    render: (row) => formatFileSize(row.content_size || row.file_size || 0),
   },
   {
     title: '备份时间',
@@ -145,9 +159,9 @@ const handleContextMenuSelect = (key: string | number, row: Backup) => {
 const showContentModal = ref(false)
 const contentData = ref({
   device_name: '',
-  backup_type: 'running' as BackupType,
+  backup_type: 'scheduled' as BackupType,
   content: '',
-  config_hash: '',
+  md5_hash: '',
   created_at: '',
 })
 const contentLoading = ref(false)
@@ -156,14 +170,29 @@ const handleViewContent = async (row: Backup) => {
   contentLoading.value = true
   showContentModal.value = true
   try {
+    contentData.value = {
+      device_name: row.device?.name || row.device_name || row.device_id,
+      backup_type: row.backup_type,
+      content: '',
+      md5_hash: row.md5_hash || row.config_hash || '',
+      created_at: row.created_at,
+    }
     const res = await getBackupContent(row.id)
-    contentData.value = res.data
+    contentData.value = {
+      ...contentData.value,
+      content: res.data.content,
+    }
   } catch {
     showContentModal.value = false
   } finally {
     contentLoading.value = false
   }
 }
+
+const highlightedContentHtml = computed(() => {
+  const code = contentData.value.content || ''
+  return hljs.highlight(code, { language: 'plaintext' }).value
+})
 
 // ==================== 配置差异对比 ====================
 
@@ -184,12 +213,18 @@ const handleViewDiff = async (row: Backup) => {
   }
 }
 
+const highlightedDiffHtml = computed(() => {
+  const code = diffData.value?.diff_content || ''
+  if (!code) return ''
+  return hljs.highlight(code, { language: 'diff' }).value
+})
+
 // ==================== 删除备份 ====================
 
 const handleDelete = (row: Backup) => {
   dialog.warning({
     title: '确认删除',
-    content: `确定要删除该备份吗？（设备: ${row.device_name}）`,
+    content: `确定要删除该备份吗？（设备: ${row.device?.name || row.device_name || row.device_id}）`,
     positiveText: '确认',
     negativeText: '取消',
     onPositiveClick: async () => {
@@ -212,12 +247,14 @@ const backupModel = ref({
 })
 const deviceOptions = ref<{ label: string; value: string }[]>([])
 const deviceLoading = ref(false)
+const deviceMap = ref<Record<string, Device>>({})
 
 const handleManualBackup = async () => {
   deviceLoading.value = true
   showBackupModal.value = true
   try {
     const res = await getDevices({ page_size: 100, status: 'active' })
+    deviceMap.value = Object.fromEntries(res.data.items.map((d: Device) => [d.id, d]))
     deviceOptions.value = res.data.items.map((d: Device) => ({
       label: `${d.name} (${d.ip_address})`,
       value: d.id,
@@ -234,13 +271,112 @@ const submitManualBackup = async () => {
     $alert.warning('请选择设备')
     return
   }
+
+  const selectedDevice = deviceMap.value[backupModel.value.device_id]
+  if (selectedDevice?.auth_type === 'otp_manual') {
+    if (!selectedDevice.dept_id || !selectedDevice.device_group) {
+      $alert.error('该设备缺少 dept_id 或 device_group，无法进行 OTP 手动认证')
+      return
+    }
+    otpRequiredInfo.value = {
+      dept_id: selectedDevice.dept_id,
+      device_group: selectedDevice.device_group,
+      failed_devices: [],
+    }
+    pendingBackupDeviceId.value = backupModel.value.device_id
+    pendingBatchBackup.value = false
+    otpChars.value = createEmptyOtpChars()
+    showOTPModal.value = true
+    return
+  }
+
   try {
     await backupDevice(backupModel.value.device_id)
     $alert.success('备份任务已提交')
     showBackupModal.value = false
     tableRef.value?.reload()
+  } catch (error: unknown) {
+    // 检查是否需要 OTP 输入 (428 状态码)
+    const err = error as { response?: { status?: number; data?: { details?: OTPRequiredDetails } } }
+    if (err?.response?.status === 428 && err?.response?.data?.details) {
+      const details = err.response.data.details
+      otpRequiredInfo.value = {
+        dept_id: details.dept_id,
+        device_group: details.device_group,
+        failed_devices: details.failed_devices || [],
+      }
+      pendingBackupDeviceId.value = backupModel.value.device_id
+      otpChars.value = createEmptyOtpChars()
+      showOTPModal.value = true
+    }
+  }
+}
+
+// ==================== OTP 输入处理 ====================
+
+interface OTPRequiredDetails {
+  dept_id: string
+  device_group: string
+  failed_devices: string[]
+}
+
+const showOTPModal = ref(false)
+
+const createEmptyOtpChars = (): string[] => Array.from({ length: 6 }, () => '')
+const otpChars = ref<string[]>(createEmptyOtpChars())
+const otpLoading = ref(false)
+const otpRequiredInfo = ref<OTPRequiredDetails | null>(null)
+const pendingBackupDeviceId = ref<string>('')
+const pendingBatchBackup = ref(false)
+
+const deviceGroupLabels: Record<string, string> = {
+  core: '核心层',
+  distribution: '汇聚层',
+  access: '接入层',
+}
+
+const submitOTP = async () => {
+  const otpCode = otpChars.value.join('').trim()
+  if (!/^\d{6}$/.test(otpCode)) {
+    $alert.warning('请输入有效的 OTP 验证码（6位数字）')
+    return
+  }
+  if (!otpRequiredInfo.value) {
+    $alert.error('OTP 信息丢失，请重试')
+    return
+  }
+
+  otpLoading.value = true
+  try {
+    // 关闭 OTP 对话框
+    showOTPModal.value = false
+
+    // 重试备份
+    if (pendingBatchBackup.value) {
+      // 批量备份：仍通过专用缓存接口写入 (按 dept/group)
+      const cacheRequest: OTPCacheRequest = {
+        dept_id: otpRequiredInfo.value.dept_id,
+        device_group: otpRequiredInfo.value.device_group as OTPCacheRequest['device_group'],
+        otp_code: otpCode,
+      }
+      await cacheOTP(cacheRequest)
+      $alert.success('OTP 已缓存，正在重试批量备份...')
+      // 批量备份重试
+      await submitBatchBackupInternal()
+    } else if (pendingBackupDeviceId.value) {
+      // 单设备备份：直接把 otp_code 传给后端备份接口
+      await backupDevice(pendingBackupDeviceId.value, { otp_code: otpCode })
+      $alert.success('备份任务已提交')
+      showBackupModal.value = false
+      tableRef.value?.reload()
+    }
   } catch {
-    // Error handled
+    // Error handled by request interceptor
+  } finally {
+    otpLoading.value = false
+    pendingBackupDeviceId.value = ''
+    pendingBatchBackup.value = false
+    otpRequiredInfo.value = null
   }
 }
 
@@ -249,7 +385,7 @@ const submitManualBackup = async () => {
 const showBatchBackupModal = ref(false)
 const batchBackupModel = ref({
   device_ids: [] as string[],
-  backup_type: 'running' as BackupType,
+  backup_type: 'scheduled' as BackupType,
 })
 
 // 使用 useTaskPolling composable
@@ -292,6 +428,10 @@ const submitBatchBackup = async () => {
     $alert.warning('请选择设备')
     return
   }
+  await submitBatchBackupInternal()
+}
+
+const submitBatchBackupInternal = async () => {
   try {
     const res = await batchBackup({
       device_ids: batchBackupModel.value.device_ids,
@@ -300,15 +440,27 @@ const submitBatchBackup = async () => {
     $alert.success('批量备份任务已提交')
     // 开始轮询任务状态
     startPollingTaskStatus(res.data.task_id)
-  } catch {
-    // Error handled
+  } catch (error: unknown) {
+    // 检查是否需要 OTP 输入 (428 状态码)
+    const err = error as { response?: { status?: number; data?: { details?: OTPRequiredDetails } } }
+    if (err?.response?.status === 428 && err?.response?.data?.details) {
+      const details = err.response.data.details
+      otpRequiredInfo.value = {
+        dept_id: details.dept_id,
+        device_group: details.device_group,
+        failed_devices: details.failed_devices || [],
+      }
+      pendingBatchBackup.value = true
+      otpChars.value = createEmptyOtpChars()
+      showOTPModal.value = true
+    }
   }
 }
 
 const closeBatchBackupModal = () => {
   stopPollingTaskStatus()
   showBatchBackupModal.value = false
-  batchBackupModel.value = { device_ids: [], backup_type: 'running' }
+  batchBackupModel.value = { device_ids: [], backup_type: 'scheduled' }
   resetBatchTask()
 }
 </script>
@@ -340,25 +492,25 @@ const closeBatchBackupModal = () => {
       v-model:show="showContentModal"
       preset="card"
       title="配置内容"
-      style="width: 900px; max-height: 80vh"
+      style="width: 900px; height: 80vh"
     >
       <div v-if="contentLoading" style="text-align: center; padding: 40px">加载中...</div>
       <template v-else>
-        <div style="margin-bottom: 16px">
-          <n-space>
-            <span>设备: {{ contentData.device_name }}</span>
-            <n-tag :type="backupTypeColorMap[contentData.backup_type]" size="small">
-              {{ backupTypeLabelMap[contentData.backup_type] }}
-            </n-tag>
-            <span>Hash: {{ contentData.config_hash }}</span>
-            <span>时间: {{ formatDateTime(contentData.created_at) }}</span>
-          </n-space>
+        <div class="backup-modal-body">
+          <div style="margin-bottom: 16px">
+            <n-space>
+              <span>设备: {{ contentData.device_name }}</span>
+              <n-tag :type="backupTypeColorMap[contentData.backup_type]" size="small">
+                {{ backupTypeLabelMap[contentData.backup_type] }}
+              </n-tag>
+              <span>Hash: {{ contentData.md5_hash || '-' }}</span>
+              <span>时间: {{ formatDateTime(contentData.created_at) }}</span>
+            </n-space>
+          </div>
+          <div class="backup-modal-scroll">
+            <pre class="backup-code"><code class="hljs" v-html="highlightedContentHtml"></code></pre>
+          </div>
         </div>
-        <n-code
-          :code="contentData.content"
-          language="text"
-          style="max-height: 500px; overflow: auto"
-        />
       </template>
     </n-modal>
 
@@ -367,27 +519,25 @@ const closeBatchBackupModal = () => {
       v-model:show="showDiffModal"
       preset="card"
       title="配置差异对比"
-      style="width: 900px; max-height: 80vh"
+      style="width: 900px; height: 80vh"
     >
       <div v-if="diffLoading" style="text-align: center; padding: 40px">加载中...</div>
       <template v-else-if="diffData">
-        <div style="margin-bottom: 16px">
-          <n-space>
-            <span>设备: {{ diffData.device_name }}</span>
-            <n-tag v-if="diffData.has_changes" type="warning" size="small">有变更</n-tag>
-            <n-tag v-else type="success" size="small">无变更</n-tag>
-          </n-space>
+        <div class="backup-modal-body">
+          <div style="margin-bottom: 16px">
+            <n-space>
+              <span>设备: {{ diffData.device_name }}</span>
+              <n-tag v-if="diffData.has_changes" type="warning" size="small">有变更</n-tag>
+              <n-tag v-else type="success" size="small">无变更</n-tag>
+            </n-space>
+          </div>
+          <div v-if="diffData.has_changes && diffData.diff_content" class="backup-modal-scroll">
+            <pre class="backup-code"><code class="hljs" v-html="highlightedDiffHtml"></code></pre>
+          </div>
+          <n-alert v-else type="success" title="配置无变化">
+            最新两次备份的配置内容完全一致
+          </n-alert>
         </div>
-        <div v-if="diffData.has_changes && diffData.diff_content">
-          <n-code
-            :code="diffData.diff_content"
-            language="diff"
-            style="max-height: 500px; overflow: auto"
-          />
-        </div>
-        <n-alert v-else type="success" title="配置无变化">
-          最新两次备份的配置内容完全一致
-        </n-alert>
       </template>
     </n-modal>
 
@@ -502,6 +652,43 @@ const closeBatchBackupModal = () => {
         </div>
       </template>
     </n-modal>
+
+    <!-- OTP 输入 Modal -->
+    <n-modal
+      v-model:show="showOTPModal"
+      preset="card"
+      title="需要 OTP 验证码"
+      style="width: 450px"
+      :closable="!otpLoading"
+      :mask-closable="!otpLoading"
+    >
+      <n-space vertical style="width: 100%">
+        <n-alert type="warning" title="设备需要 OTP 认证">
+          <template v-if="otpRequiredInfo">
+            <p>部门设备分组 <strong>{{ deviceGroupLabels[otpRequiredInfo.device_group] || otpRequiredInfo.device_group }}</strong> 配置为手动输入 OTP 认证方式。</p>
+            <p>请输入当前有效的 OTP 验证码以继续操作。</p>
+          </template>
+        </n-alert>
+        <n-form-item label="OTP 验证码" required>
+          <div class="otp-center">
+            <n-input-otp
+              v-model:value="otpChars"
+              :length="6"
+              :disabled="otpLoading"
+              @finish="submitOTP"
+            />
+          </div>
+        </n-form-item>
+        <template v-if="otpRequiredInfo && otpRequiredInfo.failed_devices.length > 0">
+          <n-alert type="info" title="断点续传">
+            上次操作中以下设备未完成，输入 OTP 后将继续处理：
+            <ul style="margin: 8px 0 0 16px; padding: 0">
+              <li v-for="device in otpRequiredInfo.failed_devices" :key="device">{{ device }}</li>
+            </ul>
+          </n-alert>
+        </template>
+      </n-space>
+    </n-modal>
   </div>
 </template>
 
@@ -512,5 +699,30 @@ const closeBatchBackupModal = () => {
 
 .p-4 {
   padding: 16px;
+}
+
+.backup-modal-body {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.backup-modal-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  max-height: calc(80vh - 140px);
+}
+
+.backup-code {
+  margin: 0;
+  white-space: pre;
+}
+
+.otp-center {
+  width: 100%;
+  display: flex;
+  justify-content: center;
 }
 </style>

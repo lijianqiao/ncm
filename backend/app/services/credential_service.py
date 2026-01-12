@@ -201,20 +201,26 @@ class CredentialService:
 
         Returns:
             OTPCacheResponse: 缓存响应
+
+        Raises:
+            BadRequestException: 当 Redis 未连接或缓存失败时抛出
         """
+        from app.core.exceptions import BadRequestException
+
         try:
-            await otp_service.cache_otp(request.dept_id, request.device_group, request.otp_code)
+            ttl = await otp_service.cache_otp(request.dept_id, request.device_group, request.otp_code)
+            # cache_otp 返回 0 表示 Redis 未连接或缓存失败
+            if ttl == 0:
+                raise BadRequestException(message="OTP 缓存失败：Redis 服务未连接，请联系管理员")
             return OTPCacheResponse(
                 success=True,
                 message="OTP 缓存成功",
-                expires_in=60,  # OTP_CACHE_TTL
+                expires_in=ttl,
             )
+        except BadRequestException:
+            raise
         except Exception as e:
-            return OTPCacheResponse(
-                success=False,
-                message=f"OTP 缓存失败: {str(e)}",
-                expires_in=0,
-            )
+            raise BadRequestException(message=f"OTP 缓存失败: {str(e)}") from e
 
     def to_response(self, credential: DeviceGroupCredential) -> DeviceGroupCredentialResponse:
         """

@@ -13,7 +13,7 @@ from uuid import UUID
 
 from app.celery.app import celery_app
 from app.celery.base import BaseTask, run_async
-from app.core.cache import redis_client
+from app.core import cache as cache_module
 from app.core.db import AsyncSessionLocal
 from app.core.logger import logger
 from app.crud.crud_device import device as device_crud
@@ -35,7 +35,7 @@ def collect_topology(
     采集网络拓扑 (LLDP) - Celery 任务。
 
     Args:
-        device_ids: 指定设备ID列表 (为空则采集所有)
+        device_ids: 指定设备ID列表 (为空则采集所有设备)
 
     Returns:
         采集结果
@@ -46,7 +46,7 @@ def collect_topology(
             topology_service = TopologyService(
                 topology_crud=topology_crud,
                 device_crud=device_crud,
-                redis_client=redis_client,
+                redis_client=cache_module.redis_client,
             )
 
             # 转换设备ID
@@ -91,7 +91,7 @@ def collect_device_topology(self, device_id: str) -> dict[str, Any]:
             topology_service = TopologyService(
                 topology_crud=topology_crud,
                 device_crud=device_crud,
-                redis_client=redis_client,
+                redis_client=cache_module.redis_client,
             )
 
             result = await topology_service.collect_lldp_all(db, device_ids=[UUID(device_id)])
@@ -120,7 +120,7 @@ def collect_device_topology(self, device_id: str) -> dict[str, Any]:
 )
 def scheduled_topology_refresh(self) -> dict[str, Any]:
     """
-    定时拓扑刷新任务 (由 Celery Beat 调度)。
+    定时拓扑刷新任务 (通过 Celery Beat 调度)
 
     采集所有活跃设备的 LLDP 信息并更新拓扑数据。
 
@@ -133,7 +133,7 @@ def scheduled_topology_refresh(self) -> dict[str, Any]:
             topology_service = TopologyService(
                 topology_crud=topology_crud,
                 device_crud=device_crud,
-                redis_client=redis_client,
+                redis_client=cache_module.redis_client,
             )
 
             # 采集所有设备
@@ -174,7 +174,7 @@ def build_topology_cache(self) -> dict[str, Any]:
             topology_service = TopologyService(
                 topology_crud=topology_crud,
                 device_crud=device_crud,
-                redis_client=redis_client,
+                redis_client=cache_module.redis_client,
             )
 
             topology = await topology_service.build_topology(db)

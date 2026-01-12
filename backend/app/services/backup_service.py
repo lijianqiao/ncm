@@ -294,6 +294,7 @@ class BackupService:
         device_id: UUID,
         backup_type: BackupType = BackupType.MANUAL,
         operator_id: UUID | None = None,
+        otp_code: str | None = None,
     ) -> Backup:
         """
         备份单台设备配置。
@@ -325,18 +326,33 @@ class BackupService:
         if device.status != DeviceStatus.ACTIVE.value:
             raise BadRequestException(message=f"设备 {device.name} 状态异常，无法备份")
 
-        # 2. 获取凭据
+        # 2. 如为手动 OTP 且传入 otp_code，则先缓存
+        auth_type = AuthType(device.auth_type)
+        if otp_code and auth_type == AuthType.OTP_MANUAL:
+            if not device.dept_id:
+                raise BadRequestException(message=f"设备 {device.name} 缺少部门关联")
+            if not device.device_group:
+                raise BadRequestException(message=f"设备 {device.name} 缺少设备分组")
+            ttl = await otp_service.cache_otp(device.dept_id, device.device_group, otp_code)
+            if ttl == 0:
+                raise BadRequestException(message="OTP 缓存失败：Redis 服务未连接，请联系管理员")
+
+        # 3. 获取凭据
         try:
             credential = await self._get_device_credential(device)
         except OTPRequiredException:
             # OTP 过期，需要用户重新输入
             raise
 
-        # 3. 执行备份
+        # 4. 执行备份
         from app.network.connection_test import execute_command_on_device
-        from app.network.platform_config import get_command
+        from app.network.platform_config import get_command, get_platform_for_vendor
 
-        backup_command = get_command(device.vendor, "show_config")
+        platform = device.platform or get_platform_for_vendor(device.vendor or "")
+        try:
+            backup_command = get_command("backup_config", platform)
+        except ValueError as e:
+            raise BadRequestException(message=str(e)) from e
 
         try:
             result_dict = await execute_command_on_device(
@@ -344,7 +360,7 @@ class BackupService:
                 username=credential.username,
                 password=credential.password,
                 command=backup_command,
-                platform=device.vendor,
+                platform=platform,
                 port=device.ssh_port,
             )
 

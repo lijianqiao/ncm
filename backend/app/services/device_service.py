@@ -13,7 +13,7 @@ from uuid import UUID
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.cache import redis_client
+from app.core import cache as cache_module
 from app.core.decorator import transactional
 from app.core.encryption import encrypt_password
 from app.core.enums import AuthType, DeviceStatus
@@ -43,9 +43,7 @@ class DeviceService:
         self.credential_crud = credential_crud
         self._post_commit_tasks: list = []
 
-    async def get_devices_paginated(
-        self, query: DeviceListQuery
-    ) -> tuple[list[Device], int]:
+    async def get_devices_paginated(self, query: DeviceListQuery) -> tuple[list[Device], int]:
         """
         获取分页过滤的设备列表。
 
@@ -87,7 +85,7 @@ class DeviceService:
     @transactional()
     async def create_device(self, obj_in: DeviceCreate) -> Device:
         """
-        创建设备。
+        创建设备
 
         Args:
             obj_in: 设备创建数据
@@ -137,7 +135,7 @@ class DeviceService:
     @transactional()
     async def update_device(self, device_id: UUID, obj_in: DeviceUpdate) -> Device:
         """
-        更新设备。
+        更新设备
 
         Args:
             device_id: 设备ID
@@ -175,7 +173,7 @@ class DeviceService:
     @transactional()
     async def delete_device(self, device_id: UUID) -> Device:
         """
-        删除设备（软删除）。
+        删除设备（软删除）
 
         Args:
             device_id: 设备ID
@@ -194,7 +192,7 @@ class DeviceService:
     @transactional()
     async def batch_delete_devices(self, ids: list[UUID]) -> DeviceBatchResult:
         """
-        批量删除设备（软删除）。
+        批量删除设备（软删除）
 
         Args:
             ids: 设备ID列表
@@ -212,7 +210,7 @@ class DeviceService:
     @transactional()
     async def batch_create_devices(self, obj_in: DeviceBatchCreate) -> DeviceBatchResult:
         """
-        批量创建设备。
+        批量创建设备
 
         Args:
             obj_in: 批量创建数据
@@ -226,18 +224,12 @@ class DeviceService:
                 # 密码会在 CRUD 层排除，这里标记处理
                 pass
 
-        created_devices, failed_items = await self.device_crud.batch_create(
-            self.db, devices_in=obj_in.devices
-        )
+        created_devices, failed_items = await self.device_crud.batch_create(self.db, devices_in=obj_in.devices)
 
         # 处理成功创建的设备的密码加密
         for i, device in enumerate(created_devices):
             device_create = obj_in.devices[i] if i < len(obj_in.devices) else None
-            if (
-                device_create
-                and device_create.auth_type == AuthType.STATIC
-                and device_create.password
-            ):
+            if device_create and device_create.auth_type == AuthType.STATIC and device_create.password:
                 device.password_encrypted = encrypt_password(device_create.password)
                 self.db.add(device)
 
@@ -249,11 +241,9 @@ class DeviceService:
             failed_items=failed_items,
         )
 
-    async def get_recycle_bin(
-        self, page: int = 1, page_size: int = 20
-    ) -> tuple[list[Device], int]:
+    async def get_recycle_bin(self, page: int = 1, page_size: int = 20) -> tuple[list[Device], int]:
         """
-        获取回收站中的设备。
+        获取回收站中的设备列表。
 
         Args:
             page: 页码
@@ -284,7 +274,7 @@ class DeviceService:
 
         device.status = to_value
 
-        # 补充关键时间字段（最小化）
+        # 补充关键时间字段（最小化变更）
         if to_status == DeviceStatus.RETIRED:
             from datetime import UTC, datetime
 
@@ -321,14 +311,14 @@ class DeviceService:
         return success, failed
 
     async def _invalidate_lifecycle_cache(self) -> None:
-        if redis_client is None:
+        if cache_module.redis_client is None:
             return
         try:
             # 简化：删除所有 stats key（规模小可接受）
             # key 规范：v1:ncm:device:lifecycle:stats:{hash}
-            keys = await redis_client.keys("v1:ncm:device:lifecycle:stats:*")
+            keys = await cache_module.redis_client.keys("v1:ncm:device:lifecycle:stats:*")
             if keys:
-                await redis_client.delete(*keys)
+                await cache_module.redis_client.delete(*keys)
         except Exception:
             return
 
@@ -340,12 +330,12 @@ class DeviceService:
     ) -> dict[str, dict[str, int]]:
         """生命周期统计（按状态/厂商/部门）。支持 60 秒缓存。"""
         cache_key = None
-        if redis_client is not None:
+        if cache_module.redis_client is not None:
             key_obj = {"dept_id": str(dept_id) if dept_id else None, "vendor": vendor}
             cache_hash = hashlib.md5(json.dumps(key_obj, sort_keys=True).encode("utf-8")).hexdigest()
             cache_key = f"v1:ncm:device:lifecycle:stats:{cache_hash}"
             try:
-                cached = await redis_client.get(cache_key)
+                cached = await cache_module.redis_client.get(cache_key)
                 if cached:
                     return json.loads(cached)
             except Exception:
@@ -357,7 +347,7 @@ class DeviceService:
         if vendor:
             base = base.where(Device.vendor == vendor)
 
-        # 按状态
+        # 按状态统计
         status_stmt = select(Device.status, func.count(Device.id)).select_from(Device)
         if dept_id:
             status_stmt = status_stmt.where(Device.dept_id == dept_id)
@@ -385,9 +375,9 @@ class DeviceService:
             "by_dept": {str(k) if k else "null": int(v) for k, v in dept_rows},
         }
 
-        if redis_client is not None and cache_key:
+        if cache_module.redis_client is not None and cache_key:
             try:
-                await redis_client.setex(cache_key, 60, json.dumps(data, ensure_ascii=False))
+                await cache_module.redis_client.setex(cache_key, 60, json.dumps(data, ensure_ascii=False))
             except Exception:
                 pass
         return data
@@ -395,7 +385,7 @@ class DeviceService:
     @transactional()
     async def restore_device(self, device_id: UUID) -> Device:
         """
-        恢复设备（从回收站）。
+        恢复设备（从回收站）
 
         Args:
             device_id: 设备ID
@@ -405,7 +395,7 @@ class DeviceService:
 
         Raises:
             NotFoundException: 设备不存在
-            BadRequestException: 设备未被删除或 IP 地址冲突
+            BadRequestException: 设备未被删除或IP 地址冲突
         """
         device = await self.device_crud.restore(self.db, id=device_id)
         if not device:

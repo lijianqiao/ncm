@@ -11,11 +11,12 @@
 3. otp_manual: OTP 手动输入（从 Redis 缓存获取用户输入的 OTP）
 """
 
+from enum import Enum
 from uuid import UUID
 
 import pyotp
 
-from app.core.cache import redis_client
+from app.core import cache as cache_module  # 使用模块引用，避免导入时获取 None
 from app.core.encryption import decrypt_otp_seed, decrypt_password
 from app.core.enums import AuthType
 from app.core.exceptions import DeviceCredentialNotFoundException, OTPRequiredException
@@ -81,14 +82,20 @@ class OTPService:
 
     # ===== OTP 缓存管理 =====
 
-    def _get_cache_key(self, dept_id: UUID, device_group: str) -> str:
+    def _normalize_device_group(self, device_group: str | Enum) -> str:
+        if isinstance(device_group, Enum):
+            return str(device_group.value)
+        return str(device_group)
+
+    def _get_cache_key(self, dept_id: UUID, device_group: str | Enum) -> str:
         """生成 OTP 缓存键。"""
-        return f"{OTP_CACHE_PREFIX}:{dept_id}:{device_group}"
+        device_group_value = self._normalize_device_group(device_group)
+        return f"{OTP_CACHE_PREFIX}:{dept_id}:{device_group_value}"
 
     async def cache_otp(
         self,
         dept_id: UUID,
-        device_group: str,
+        device_group: str | Enum,
         otp_code: str,
     ) -> int:
         """
@@ -107,21 +114,21 @@ class OTPService:
             - TTL: 60 秒
             - 同一部门下不同设备分组的 OTP 相互隔离
         """
-        if redis_client is None:
+        if cache_module.redis_client is None:
             logger.warning("Redis 未连接，OTP 缓存功能不可用")
             return 0
 
         cache_key = self._get_cache_key(dept_id, device_group)
 
         try:
-            await redis_client.setex(cache_key, self.cache_ttl, otp_code)
+            await cache_module.redis_client.setex(cache_key, self.cache_ttl, otp_code)
             logger.info(f"OTP 已缓存: {cache_key}, TTL={self.cache_ttl}s")
             return self.cache_ttl
         except Exception as e:
             logger.error(f"OTP 缓存失败: {e}")
             return 0
 
-    async def get_cached_otp(self, dept_id: UUID, device_group: str) -> str | None:
+    async def get_cached_otp(self, dept_id: UUID, device_group: str | Enum) -> str | None:
         """
         获取缓存的 OTP 验证码。
 
@@ -132,13 +139,13 @@ class OTPService:
         Returns:
             缓存的 OTP 验证码，不存在或过期返回 None
         """
-        if redis_client is None:
+        if cache_module.redis_client is None:
             return None
 
         cache_key = self._get_cache_key(dept_id, device_group)
 
         try:
-            otp_code = await redis_client.get(cache_key)
+            otp_code = await cache_module.redis_client.get(cache_key)
             if otp_code:
                 logger.debug(f"OTP 缓存命中: {cache_key}")
             return otp_code
@@ -146,7 +153,7 @@ class OTPService:
             logger.error(f"OTP 缓存读取失败: {e}")
             return None
 
-    async def get_otp_ttl(self, dept_id: UUID, device_group: str) -> int:
+    async def get_otp_ttl(self, dept_id: UUID, device_group: str | Enum) -> int:
         """
         获取 OTP 缓存剩余有效期。
 
@@ -157,19 +164,19 @@ class OTPService:
         Returns:
             剩余秒数，不存在返回 -2，无过期时间返回 -1
         """
-        if redis_client is None:
+        if cache_module.redis_client is None:
             return -2
 
         cache_key = self._get_cache_key(dept_id, device_group)
 
         try:
-            ttl = await redis_client.ttl(cache_key)
+            ttl = await cache_module.redis_client.ttl(cache_key)
             return ttl
         except Exception as e:
             logger.error(f"获取 OTP TTL 失败: {e}")
             return -2
 
-    async def invalidate_otp(self, dept_id: UUID, device_group: str) -> bool:
+    async def invalidate_otp(self, dept_id: UUID, device_group: str | Enum) -> bool:
         """
         使 OTP 缓存失效（认证失败时调用）。
 
@@ -180,13 +187,13 @@ class OTPService:
         Returns:
             是否成功删除
         """
-        if redis_client is None:
+        if cache_module.redis_client is None:
             return False
 
         cache_key = self._get_cache_key(dept_id, device_group)
 
         try:
-            deleted = await redis_client.delete(cache_key)
+            deleted = await cache_module.redis_client.delete(cache_key)
             if deleted:
                 logger.info(f"OTP 缓存已失效: {cache_key}")
             return bool(deleted)
@@ -244,7 +251,7 @@ class OTPService:
         self,
         username: str,
         dept_id: UUID,
-        device_group: str,
+        device_group: str | Enum,
         failed_devices: list[str] | None = None,
     ) -> DeviceCredential:
         """
@@ -262,14 +269,15 @@ class OTPService:
         Raises:
             OTPRequiredException: 缓存中没有有效 OTP，需要用户输入
         """
-        otp_code = await self.get_cached_otp(dept_id, device_group)
+        device_group_value = self._normalize_device_group(device_group)
+        otp_code = await self.get_cached_otp(dept_id, device_group_value)
 
         if otp_code is None:
             raise OTPRequiredException(
                 dept_id=dept_id,
-                device_group=device_group,
+                device_group=device_group_value,
                 failed_devices=failed_devices,
-                message=f"需要输入 OTP 验证码 (部门={dept_id}, 分组={device_group})",
+                message=f"需要输入 OTP 验证码 (部门={dept_id}, 分组={device_group_value})",
             )
 
         return DeviceCredential(
@@ -323,9 +331,7 @@ class OTPService:
         elif auth_type == AuthType.OTP_MANUAL:
             if dept_id is None or device_group is None:
                 raise DeviceCredentialNotFoundException(dept_id, device_group or "unknown")
-            return await self.get_credential_for_otp_manual_device(
-                username, dept_id, device_group, failed_devices
-            )
+            return await self.get_credential_for_otp_manual_device(username, dept_id, device_group, failed_devices)
 
         else:
             raise DeviceCredentialNotFoundException(dept_id, device_group or "unknown")

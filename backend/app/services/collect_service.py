@@ -18,7 +18,7 @@ from uuid import UUID
 from scrapli import AsyncScrapli
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.cache import redis_client
+from app.core import cache as cache_module
 from app.core.config import settings
 from app.core.enums import AuthType, DeviceStatus
 from app.core.exceptions import BadRequestException, NotFoundException
@@ -80,10 +80,10 @@ class CollectService:
         entries: list[ARPEntry] = []
         cached_at: datetime | None = None
 
-        if redis_client:
+        if cache_module.redis_client:
             cache_key = f"{ARP_CACHE_PREFIX}:{device_id}"
             try:
-                cached_data = await redis_client.get(cache_key)
+                cached_data = await cache_module.redis_client.get(cache_key)
                 if cached_data:
                     data = json.loads(cached_data)
                     entries = [ARPEntry(**entry) for entry in data.get("entries", [])]
@@ -120,10 +120,10 @@ class CollectService:
         entries: list[MACEntry] = []
         cached_at: datetime | None = None
 
-        if redis_client:
+        if cache_module.redis_client:
             cache_key = f"{MAC_CACHE_PREFIX}:{device_id}"
             try:
-                cached_data = await redis_client.get(cache_key)
+                cached_data = await cache_module.redis_client.get(cache_key)
                 if cached_data:
                     data = json.loads(cached_data)
                     entries = [MACEntry(**entry) for entry in data.get("entries", [])]
@@ -176,7 +176,7 @@ class CollectService:
                 device_id=device_id,
                 device_name=device.name,
                 success=False,
-                error_message=f"设备状态异常: {device.status}",
+                error_message=f"设备状态异常 {device.status}",
             )
 
         # 获取凭据
@@ -267,7 +267,6 @@ class CollectService:
         Args:
             request: 批量采集请求
             concurrency: 并发数
-
         Returns:
             CollectResult: 采集结果
         """
@@ -276,7 +275,7 @@ class CollectService:
 
         # 如果提供了 OTP，先缓存
         if request.otp_code:
-            # 获取设备列表确定需要缓存 OTP 的部门/设备组
+            # 获取设备列表确定需要缓存 OTP 的部分设备
             devices = await self.device_crud.get_multi_by_ids(self.db, ids=request.device_ids)
             for device in devices:
                 if device.auth_type == AuthType.OTP_MANUAL and device.dept_id and device.device_group:
@@ -348,7 +347,7 @@ class CollectService:
         devices, _ = await self.device_crud.get_multi_paginated_filtered(
             self.db,
             page=1,
-            page_size=10000,  # 获取所有
+            page_size=10000,  # 获取所有活跃设备
             status=DeviceStatus.ACTIVE.value,
         )
 
@@ -378,7 +377,7 @@ class CollectService:
             raise BadRequestException(message="设备未配置用户名")
 
         auth_type_str = device.auth_type or AuthType.STATIC.value
-        # 将字符串转换为枚举
+        # 将字符串转换为枚 AuthType 枚举
         try:
             auth_type = AuthType(auth_type_str)
         except ValueError:
@@ -426,7 +425,7 @@ class CollectService:
 
     async def _save_arp_cache(self, device_id: UUID, entries: list[dict[str, Any]]) -> None:
         """保存 ARP 表到 Redis 缓存。"""
-        if not redis_client:
+        if not cache_module.redis_client:
             return
 
         cache_key = f"{ARP_CACHE_PREFIX}:{device_id}"
@@ -453,7 +452,7 @@ class CollectService:
         }
 
         try:
-            await redis_client.setex(
+            await cache_module.redis_client.setex(
                 cache_key,
                 settings.COLLECT_CACHE_TTL,
                 json.dumps(cache_data),
@@ -463,7 +462,7 @@ class CollectService:
 
     async def _save_mac_cache(self, device_id: UUID, entries: list[dict[str, Any]]) -> None:
         """保存 MAC 表到 Redis 缓存。"""
-        if not redis_client:
+        if not cache_module.redis_client:
             return
 
         cache_key = f"{MAC_CACHE_PREFIX}:{device_id}"
@@ -489,7 +488,7 @@ class CollectService:
         }
 
         try:
-            await redis_client.setex(
+            await cache_module.redis_client.setex(
                 cache_key,
                 settings.COLLECT_CACHE_TTL,
                 json.dumps(cache_data),
@@ -499,26 +498,26 @@ class CollectService:
 
     async def _update_last_collect_time(self, device_id: UUID) -> None:
         """更新设备最后采集时间。"""
-        if not redis_client:
+        if not cache_module.redis_client:
             return
 
         cache_key = f"{COLLECT_LAST_PREFIX}:{device_id}"
         try:
-            await redis_client.setex(
+            await cache_module.redis_client.setex(
                 cache_key,
                 settings.COLLECT_CACHE_TTL * 2,  # 保留更长时间
                 datetime.now().isoformat(),
             )
         except Exception as e:
-            logger.warning(f"更新最后采集时间失败: {e}")
+            logger.warning(f"更新最后采集时间失败 {e}")
 
     # ===== IP/MAC 精准定位 =====
 
     async def locate_by_ip(self, ip_address: str) -> LocateResponse:
         """
-        根据 IP 地址定位设备和端口。
+        根据 IP 地址定位设备和端口
 
-        遍历所有设备的 ARP 缓存，查找匹配的 IP 地址。
+        遍历所有设备的 ARP 缓存，查找匹配的 IP 地址
 
         Args:
             ip_address: 要查询的 IP 地址
@@ -530,7 +529,7 @@ class CollectService:
         matches: list[LocateMatch] = []
         searched_devices = 0
 
-        if not redis_client:
+        if not cache_module.redis_client:
             logger.warning("Redis 未连接，无法执行定位查询")
             return LocateResponse(
                 query=ip_address,
@@ -553,12 +552,12 @@ class CollectService:
 
         # 扫描所有 ARP 缓存
         try:
-            async for key in redis_client.scan_iter(match=f"{ARP_CACHE_PREFIX}:*"):
+            async for key in cache_module.redis_client.scan_iter(match=f"{ARP_CACHE_PREFIX}:*"):
                 searched_devices += 1
                 device_id = key.split(":")[-1]
                 device = device_map.get(device_id)
 
-                cached_data = await redis_client.get(key)
+                cached_data = await cache_module.redis_client.get(key)
                 if not cached_data:
                     continue
 
@@ -566,7 +565,7 @@ class CollectService:
                 entries = data.get("entries", [])
                 cached_at = datetime.fromisoformat(data["cached_at"]) if data.get("cached_at") else None
 
-                # 搜索匹配的 IP
+                # 搜索匹配 IP
                 for entry in entries:
                     if entry.get("ip_address", "").lower() == ip_address.lower():
                         matches.append(
@@ -602,9 +601,9 @@ class CollectService:
 
     async def locate_by_mac(self, mac_address: str) -> LocateResponse:
         """
-        根据 MAC 地址定位设备和端口。
+        根据 MAC 地址定位设备和端口
 
-        同时搜索 ARP 和 MAC 缓存，合并结果。
+        同时搜索 ARP 和 MAC 缓存，合并结果
 
         Args:
             mac_address: 要查询的 MAC 地址
@@ -616,7 +615,7 @@ class CollectService:
         matches: list[LocateMatch] = []
         searched_devices = 0
 
-        if not redis_client:
+        if not cache_module.redis_client:
             logger.warning("Redis 未连接，无法执行定位查询")
             return LocateResponse(
                 query=mac_address,
@@ -652,12 +651,12 @@ class CollectService:
 
         try:
             # 1. 搜索 ARP 缓存（可获取 IP 地址）
-            async for key in redis_client.scan_iter(match=f"{ARP_CACHE_PREFIX}:*"):
+            async for key in cache_module.redis_client.scan_iter(match=f"{ARP_CACHE_PREFIX}:*"):
                 searched_devices += 1
                 device_id = key.split(":")[-1]
                 device = device_map.get(device_id)
 
-                cached_data = await redis_client.get(key)
+                cached_data = await cache_module.redis_client.get(key)
                 if not cached_data:
                     continue
 
@@ -685,11 +684,11 @@ class CollectService:
                             )
 
             # 2. 搜索 MAC 缓存（可能有更精确的端口信息）
-            async for key in redis_client.scan_iter(match=f"{MAC_CACHE_PREFIX}:*"):
+            async for key in cache_module.redis_client.scan_iter(match=f"{MAC_CACHE_PREFIX}:*"):
                 device_id = key.split(":")[-1]
                 device = device_map.get(device_id)
 
-                cached_data = await redis_client.get(key)
+                cached_data = await cache_module.redis_client.get(key)
                 if not cached_data:
                     continue
 

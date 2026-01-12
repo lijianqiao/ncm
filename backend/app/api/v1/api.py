@@ -17,7 +17,7 @@ from sqlalchemy import text
 
 from app.api.deps import SessionDep
 from app.api.v1 import endpoints
-from app.core.cache import redis_client
+from app.core import cache as cache_module
 from app.core.logger import logger
 
 api_router = APIRouter()
@@ -41,8 +41,8 @@ async def health_check(db: SessionDep):
 
     # 检查 Redis
     try:
-        if redis_client:
-            await redis_client.ping()  # type: ignore
+        if cache_module.redis_client:
+            await cache_module.redis_client.ping()  # type: ignore
             health_status["cache"] = "connected"
         else:
             health_status["cache"] = "disabled"
@@ -58,7 +58,7 @@ async def health_check(db: SessionDep):
 def auto_include_routers() -> None:
     """
     自动扫描 app.api.v1.endpoints 包下的所有模块，
-    如果模块中有 'router' 属性，则注册到 api_router。
+    如果模块中有 'router' 属性，则注册到 api_router 中。
     默认前缀为模块名 (例如 auth.py -> /auth)。
     """
     package_name = endpoints.__name__
@@ -76,7 +76,7 @@ def auto_include_routers() -> None:
 
                 api_router.include_router(router_instance, prefix=prefix, tags=[tag_name])
                 registered_count += 1
-                logger.debug(f"已注册路由: {prefix}")
+                logger.debug(f"已注册路由 {prefix}")
         except Exception as e:
             logger.error(f"加载路由失败 {full_module_name}: {e}")
 

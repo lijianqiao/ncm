@@ -5,7 +5,7 @@
 @DateTime: 2026-01-09 23:50:00
 @Docs: 设备发现 Celery 任务 (Discovery Tasks).
 
-包含网络扫描、CMDB 比对等异步任务�?
+包含网络扫描、CMDB 比对等异步任务
 """
 
 from typing import Any
@@ -32,7 +32,7 @@ def scan_subnet(
     ports: str | None = None,
 ) -> dict[str, Any]:
     """
-    扫描单个网段�?Celery 任务�?
+    扫描单个网段 Celery 任务。
 
     Args:
         subnet: 网段 (CIDR 格式)
@@ -86,7 +86,7 @@ def scan_subnets_batch(
     ports: str | None = None,
 ) -> dict[str, Any]:
     """
-    批量扫描多个网段�?
+    批量扫描多个网段 Celery 任务。
 
     Args:
         subnets: 网段列表
@@ -158,7 +158,7 @@ def scan_subnets_batch(
 )
 def compare_cmdb(self) -> dict[str, Any]:
     """
-    将扫描发现与 CMDB 比对�?Celery 任务�?
+    将扫描发现与 CMDB 比对 Celery 任务。
 
     Returns:
         比对结果
@@ -270,7 +270,7 @@ def scheduled_network_scan(self) -> dict[str, Any]:
 )
 def increment_offline_days(self) -> dict[str, Any]:
     """
-    增加发现记录的离线天�?(每日执行一�?�?
+    增加发现记录的离线天数 (每日执行一次)
 
     Returns:
         更新结果

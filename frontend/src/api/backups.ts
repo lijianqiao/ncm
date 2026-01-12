@@ -19,21 +19,29 @@ export type { BackupTypeType as BackupType }
 export interface Backup {
   id: string
   device_id: string
-  device_name: string | null
   backup_type: BackupTypeType
-  config_hash: string
-  file_size: number
+  status: string
+  content_size: number
+  md5_hash: string | null
+  error_message: string | null
   created_at: string
+  updated_at: string
+  has_content?: boolean
+  device?: { id: string; name: string; ip_address: string } | null
+
+  // 兼容旧字段（避免历史代码/缓存数据导致运行时异常）
+  device_name?: string | null
+  config_hash?: string
+  file_size?: number
 }
 
 /** 备份内容响应 */
 export interface BackupContentResponse {
   id: string
-  device_name: string | null
-  backup_type: BackupTypeType
+  device_id: string
   content: string
-  config_hash: string
-  created_at: string
+  content_size: number
+  md5_hash: string | null
 }
 
 /** 备份查询参数 */
@@ -106,11 +114,11 @@ export function deleteBackup(id: string) {
 }
 
 /** 手动备份单设备 */
-export function backupDevice(deviceId: string) {
+export function backupDevice(deviceId: string, data?: { backup_type?: BackupTypeType; otp_code?: string }) {
   return request<ResponseBase<Backup>>({
     url: `/backups/device/${deviceId}`,
     method: 'post',
-    data: {},
+    data: data ?? {},
   })
 }
 

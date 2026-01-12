@@ -5,6 +5,7 @@ import {
   NModal,
   NFormItem,
   NInput,
+  NInputOtp,
   NSelect,
   NSpace,
   NCard,
@@ -30,6 +31,7 @@ import {
   type LocateResponse,
 } from '@/api/collect'
 import { getDevices, type Device } from '@/api/devices'
+import { cacheOTP, type OTPCacheRequest } from '@/api/credentials'
 import { formatDateTime } from '@/utils/date'
 import { useTaskPolling } from '@/composables'
 
@@ -84,10 +86,95 @@ const submitManualCollect = async () => {
     const res = await collectDevice(collectModel.value.device_id)
     collectResult.value = res.data
     $alert.success('采集完成')
-  } catch {
-    // Error handled
+  } catch (error: unknown) {
+    // 检查是否需要 OTP 输入 (428 状态码)
+    const err = error as { response?: { status?: number; data?: { details?: OTPRequiredDetails } } }
+    if (err?.response?.status === 428 && err?.response?.data?.details) {
+      const details = err.response.data.details
+      otpRequiredInfo.value = {
+        dept_id: details.dept_id,
+        device_group: details.device_group,
+        failed_devices: details.failed_devices || [],
+      }
+      pendingCollectDeviceId.value = collectModel.value.device_id
+      otpChars.value = createEmptyOtpChars()
+      showOTPModal.value = true
+    }
   } finally {
     collectLoading.value = false
+  }
+}
+
+// ==================== OTP 输入处理 ====================
+
+interface OTPRequiredDetails {
+  dept_id: string
+  device_group: string
+  failed_devices: string[]
+}
+
+const showOTPModal = ref(false)
+
+const createEmptyOtpChars = (): string[] => Array.from({ length: 6 }, () => '')
+const otpChars = ref<string[]>(createEmptyOtpChars())
+const otpLoading = ref(false)
+const otpRequiredInfo = ref<OTPRequiredDetails | null>(null)
+const pendingCollectDeviceId = ref<string>('')
+const pendingBatchCollect = ref(false)
+
+const deviceGroupLabels: Record<string, string> = {
+  core: '核心层',
+  distribution: '汇聚层',
+  access: '接入层',
+}
+
+const submitOTP = async () => {
+  const otpCode = otpChars.value.join('').trim()
+  if (!/^\d{6}$/.test(otpCode)) {
+    $alert.warning('请输入有效的 OTP 验证码（6位数字）')
+    return
+  }
+  if (!otpRequiredInfo.value) {
+    $alert.error('OTP 信息丢失，请重试')
+    return
+  }
+
+  otpLoading.value = true
+  try {
+    // 缓存 OTP
+    const cacheRequest: OTPCacheRequest = {
+      dept_id: otpRequiredInfo.value.dept_id,
+      device_group: otpRequiredInfo.value.device_group as OTPCacheRequest['device_group'],
+      otp_code: otpCode,
+    }
+    await cacheOTP(cacheRequest)
+    $alert.success('OTP 已缓存，正在重试采集...')
+
+    // 关闭 OTP 对话框
+    showOTPModal.value = false
+
+    // 重试采集
+    if (pendingBatchCollect.value) {
+      // 批量采集重试
+      await submitBatchCollectInternal()
+    } else if (pendingCollectDeviceId.value) {
+      // 单设备采集重试
+      collectLoading.value = true
+      try {
+        const res = await collectDevice(pendingCollectDeviceId.value)
+        collectResult.value = res.data
+        $alert.success('采集完成')
+      } finally {
+        collectLoading.value = false
+      }
+    }
+  } catch {
+    // Error handled by request interceptor
+  } finally {
+    otpLoading.value = false
+    pendingCollectDeviceId.value = ''
+    pendingBatchCollect.value = false
+    otpRequiredInfo.value = null
   }
 }
 
@@ -98,7 +185,7 @@ const batchCollectModel = ref({
   device_ids: [] as string[],
   collect_arp: true,
   collect_mac: true,
-  otp_code: '',
+  otp_chars: createEmptyOtpChars(),
 })
 
 // 使用 useTaskPolling composable
@@ -116,7 +203,7 @@ const handleBatchCollect = async () => {
     device_ids: [],
     collect_arp: true,
     collect_mac: true,
-    otp_code: '',
+    otp_chars: createEmptyOtpChars(),
   }
   resetBatchTask()
   showBatchCollectModal.value = true
@@ -127,17 +214,39 @@ const submitBatchCollect = async () => {
     $alert.warning('请选择设备')
     return
   }
+  await submitBatchCollectInternal()
+}
+
+const submitBatchCollectInternal = async () => {
   try {
+    const batchOtpCode = batchCollectModel.value.otp_chars.join('').trim()
+    const hasBatchOtpInput = batchOtpCode.length > 0
+    if (hasBatchOtpInput && !/^\d{6}$/.test(batchOtpCode)) {
+      $alert.warning('OTP 验证码需为 6 位数字')
+      return
+    }
     const res = await batchCollectAsync({
       device_ids: batchCollectModel.value.device_ids,
       collect_arp: batchCollectModel.value.collect_arp,
       collect_mac: batchCollectModel.value.collect_mac,
-      otp_code: batchCollectModel.value.otp_code || undefined,
+      otp_code: hasBatchOtpInput ? batchOtpCode : undefined,
     })
     $alert.success('批量采集任务已提交')
     startPollingTaskStatus(res.data.task_id)
-  } catch {
-    // Error handled
+  } catch (error: unknown) {
+    // 检查是否需要 OTP 输入 (428 状态码)
+    const err = error as { response?: { status?: number; data?: { details?: OTPRequiredDetails } } }
+    if (err?.response?.status === 428 && err?.response?.data?.details) {
+      const details = err.response.data.details
+      otpRequiredInfo.value = {
+        dept_id: details.dept_id,
+        device_group: details.device_group,
+        failed_devices: details.failed_devices || [],
+      }
+      pendingBatchCollect.value = true
+      otpChars.value = createEmptyOtpChars()
+      showOTPModal.value = true
+    }
   }
 }
 
@@ -288,7 +397,9 @@ const submitLocate = async () => {
             <n-checkbox v-model:checked="batchCollectModel.collect_mac">采集 MAC</n-checkbox>
           </n-space>
           <n-form-item label="OTP 验证码（可选）">
-            <n-input v-model:value="batchCollectModel.otp_code" placeholder="如果设备需要 OTP" />
+            <div class="otp-center">
+              <n-input-otp v-model:value="batchCollectModel.otp_chars" :length="6" />
+            </div>
           </n-form-item>
         </n-space>
         <div style="margin-top: 20px; text-align: right">
@@ -429,6 +540,44 @@ const submitLocate = async () => {
         </template>
       </n-space>
     </n-modal>
+
+    <!-- OTP 输入 Modal -->
+    <n-modal
+      v-model:show="showOTPModal"
+      preset="card"
+      title="需要 OTP 验证码"
+      style="width: 450px"
+      :closable="!otpLoading"
+      :mask-closable="!otpLoading"
+    >
+      <n-space vertical style="width: 100%">
+        <n-alert type="warning" title="设备需要 OTP 认证">
+          <template v-if="otpRequiredInfo">
+            <p>部门设备分组 <strong>{{ deviceGroupLabels[otpRequiredInfo.device_group] || otpRequiredInfo.device_group }}</strong> 配置为手动输入 OTP 认证方式。</p>
+            <p>请输入当前有效的 OTP 验证码以继续操作。</p>
+          </template>
+        </n-alert>
+        <n-form-item label="OTP 验证码" required>
+          <div class="otp-center">
+            <n-input-otp v-model:value="otpChars" :length="6" :disabled="otpLoading" @finish="submitOTP" />
+          </div>
+        </n-form-item>
+        <template v-if="otpRequiredInfo && otpRequiredInfo.failed_devices.length > 0">
+          <n-alert type="info" title="断点续传">
+            上次操作中以下设备未完成，输入 OTP 后将继续处理：
+            <ul style="margin: 8px 0 0 16px; padding: 0">
+              <li v-for="device in otpRequiredInfo.failed_devices" :key="device">{{ device }}</li>
+            </ul>
+          </n-alert>
+        </template>
+      </n-space>
+      <template #footer>
+        <n-space justify="end">
+          <n-button :disabled="otpLoading" @click="showOTPModal = false">取消</n-button>
+          <n-button type="primary" :loading="otpLoading" @click="submitOTP">确认并继续</n-button>
+        </n-space>
+      </template>
+    </n-modal>
   </div>
 </template>
 
@@ -439,5 +588,11 @@ const submitLocate = async () => {
 
 .p-4 {
   padding: 16px;
+}
+
+.otp-center {
+  width: 100%;
+  display: flex;
+  justify-content: center;
 }
 </style>

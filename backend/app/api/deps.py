@@ -21,8 +21,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.core import cache as cache_module
 from app.core.auth_cookies import csrf_cookie_name, csrf_header_name, refresh_cookie_name
-from app.core.cache import redis_client
 from app.core.config import settings
 from app.core.db import AsyncSessionLocal
 from app.core.exceptions import ForbiddenException, NotFoundException, UnauthorizedException
@@ -91,7 +91,7 @@ reusable_oauth2 = OAuth2PasswordBearer(tokenUrl=f"{settings.API_V1_STR}/auth/log
 
 async def get_db() -> AsyncGenerator[AsyncSession]:
     """
-    获取异步数据库会话依赖。
+    获取异步数据库会话依赖
     """
     async with AsyncSessionLocal() as session:
         try:
@@ -109,7 +109,7 @@ TokenDep = Annotated[str, Depends(reusable_oauth2)]
 
 async def get_current_user(request: Request, session: SessionDep, token: TokenDep) -> User:
     """
-    解析 Token 并获取当前登录用户。
+    解析 Token 并获取当前登录用户
     """
     try:
         payload = jwt.decode(
@@ -148,7 +148,7 @@ async def get_current_user(request: Request, session: SessionDep, token: TokenDe
     user = result.scalars().first()
 
     if not user:
-        logger.error(f"未找到用户: {token_data.sub}")
+        logger.error(f"未找到用户 {token_data.sub}")
         raise NotFoundException(message="用户不存在")
     if not user.is_active:
         raise ForbiddenException(message="用户已被禁用")
@@ -169,7 +169,7 @@ async def get_current_user(request: Request, session: SessionDep, token: TokenDe
         # 存储不可用时不阻断请求，但记录告警
         logger.warning(f"revoked_after 校验失败: {e}")
 
-    # 将用户信息绑定到 request state，供中间件使用 (存储简单值避免 Session 关闭后的 DetachedInstanceError)
+    # 将用户信息绑定到 request state，供中间件使用(存储简单值避免 Session 关闭后的 DetachedInstanceError)
     request.state.user_id = str(user.id)
     request.state.username = user.username
 
@@ -181,9 +181,9 @@ async def get_current_user(request: Request, session: SessionDep, token: TokenDe
     permissions_cache_key = f"v1:user:permissions:{user.id}"
     permissions: set[str] = set()
 
-    if redis_client is not None:
+    if cache_module.redis_client is not None:
         try:
-            cached = await redis_client.get(permissions_cache_key)
+            cached = await cache_module.redis_client.get(permissions_cache_key)
             if cached:
                 permissions = set(json.loads(cached))
         except Exception as e:
@@ -195,9 +195,9 @@ async def get_current_user(request: Request, session: SessionDep, token: TokenDe
                 if menu.permission:
                     permissions.add(menu.permission)
 
-        if redis_client is not None:
+        if cache_module.redis_client is not None:
             try:
-                await redis_client.setex(
+                await cache_module.redis_client.setex(
                     permissions_cache_key, 300, json.dumps(sorted(permissions), ensure_ascii=False)
                 )
             except Exception as e:
@@ -208,7 +208,7 @@ async def get_current_user(request: Request, session: SessionDep, token: TokenDe
 
 
 def require_permissions(required_permissions: list[str]):
-    """权限校验依赖：超级管理员放行；否则要求权限集合包含 required_permissions。"""
+    """权限校验依赖：超级管理员放行；否则要求权限集合包含 required_permissions"""
 
     async def _checker(request: Request, current_user: CurrentUser) -> User:
         if current_user.is_superuser:
@@ -252,12 +252,12 @@ def _extract_origin_from_referer(referer: str) -> str | None:
 
 
 async def require_refresh_cookie_and_csrf(request: Request) -> str:
-    """Refresh Cookie + CSRF 校验。
+    """Refresh Cookie + CSRF 校验依赖
 
     说明：
-    - refresh_token 放在 HttpOnly Cookie，因此 refresh 接口属于 Cookie 认证，需要 CSRF 防护。
-    - CSRF 采用双提交 Cookie：csrf_token Cookie(非 HttpOnly) + X-CSRF-Token 请求头。
-    - 额外校验 Origin/Referer（若存在且配置了白名单）。
+    - refresh_token 放在 HttpOnly Cookie，因 refresh 接口属于 Cookie 认证，需 CSRF 防护
+    - CSRF 采用双提取 Cookie：csrf_token Cookie(非 HttpOnly) + X-CSRF-Token 请求头
+    - 额外校验 Origin/Referer（若存在且配置了白名单）
     """
 
     refresh_token = request.cookies.get(refresh_cookie_name())
@@ -288,7 +288,7 @@ RefreshCookieDep = Annotated[str, Depends(require_refresh_cookie_and_csrf)]
 
 async def get_current_active_superuser(current_user: CurrentUser) -> User:
     """
-    检查当前用户是否为超级管理员。
+    检查当前用户是否为超级管理员
     """
     if not current_user.is_superuser:
         raise ForbiddenException(message="权限不足: 需要超级管理员权限")
@@ -296,9 +296,6 @@ async def get_current_active_superuser(current_user: CurrentUser) -> User:
 
 
 # --- Repository Injectors ---
-# 如果 Repository 也是类且有依赖，也应在此定义 Injector。
-# 目前 Repository 是作为 Singletons 初始化的 (在 crud 模块底部)。
-# 为了"Dependency Parameterization" 和 Mocking，我们可以通过依赖返回这些实例。
 
 
 def get_user_crud() -> CRUDUser:
@@ -538,7 +535,7 @@ def get_topology_service(
     return TopologyService(
         topology_crud=topology_crud,
         device_crud=device_crud,
-        redis_client=redis_client,
+        redis_client=cache_module.redis_client,
     )
 
 

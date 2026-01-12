@@ -25,6 +25,7 @@ from app.schemas.backup import (
     BackupTaskStatus,
 )
 from app.schemas.common import PaginatedResponse, ResponseBase
+from app.schemas.device import DeviceResponse
 
 router = APIRouter(tags=["配置备份"])
 
@@ -79,6 +80,7 @@ async def get_backups(
             error_message=backup.error_message,
             created_at=backup.created_at,
             updated_at=backup.updated_at,
+            device=DeviceResponse.model_validate(backup.device) if backup.device else None,
             content=backup.content,
             content_path=backup.content_path,
         )
@@ -130,6 +132,7 @@ async def get_backup(
             error_message=backup.error_message,
             created_at=backup.created_at,
             updated_at=backup.updated_at,
+            device=DeviceResponse.model_validate(backup.device) if backup.device else None,
             content=backup.content,
             content_path=backup.content_path,
         )
@@ -201,11 +204,13 @@ async def backup_device(
         ResponseBase[BackupResponse]: 生成的备份任务/记录信息。
     """
     backup_type = request.backup_type if request else BackupType.MANUAL
+    otp_code = request.otp_code if request else None
 
     backup = await service.backup_single_device(
         device_id=device_id,
         backup_type=backup_type,
         operator_id=current_user.id,
+        otp_code=otp_code,
     )
 
     return ResponseBase(
@@ -219,6 +224,7 @@ async def backup_device(
             error_message=backup.error_message,
             created_at=backup.created_at,
             updated_at=backup.updated_at,
+            device=DeviceResponse.model_validate(backup.device) if backup.device else None,
             content=backup.content,
             content_path=backup.content_path,
         ),
@@ -331,6 +337,7 @@ async def get_device_latest_backup(
             error_message=backup.error_message,
             created_at=backup.created_at,
             updated_at=backup.updated_at,
+            device=DeviceResponse.model_validate(backup.device) if backup.device else None,
             content=backup.content,
             content_path=backup.content_path,
         )
@@ -381,6 +388,7 @@ async def get_device_backup_history(
             error_message=backup.error_message,
             created_at=backup.created_at,
             updated_at=backup.updated_at,
+            device=DeviceResponse.model_validate(backup.device) if backup.device else None,
             content=backup.content,
             content_path=backup.content_path,
         )

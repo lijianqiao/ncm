@@ -89,6 +89,7 @@ class BackupDeviceRequest(BaseModel):
     """单设备备份请求。"""
 
     backup_type: BackupType = Field(default=BackupType.MANUAL, description="备份类型")
+    otp_code: str | None = Field(default=None, min_length=6, max_length=8, description="OTP 验证码（手动输入模式可选）")
 
 
 class BackupBatchRequest(BaseModel):
