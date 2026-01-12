@@ -242,6 +242,8 @@ class CRUDDiscovery(CRUDBase[Discovery, DiscoveryCreate, DiscoveryUpdate]):
         status: DiscoveryStatus | None = None,
         keyword: str | None = None,
         scan_source: str | None = None,
+        sort_by: str | None = None,
+        sort_order: str | None = None,
     ) -> tuple[list[Discovery], int]:
         """
         分页查询发现记录，支持筛选。
@@ -279,6 +281,30 @@ class CRUDDiscovery(CRUDBase[Discovery, DiscoveryCreate, DiscoveryUpdate]):
         if scan_source:
             conditions.append(self.model.scan_source == scan_source)
 
+        # 排序
+        sort_by = (sort_by or "").strip()
+        sort_order = (sort_order or "").strip().lower()
+        sort_map = {
+            "ip_address": self.model.ip_address,
+            "mac_address": self.model.mac_address,
+            "vendor": self.model.vendor,
+            "hostname": self.model.hostname,
+            "os_info": self.model.os_info,
+            "status": self.model.status,
+            "scan_source": self.model.scan_source,
+            "first_seen_at": self.model.first_seen_at,
+            "last_seen_at": self.model.last_seen_at,
+            "offline_days": self.model.offline_days,
+            "created_at": self.model.created_at,
+            "updated_at": self.model.updated_at,
+        }
+        sort_col = sort_map.get(sort_by) if sort_by else None
+        if sort_col is None:
+            sort_col = self.model.last_seen_at
+            sort_order = "desc"
+        if sort_order not in {"asc", "desc"}:
+            sort_order = "desc"
+
         # 构建查询
         base_query = select(self.model).where(and_(*conditions))
 
@@ -289,7 +315,8 @@ class CRUDDiscovery(CRUDBase[Discovery, DiscoveryCreate, DiscoveryUpdate]):
 
         # 分页查询
         skip = (page - 1) * page_size
-        query = base_query.order_by(self.model.last_seen_at.desc()).offset(skip).limit(page_size)
+        order_expr = sort_col.asc() if sort_order == "asc" else sort_col.desc()
+        query = base_query.order_by(order_expr).offset(skip).limit(page_size)
         result = await db.execute(query)
         items = list(result.scalars().all())
 

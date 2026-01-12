@@ -45,12 +45,14 @@ export interface DiscoverySearchParams {
   status?: DiscoveryStatusType
   keyword?: string
   scan_source?: string
+  sort_by?: string
+  sort_order?: 'asc' | 'desc'
 }
 
 /** 扫描请求 */
 export interface ScanRequest {
   subnets: string[]
-  scan_type?: 'nmap' | 'masscan'
+  scan_type?: 'auto' | 'nmap' | 'masscan'
   ports?: string
   async_mode?: boolean
 }

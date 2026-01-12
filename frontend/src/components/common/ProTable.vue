@@ -117,6 +117,10 @@ const pagination = reactive<PaginationProps>({
   },
 })
 
+// 排序状态（远程排序）
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const sorterState = ref<any>(null)
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const controlledColumns = ref<any[]>([])
 
@@ -233,6 +237,12 @@ const handleSearch = async () => {
       ...filterState.value, // External select filters
     }
 
+    // 3) 排序参数（后端服务端排序）
+    if (sorterState.value && sorterState.value.columnKey && sorterState.value.order) {
+      params.sort_by = sorterState.value.columnKey
+      params.sort_order = sorterState.value.order === 'ascend' ? 'asc' : 'desc'
+    }
+
     // 2. Add keyword only if present and non-empty
     const kw = keyword.value.trim()
     if (kw) {
@@ -251,6 +261,28 @@ const handleSearch = async () => {
 }
 
 const handleRefresh = () => {
+  handleSearch()
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const handleSorterChange = (sorter: any) => {
+  sorterState.value = sorter
+
+  // 同步列 sortOrder，确保 UI 箭头状态正确
+  if (sorter && sorter.columnKey) {
+    controlledColumns.value = controlledColumns.value.map((col) => {
+      if (!col || !col.key) return col
+      if (col.key === sorter.columnKey) return { ...col, sortOrder: sorter.order }
+      return { ...col, sortOrder: false }
+    })
+  } else {
+    controlledColumns.value = controlledColumns.value.map((col) => {
+      if (!col || !col.key) return col
+      return { ...col, sortOrder: false }
+    })
+  }
+
+  pagination.page = 1
   handleSearch()
 }
 
@@ -428,6 +460,7 @@ defineExpose({
         v-model:checked-row-keys="checkedRowKeys"
         @update:checked-row-keys="handleCheck"
         @update:filters="handleFiltersChange"
+        @update:sorter="handleSorterChange"
         :scroll-x="scrollX"
         :virtual-scroll="virtualScroll"
         :max-height="virtualScroll ? maxHeight : undefined"

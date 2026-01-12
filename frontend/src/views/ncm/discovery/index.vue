@@ -80,6 +80,7 @@ const deviceGroupOptions = [
 ]
 
 const scanTypeOptions = [
+  { label: '自动', value: 'auto' },
   { label: 'Nmap', value: 'nmap' },
   { label: 'Masscan', value: 'masscan' },
 ]
@@ -113,10 +114,68 @@ const fetchDeptTree = async () => {
 
 const columns: DataTableColumns<DiscoveryRecord> = [
   { type: 'selection', fixed: 'left' },
-  { title: 'IP 地址', key: 'ip_address', width: 140, fixed: 'left' },
-  { title: 'MAC 地址', key: 'mac_address', width: 150, render: (row) => row.mac_address || '-' },
-  { title: '厂商', key: 'vendor', width: 100, ellipsis: { tooltip: true }, render: (row) => row.vendor || '-' },
-  { title: '主机名', key: 'hostname', width: 150, ellipsis: { tooltip: true }, render: (row) => row.hostname || '-' },
+  { title: 'IP 地址', key: 'ip_address', width: 140, fixed: 'left', sorter: 'default', resizable: true },
+  {
+    title: 'MAC 地址',
+    key: 'mac_address',
+    width: 150,
+    sorter: 'default',
+    resizable: true,
+    render: (row) => row.mac_address || '-',
+  },
+  {
+    title: '厂商',
+    key: 'vendor',
+    width: 120,
+    sorter: 'default',
+    resizable: true,
+    ellipsis: { tooltip: true },
+    render: (row) => row.vendor || '-',
+  },
+  {
+    title: '主机名',
+    key: 'hostname',
+    width: 160,
+    sorter: 'default',
+    resizable: true,
+    ellipsis: { tooltip: true },
+    render: (row) => row.hostname || '-',
+  },
+  {
+    title: '系统识别',
+    key: 'os_info',
+    width: 220,
+    sorter: 'default',
+    resizable: true,
+    ellipsis: { tooltip: true },
+    render: (row) => row.os_info || '-',
+  },
+  {
+    title: '开放端口',
+    key: 'open_ports',
+    width: 160,
+    resizable: true,
+    ellipsis: { tooltip: true },
+    render: (row) => {
+      const ports = row.open_ports
+      if (!ports) return '-'
+      const keys = Object.keys(ports)
+      if (keys.length === 0) return '-'
+      return keys
+        .sort((a, b) => Number(a) - Number(b))
+        .map((p) => `${p}/${ports[p] || '-'}`)
+        .join(', ')
+    },
+  },
+  {
+    title: 'SSH Banner',
+    key: 'ssh_banner',
+    width: 220,
+    sorter: 'default',
+    resizable: true,
+    ellipsis: { tooltip: true },
+    render: (row) => row.ssh_banner || '-',
+  },
   {
     title: '状态',
     key: 'status',
@@ -140,15 +199,27 @@ const columns: DataTableColumns<DiscoveryRecord> = [
     title: '首次发现',
     key: 'first_seen_at',
     width: 160,
+    sorter: 'default',
+    resizable: true,
     render: (row) => formatDateTime(row.first_seen_at),
   },
   {
     title: '最后发现',
     key: 'last_seen_at',
     width: 160,
+    sorter: 'default',
+    resizable: true,
     render: (row) => formatDateTime(row.last_seen_at),
   },
-  { title: '离线天数', key: 'offline_days', width: 90 },
+  {
+    title: '来源',
+    key: 'scan_source',
+    width: 90,
+    sorter: 'default',
+    resizable: true,
+    render: (row) => row.scan_source || '-',
+  },
+  { title: '离线天数', key: 'offline_days', width: 90, sorter: 'default', resizable: true },
 ]
 
 // ==================== 搜索筛选 ====================
@@ -259,7 +330,7 @@ const submitAdopt = async () => {
 const showScanModal = ref(false)
 const scanModel = ref({
   subnets: '',
-  scan_type: 'masscan' as 'nmap' | 'masscan',
+  scan_type: 'auto' as 'auto' | 'nmap' | 'masscan',
   ports: '22,23,80,443',
   async_mode: true,
 })
@@ -319,7 +390,7 @@ const showScanStatusDetail = () => {
 const handleTriggerScan = () => {
   scanModel.value = {
     subnets: '',
-    scan_type: 'masscan',
+    scan_type: 'auto',
     ports: '22,23,80,443',
     async_mode: true,
   }
@@ -549,8 +620,9 @@ const handleCompareCMDB = () => {
       title="影子资产 & 离线设备"
       style="width: 900px"
     >
-      <n-tabs v-model:value="activeTab">
-        <n-tab-pane name="shadow" tab="影子资产">
+      <div class="extra-modal-body">
+        <n-tabs v-model:value="activeTab">
+          <n-tab-pane name="shadow" tab="影子资产">
           <div v-if="extraLoading" style="text-align: center; padding: 40px">加载中...</div>
           <template v-else>
             <n-alert type="info" style="margin-bottom: 16px">
@@ -580,8 +652,8 @@ const handleCompareCMDB = () => {
               </tbody>
             </n-table>
           </template>
-        </n-tab-pane>
-        <n-tab-pane name="offline" tab="离线设备">
+          </n-tab-pane>
+          <n-tab-pane name="offline" tab="离线设备">
           <div v-if="extraLoading" style="text-align: center; padding: 40px">加载中...</div>
           <template v-else>
             <n-space style="margin-bottom: 16px">
@@ -615,8 +687,9 @@ const handleCompareCMDB = () => {
               </tbody>
             </n-table>
           </template>
-        </n-tab-pane>
-      </n-tabs>
+          </n-tab-pane>
+        </n-tabs>
+      </div>
     </n-modal>
   </div>
 </template>
@@ -628,5 +701,10 @@ const handleCompareCMDB = () => {
 
 .p-4 {
   padding: 16px;
+}
+
+.extra-modal-body {
+  max-height: 70vh;
+  overflow: auto;
 }
 </style>

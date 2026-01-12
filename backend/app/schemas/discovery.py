@@ -62,6 +62,7 @@ class ScanHost(BaseModel):
     vendor: str | None = Field(default=None, description="厂商 (OUI 识别)")
     os_info: str | None = Field(default=None, description="操作系统信息")
     open_ports: dict[int, str] | None = Field(default=None, description="开放端口 {port: service}")
+    ssh_banner: str | None = Field(default=None, description="SSH Banner")
     status: str = Field(default="up", description="主机状态")
 
     @field_validator("ip_address")

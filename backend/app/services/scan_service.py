@@ -170,6 +170,36 @@ class ScanService:
                             service = port_data.get("name", "unknown")
                             open_ports[int(port)] = service
 
+            # 尝试提取 SSH banner（基于 nmap service 指纹信息）
+            ssh_banner = None
+            tcp_data = host_data.get("tcp", {})
+            if isinstance(tcp_data, dict) and 22 in tcp_data:
+                p22 = tcp_data.get(22) or {}
+                if isinstance(p22, dict) and p22.get("state") == "open":
+                    parts = [
+                        p22.get("product"),
+                        p22.get("version"),
+                        p22.get("extrainfo"),
+                    ]
+                    parts = [p for p in parts if isinstance(p, str) and p.strip()]
+                    if parts:
+                        ssh_banner = " ".join(parts)
+
+            # vendor 兜底：没有 MAC/OUI 时，根据 os_info/ssh_banner 推断
+            if not vendor:
+                try:
+                    from app.network.platform_config import (
+                        detect_vendor_from_banner,
+                        detect_vendor_from_version,
+                    )
+
+                    if ssh_banner:
+                        vendor = detect_vendor_from_banner(ssh_banner)
+                    if not vendor and os_info:
+                        vendor = detect_vendor_from_version(os_info)
+                except Exception:
+                    vendor = vendor
+
             # 获取状态
             status = host_data.get("status", {}).get("state", "unknown")
 
@@ -181,6 +211,7 @@ class ScanService:
                     vendor=vendor,
                     os_info=os_info,
                     open_ports=open_ports if open_ports else None,
+                    ssh_banner=ssh_banner,
                     status=status,
                 )
             )
@@ -360,6 +391,7 @@ class ScanService:
                         hostname=host.hostname,
                         os_info=host.os_info,
                         open_ports=host.open_ports,
+                        ssh_banner=getattr(host, "ssh_banner", None),
                         scan_source=scan_result.scan_type,
                         scan_task_id=scan_task_id,
                     )

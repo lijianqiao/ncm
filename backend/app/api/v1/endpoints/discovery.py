@@ -162,6 +162,8 @@ async def list_discoveries(
     status: DiscoveryStatus | None = Query(None, description="状态筛选"),
     keyword: str | None = Query(None, description="关键词搜索"),
     scan_source: str | None = Query(None, description="扫描来源"),
+    sort_by: str | None = Query(None, description="排序字段"),
+    sort_order: str | None = Query(None, description="排序方向 (asc/desc)"),
 ) -> ResponseBase[PaginatedResponse[DiscoveryResponse]]:
     """获取通过网络扫描发现的所有设备记录。
 
@@ -183,6 +185,8 @@ async def list_discoveries(
         status=status,
         keyword=keyword,
         scan_source=scan_source,
+        sort_by=sort_by,
+        sort_order=sort_order,
     )
 
     # 转换为响应格式
