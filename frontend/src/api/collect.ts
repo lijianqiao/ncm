@@ -15,17 +15,28 @@ import type { ResponseBase } from '@/types/api'
 export interface ARPEntry {
   ip_address: string
   mac_address: string
-  interface: string
-  vlan: string | null
-  type: string | null
+  interface?: string | null
+  vlan_id?: string | null
+  entry_type?: string | null
+  updated_at?: string | null
+
+  // 兼容旧字段
+  vlan?: string | null
+  type?: string | null
 }
 
 /** MAC 表条目 */
 export interface MACEntry {
   mac_address: string
-  vlan: string
-  interface: string
-  type: string | null
+  vlan_id?: string | null
+  interface?: string | null
+  entry_type?: string | null
+  state?: string | null
+  updated_at?: string | null
+
+  // 兼容旧字段
+  vlan?: string | null
+  type?: string | null
 }
 
 /** ARP 表响应 */
@@ -33,7 +44,8 @@ export interface ARPTableResponse {
   device_id: string
   device_name: string | null
   entries: ARPEntry[]
-  collected_at: string
+  total: number
+  cached_at: string | null
 }
 
 /** MAC 表响应 */
@@ -41,25 +53,29 @@ export interface MACTableResponse {
   device_id: string
   device_name: string | null
   entries: MACEntry[]
-  collected_at: string
+  total: number
+  cached_at: string | null
 }
 
 /** 设备采集结果 */
 export interface DeviceCollectResult {
   device_id: string
   device_name: string | null
+  success: boolean
   arp_count: number
   mac_count: number
-  collected_at: string
-  error: string | null
+  error_message: string | null
+  duration_ms: number | null
 }
 
 /** 批量采集结果 */
 export interface CollectResult {
-  total: number
+  total_devices: number
   success_count: number
   failed_count: number
   results: DeviceCollectResult[]
+  started_at: string | null
+  completed_at: string | null
 }
 
 /** 采集任务状态 */
@@ -90,14 +106,21 @@ export interface BatchCollectRequest {
   otp_code?: string
 }
 
+/** 单设备采集请求 */
+export interface CollectDeviceRequest {
+  collect_arp?: boolean
+  collect_mac?: boolean
+  otp_code?: string
+}
+
 // ==================== API 函数 ====================
 
 /** 手动采集单设备 */
-export function collectDevice(deviceId: string) {
+export function collectDevice(deviceId: string, data: CollectDeviceRequest = {}) {
   return request<ResponseBase<DeviceCollectResult>>({
     url: `/collect/device/${deviceId}`,
     method: 'post',
-    data: {},
+    data,
   })
 }
 

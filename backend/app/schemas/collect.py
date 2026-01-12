@@ -88,6 +88,7 @@ class CollectDeviceRequest(BaseModel):
 
     collect_arp: bool = Field(default=True, description="是否采集 ARP 表")
     collect_mac: bool = Field(default=True, description="是否采集 MAC 表")
+    otp_code: str | None = Field(default=None, description="OTP 验证码（如果设备需要）")
 
 
 class CollectBatchRequest(BaseModel):

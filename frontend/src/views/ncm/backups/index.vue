@@ -8,10 +8,10 @@ import {
   useDialog,
   type DataTableColumns,
   NTag,
+  NAlert,
   NSelect,
   NSpace,
   NProgress,
-  NAlert,
   type DropdownOption,
 } from 'naive-ui'
 import hljs from 'highlight.js/lib/core'
@@ -68,6 +68,26 @@ const backupTypeColorMap: Record<BackupType, 'info' | 'success' | 'warning'> = {
   incremental: 'info',
 }
 
+const backupStatusLabelMap: Record<string, string> = {
+  success: '成功',
+  failed: '失败',
+  pending: '等待中',
+  running: '执行中',
+}
+
+const backupStatusColorMap: Record<string, 'success' | 'error' | 'warning' | 'info'> = {
+  success: 'success',
+  failed: 'error',
+  pending: 'info',
+  running: 'warning',
+}
+
+const authTypeLabelMap: Record<string, string> = {
+  static: '静态密码',
+  otp_seed: 'OTP 种子',
+  otp_manual: 'OTP 手动',
+}
+
 // 格式化文件大小
 const formatFileSize = (bytes: number): string => {
   if (bytes < 1024) return bytes + ' B'
@@ -82,9 +102,59 @@ const columns: DataTableColumns<Backup> = [
   {
     title: '设备名称',
     key: 'device',
-    width: 150,
+    width: 280,
+    fixed: 'left',
     ellipsis: { tooltip: true },
     render: (row) => row.device?.name || row.device_name || row.device_id,
+  },
+  {
+    title: '操作者',
+    key: 'operator_id',
+    width: 180,
+    ellipsis: { tooltip: true },
+    render: (row) => row.operator_id || '-',
+  },
+  {
+    title: 'IP',
+    key: 'ip_address',
+    width: 130,
+    ellipsis: { tooltip: true },
+    render: (row) => row.device?.ip_address || '-',
+  },
+  {
+    title: '部门',
+    key: 'dept',
+    width: 110,
+    ellipsis: { tooltip: true },
+    render: (row) => row.device?.dept?.name || '-',
+  },
+  {
+    title: '厂商',
+    key: 'vendor',
+    width: 80,
+    render: (row) => (row.device?.vendor ? String(row.device.vendor).toUpperCase() : '-'),
+  },
+  {
+    title: '型号',
+    key: 'model',
+    width: 130,
+    ellipsis: { tooltip: true },
+    render: (row) => row.device?.model || '-',
+  },
+  {
+    title: '分组',
+    key: 'device_group',
+    width: 80,
+    render: (row) => row.device?.device_group || '-',
+  },
+  {
+    title: '认证',
+    key: 'auth_type',
+    width: 100,
+    render: (row) => {
+      const v = row.device?.auth_type || ''
+      return authTypeLabelMap[String(v)] || (v ? String(v) : '-')
+    },
   },
   {
     title: '备份类型',
@@ -96,6 +166,17 @@ const columns: DataTableColumns<Backup> = [
         { type: backupTypeColorMap[row.backup_type], bordered: false, size: 'small' },
         { default: () => backupTypeLabelMap[row.backup_type] },
       )
+    },
+  },
+  {
+    title: '状态',
+    key: 'status',
+    width: 90,
+    render: (row) => {
+      const status = row.status || 'unknown'
+      const type = backupStatusColorMap[status] || 'info'
+      const label = backupStatusLabelMap[status] || status
+      return h(NTag, { type, bordered: false, size: 'small' }, { default: () => label })
     },
   },
   {
@@ -115,10 +196,26 @@ const columns: DataTableColumns<Backup> = [
     render: (row) => formatFileSize(row.content_size || row.file_size || 0),
   },
   {
+    title: '有内容',
+    key: 'has_content',
+    width: 80,
+    render: (row) => {
+      const ok = Boolean(row.has_content)
+      return h(NTag, { type: ok ? 'success' : 'warning', bordered: false, size: 'small' }, { default: () => (ok ? '是' : '否') })
+    },
+  },
+  {
     title: '备份时间',
     key: 'created_at',
     width: 180,
     render: (row) => formatDateTime(row.created_at),
+  },
+  {
+    title: '错误信息',
+    key: 'error_message',
+    width: 180,
+    ellipsis: { tooltip: true },
+    render: (row) => row.error_message || '-',
   },
 ]
 

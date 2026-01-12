@@ -16,6 +16,7 @@ class CustomException(Exception):
     """
 
     def __init__(self, code: int, message: str, details: Any = None):
+        super().__init__(message)
         self.code = code
         self.message = message
         self.details = details

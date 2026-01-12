@@ -30,6 +30,23 @@ from app.schemas.device import DeviceResponse
 router = APIRouter(tags=["配置备份"])
 
 
+def _format_operator_display(user: object | None) -> str | None:
+    """将用户对象格式化为 昵称(用户名) 的展示字符串。"""
+
+    if not user:
+        return None
+
+    username = getattr(user, "username", None)
+    nickname = getattr(user, "nickname", None)
+
+    if not username:
+        return None
+
+    if nickname:
+        return f"{nickname}({username})"
+    return str(username)
+
+
 # ===== 备份列表 =====
 
 
@@ -78,6 +95,7 @@ async def get_backups(
             content_size=backup.content_size,
             md5_hash=backup.md5_hash,
             error_message=backup.error_message,
+            operator_id=_format_operator_display(backup.operator),
             created_at=backup.created_at,
             updated_at=backup.updated_at,
             device=DeviceResponse.model_validate(backup.device) if backup.device else None,
@@ -130,6 +148,7 @@ async def get_backup(
             content_size=backup.content_size,
             md5_hash=backup.md5_hash,
             error_message=backup.error_message,
+            operator_id=_format_operator_display(backup.operator),
             created_at=backup.created_at,
             updated_at=backup.updated_at,
             device=DeviceResponse.model_validate(backup.device) if backup.device else None,
@@ -222,6 +241,7 @@ async def backup_device(
             content_size=backup.content_size,
             md5_hash=backup.md5_hash,
             error_message=backup.error_message,
+            operator_id=_format_operator_display(current_user),
             created_at=backup.created_at,
             updated_at=backup.updated_at,
             device=DeviceResponse.model_validate(backup.device) if backup.device else None,
@@ -335,6 +355,7 @@ async def get_device_latest_backup(
             content_size=backup.content_size,
             md5_hash=backup.md5_hash,
             error_message=backup.error_message,
+            operator_id=_format_operator_display(backup.operator),
             created_at=backup.created_at,
             updated_at=backup.updated_at,
             device=DeviceResponse.model_validate(backup.device) if backup.device else None,
@@ -386,6 +407,7 @@ async def get_device_backup_history(
             content_size=backup.content_size,
             md5_hash=backup.md5_hash,
             error_message=backup.error_message,
+            operator_id=_format_operator_display(backup.operator),
             created_at=backup.created_at,
             updated_at=backup.updated_at,
             device=DeviceResponse.model_validate(backup.device) if backup.device else None,

@@ -24,10 +24,21 @@ export interface Backup {
   content_size: number
   md5_hash: string | null
   error_message: string | null
+  operator_id?: string | null
   created_at: string
   updated_at: string
   has_content?: boolean
-  device?: { id: string; name: string; ip_address: string } | null
+  device?: {
+    id: string
+    name: string
+    ip_address: string
+    vendor?: string | null
+    model?: string | null
+    device_group?: string | null
+    auth_type?: string | null
+    location?: string | null
+    dept?: { id: string; name: string; code?: string | null; parent_id?: string | null } | null
+  } | null
 
   // 兼容旧字段（避免历史代码/缓存数据导致运行时异常）
   device_name?: string | null

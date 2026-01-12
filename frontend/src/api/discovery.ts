@@ -8,7 +8,6 @@
 
 import { request } from '@/utils/request'
 import type { ResponseBase, PaginatedResponse } from '@/types/api'
-import { DiscoveryStatus } from '@/types/enums'
 import type { DiscoveryStatusType } from '@/types/enums'
 
 // 重新导出枚举类型供外部使用

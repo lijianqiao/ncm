@@ -21,7 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core import cache as cache_module
 from app.core.config import settings
 from app.core.enums import AuthType, DeviceStatus
-from app.core.exceptions import BadRequestException, NotFoundException
+from app.core.exceptions import BadRequestException, NotFoundException, OTPRequiredException
 from app.core.logger import logger
 from app.core.otp_service import otp_service
 from app.crud.crud_credential import CRUDCredential
@@ -182,7 +182,13 @@ class CollectService:
         # 获取凭据
         try:
             credential = await self._get_device_credential(device, otp_code)
+        except OTPRequiredException:
+            raise
         except Exception as e:
+            logger.warning(
+                f"获取凭据失败: device={device.name}, auth_type={device.auth_type}, error={e}",
+                exc_info=True,
+            )
             return DeviceCollectResult(
                 device_id=device_id,
                 device_name=device.name,
@@ -278,7 +284,12 @@ class CollectService:
             # 获取设备列表确定需要缓存 OTP 的部分设备
             devices = await self.device_crud.get_multi_by_ids(self.db, ids=request.device_ids)
             for device in devices:
-                if device.auth_type == AuthType.OTP_MANUAL and device.dept_id and device.device_group:
+                auth_type_str = device.auth_type or AuthType.STATIC.value
+                try:
+                    auth_type = AuthType(auth_type_str)
+                except ValueError:
+                    auth_type = AuthType.STATIC
+                if auth_type == AuthType.OTP_MANUAL and device.dept_id and device.device_group:
                     await otp_service.cache_otp(device.dept_id, device.device_group, request.otp_code)
 
         async def collect_with_semaphore(device_id: UUID) -> DeviceCollectResult:
@@ -373,9 +384,6 @@ class CollectService:
         Returns:
             dict: {"username": str, "password": str}
         """
-        if not device.username:
-            raise BadRequestException(message="设备未配置用户名")
-
         auth_type_str = device.auth_type or AuthType.STATIC.value
         # 将字符串转换为枚 AuthType 枚举
         try:
@@ -385,6 +393,8 @@ class CollectService:
 
         if auth_type == AuthType.STATIC:
             # 静态密码
+            if not device.username:
+                raise BadRequestException(message="设备未配置用户名")
             if not device.password_encrypted:
                 raise BadRequestException(message="设备未配置密码")
             from app.core.encryption import decrypt_password
@@ -393,32 +403,52 @@ class CollectService:
             return {"username": device.username, "password": password}
 
         elif auth_type == AuthType.OTP_SEED:
-            # 自动生成 OTP - 需要从 DeviceGroupCredential 获取
+            # 自动生成 OTP - 从 DeviceGroupCredential 获取种子
             if not device.dept_id or not device.device_group:
                 raise BadRequestException(message="OTP_SEED 认证需要配置部门和设备组")
-            credential = await otp_service.get_credential_for_otp_manual_device(
-                username=device.username,
-                dept_id=device.dept_id,
-                device_group=device.device_group,
+
+            group_credential = await self.credential_crud.get_by_dept_and_group(
+                self.db, device.dept_id, device.device_group
             )
-            return {"username": credential.username, "password": credential.password}
+            if not group_credential:
+                raise BadRequestException(message="未找到凭据配置")
+            if not group_credential.username:
+                raise BadRequestException(message="凭据未配置用户名")
+            if not group_credential.otp_seed_encrypted:
+                raise BadRequestException(message="凭据未配置 OTP 种子")
+
+            device_credential = await otp_service.get_credential_for_otp_seed_device(
+                username=group_credential.username,
+                encrypted_seed=group_credential.otp_seed_encrypted,
+            )
+            return {"username": device_credential.username, "password": device_credential.password}
 
         elif auth_type == AuthType.OTP_MANUAL:
             # 手动输入 OTP
             if otp_code and device.dept_id and device.device_group:
                 # 缓存提供的 OTP
-                await otp_service.cache_otp(device.dept_id, device.device_group, otp_code)
+                ttl = await otp_service.cache_otp(device.dept_id, device.device_group, otp_code)
+                if ttl == 0:
+                    raise BadRequestException(message="OTP 缓存失败：Redis 服务未连接，请联系管理员")
 
             if not device.dept_id or not device.device_group:
                 raise BadRequestException(message="设备未配置部门或设备组")
 
-            credential = await otp_service.get_credential_for_otp_manual_device(
-                username=device.username,
+            group_credential = await self.credential_crud.get_by_dept_and_group(
+                self.db, device.dept_id, device.device_group
+            )
+            if not group_credential:
+                raise BadRequestException(message="未找到凭据配置")
+            if not group_credential.username:
+                raise BadRequestException(message="凭据未配置用户名")
+
+            device_credential = await otp_service.get_credential_for_otp_manual_device(
+                username=group_credential.username,
                 dept_id=device.dept_id,
                 device_group=device.device_group,
                 failed_devices=[str(device.id)],
             )
-            return {"username": credential.username, "password": credential.password}
+            return {"username": device_credential.username, "password": device_credential.password}
 
         else:
             raise BadRequestException(message=f"不支持的认证类型: {auth_type}")

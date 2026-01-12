@@ -58,11 +58,13 @@ async def collect_device(
     """
     collect_arp = request.collect_arp if request else True
     collect_mac = request.collect_mac if request else True
+    otp_code = request.otp_code if request else None
 
     result = await service.collect_device(
         device_id=device_id,
         collect_arp=collect_arp,
         collect_mac=collect_mac,
+        otp_code=otp_code,
     )
 
     return ResponseBase(

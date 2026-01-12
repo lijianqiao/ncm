@@ -8,8 +8,6 @@
 验证 ntc-templates 和自定义模板的解析功能。
 """
 
-import pytest
-
 from app.network.textfsm_parser import (
     parse_arp_table,
     parse_command_output,

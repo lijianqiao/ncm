@@ -44,6 +44,7 @@ class BackupResponse(BaseModel):
     content_size: int
     md5_hash: str | None = None
     error_message: str | None = None
+    operator_id: str | None = Field(default=None, description="操作人(昵称(用户名))")
     created_at: datetime
     updated_at: datetime
 
