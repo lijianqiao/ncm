@@ -14,6 +14,7 @@ from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.core.enums import BackupStatus
 from app.crud.crud_backup import CRUDBackup
@@ -39,6 +40,7 @@ class DiffService:
         """
         query = (
             select(Backup)
+            .options(selectinload(Backup.device))
             .where(Backup.device_id == device_id)
             .where(Backup.is_deleted.is_(False))
             .where(Backup.status == BackupStatus.SUCCESS.value)

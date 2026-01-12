@@ -48,8 +48,11 @@ async def get_device_latest_diff(
         return ResponseBase(
             data=DiffResponse(
                 device_id=device_id,
+                device_name=getattr(getattr(new_bak, "device", None), "name", None),
                 new_backup_id=new_bak.id,
+                new_hash=new_bak.md5_hash,
                 new_md5=new_bak.md5_hash,
+                has_changes=False,
                 message="仅有一份成功备份，暂无可对比的上一版本",
             )
         )
@@ -58,20 +61,30 @@ async def get_device_latest_diff(
         return ResponseBase(
             data=DiffResponse(
                 device_id=device_id,
+                device_name=getattr(getattr(new_bak, "device", None), "name", None),
                 old_backup_id=old_bak.id,
                 new_backup_id=new_bak.id,
+                old_hash=old_bak.md5_hash,
+                new_hash=new_bak.md5_hash,
                 old_md5=old_bak.md5_hash,
                 new_md5=new_bak.md5_hash,
+                has_changes=False,
                 message="备份内容未直存数据库（可能为大配置/MinIO 未集成），暂不支持差异计算",
             )
         )
 
     diff_text = diff_service.compute_unified_diff(old_bak.content, new_bak.content, context_lines=3)
+    has_changes = bool(diff_text.strip())
     return ResponseBase(
         data=DiffResponse(
             device_id=device_id,
+            device_name=getattr(getattr(new_bak, "device", None), "name", None),
             old_backup_id=old_bak.id,
             new_backup_id=new_bak.id,
+            old_hash=old_bak.md5_hash,
+            new_hash=new_bak.md5_hash,
+            diff_content=diff_text,
+            has_changes=has_changes,
             old_md5=old_bak.md5_hash,
             new_md5=new_bak.md5_hash,
             diff=diff_text,
