@@ -99,6 +99,83 @@ class CRUDDiscovery(CRUDBase[Discovery, DiscoveryCreate, DiscoveryUpdate]):
             await db.refresh(db_obj)
             return db_obj
 
+    async def upsert_many(
+        self,
+        db: AsyncSession,
+        *,
+        data_list: list[DiscoveryCreate],
+        scan_source: str | None = None,
+        scan_task_id: str | None = None,
+    ) -> int:
+        """批量创建或更新发现记录（按 IP 去重）。
+
+        说明：该方法针对扫描入库场景优化，避免逐条 get_by_ip + flush + refresh。
+
+        Args:
+            db: 数据库会话
+            data_list: 待写入的发现数据列表
+            scan_source: 扫描来源
+            scan_task_id: 扫描任务ID
+
+        Returns:
+            实际处理的记录数
+        """
+        if not data_list:
+            return 0
+
+        now = datetime.now()
+        ips = list({d.ip_address for d in data_list})
+
+        query = select(self.model).where(
+            and_(
+                self.model.ip_address.in_(ips),
+                self.model.is_deleted.is_(False),
+            )
+        )
+        result = await db.execute(query)
+        existing_list = list(result.scalars().all())
+        existing_map: dict[str, Discovery] = {d.ip_address: d for d in existing_list}
+
+        created = 0
+        updated = 0
+
+        for data in data_list:
+            existing = existing_map.get(data.ip_address)
+
+            if existing:
+                update_data = data.model_dump(exclude_unset=True)
+                update_data["last_seen_at"] = now
+                update_data["offline_days"] = 0
+                if scan_source:
+                    update_data["scan_source"] = scan_source
+                if scan_task_id:
+                    update_data["scan_task_id"] = scan_task_id
+
+                for field, value in update_data.items():
+                    if hasattr(existing, field) and value is not None:
+                        setattr(existing, field, value)
+                db.add(existing)
+                updated += 1
+                continue
+
+            obj_data = data.model_dump(exclude_unset=True)
+            obj_data["first_seen_at"] = now
+            obj_data["last_seen_at"] = now
+            obj_data["offline_days"] = 0
+            obj_data["status"] = DiscoveryStatus.PENDING.value
+            if scan_source:
+                obj_data["scan_source"] = scan_source
+            if scan_task_id:
+                obj_data["scan_task_id"] = scan_task_id
+
+            db_obj = self.model(**obj_data)
+            db.add(db_obj)
+            existing_map[data.ip_address] = db_obj
+            created += 1
+
+        await db.flush()
+        return created + updated
+
     async def get_shadow_assets(self, db: AsyncSession, *, skip: int = 0, limit: int = 100) -> list[Discovery]:
         """
         获取影子资产列表 (未在 CMDB 中的发现设备)。

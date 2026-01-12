@@ -259,7 +259,7 @@ const submitAdopt = async () => {
 const showScanModal = ref(false)
 const scanModel = ref({
   subnets: '',
-  scan_type: 'nmap' as 'nmap' | 'masscan',
+  scan_type: 'masscan' as 'nmap' | 'masscan',
   ports: '22,23,80,443',
   async_mode: true,
 })
@@ -319,7 +319,7 @@ const showScanStatusDetail = () => {
 const handleTriggerScan = () => {
   scanModel.value = {
     subnets: '',
-    scan_type: 'nmap',
+    scan_type: 'masscan',
     ports: '22,23,80,443',
     async_mode: true,
   }

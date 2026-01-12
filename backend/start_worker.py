@@ -90,6 +90,7 @@ def start_worker(
     queues: str,
     concurrency: int,
     loglevel: str,
+    pool: str,
     with_beat: bool = False,
 ) -> int:
     """
@@ -112,6 +113,7 @@ def start_worker(
         f"--queues={queues}",
         f"--concurrency={concurrency}",
         f"--loglevel={loglevel}",
+        f"--pool={pool}",
         "--hostname=ncm-worker@%h",
     ]
 
@@ -124,6 +126,7 @@ def start_worker(
     print(f"队列: {queues}")
     print(f"并发数: {concurrency}")
     print(f"日志级别: {loglevel}")
+    print(f"Pool: {pool}")
 
     celery_app.worker_main(argv=worker_args)
     return 0
@@ -166,6 +169,13 @@ def main() -> int:
         help="日志级别 (默认: INFO)",
     )
 
+    parser.add_argument(
+        "--pool",
+        default="auto",
+        choices=["auto", "prefork", "threads", "solo"],
+        help="Worker Pool (Windows 推荐 threads/solo，默认 auto)",
+    )
+
     # Beat 参数
     parser.add_argument(
         "--beat",
@@ -199,6 +209,12 @@ def main() -> int:
 
     args = parser.parse_args()
 
+    # Windows 上 prefork/billiard 常出现 WinError 5/6（句柄/权限/信号限制），默认切到 threads。
+    if args.pool == "auto":
+        pool = "threads" if sys.platform.startswith("win") else "prefork"
+    else:
+        pool = args.pool
+
     # 检查互斥参数
     modes = sum([args.flower, args.beat_only])
     if modes > 1:
@@ -215,6 +231,7 @@ def main() -> int:
         queues=args.queues,
         concurrency=args.concurrency,
         loglevel=args.loglevel,
+        pool=pool,
         with_beat=args.beat,
     )
 

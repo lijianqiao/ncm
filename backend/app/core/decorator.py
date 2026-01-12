@@ -7,12 +7,12 @@
 """
 
 import functools
+import inspect
 import logging
 from collections.abc import Callable
 from typing import Any, TypeVar
 
 from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
 
@@ -76,16 +76,37 @@ def transactional() -> Callable:
     def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
         @functools.wraps(func)
         async def wrapper(*args: Any, **kwargs: Any) -> Any:
-            # 1. 尝试从 kwargs 中获取 db
-            db_session: AsyncSession | None = kwargs.get("db")
+            def is_db_session(obj: Any) -> bool:
+                return obj is not None and hasattr(obj, "commit") and hasattr(obj, "rollback")
 
-            # 2. 尝试从 self.db 获取 (针对 Service 类方法)
+            db_session: Any | None = None
+
+            # 1) 优先从 kwargs['db'] 获取
+            if "db" in kwargs and is_db_session(kwargs.get("db")):
+                db_session = kwargs.get("db")
+
+            # 2) 尝试从 self.db 获取 (针对 Service 类方法)
             if db_session is None and args:
                 self_obj = args[0]
-                if hasattr(self_obj, "db") and isinstance(self_obj.db, AsyncSession):
+                if hasattr(self_obj, "db") and is_db_session(self_obj.db):
                     db_session = self_obj.db
 
-            # 如果没有找到 db session，则无法管理事务，直接执行原函数
+            # 3) 通过函数签名绑定参数，支持位置参数传入 db
+            if db_session is None:
+                try:
+                    bound = inspect.signature(func).bind_partial(*args, **kwargs)
+                except TypeError:
+                    bound = None
+
+                if bound is not None:
+                    if is_db_session(bound.arguments.get("db")):
+                        db_session = bound.arguments.get("db")
+                    else:
+                        for v in bound.arguments.values():
+                            if is_db_session(v):
+                                db_session = v
+                                break
+
             if db_session is None:
                 raise RuntimeError(f"@transactional used on {func.__name__} but no 'db' session found.")
 

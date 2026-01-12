@@ -21,17 +21,33 @@ class ScanRequest(BaseModel):
     """网络扫描请求。"""
 
     subnets: list[str] = Field(..., min_length=1, description="待扫描网段列表 (CIDR 格式)")
-    scan_type: str = Field(default="nmap", description="扫描类型 (nmap/masscan)")
+    scan_type: str = Field(default="auto", description="扫描类型 (auto/nmap/masscan)")
     ports: str | None = Field(default=None, description="扫描端口 (如 22,23,80,443)")
     async_mode: bool = Field(default=True, description="是否异步执行")
+
+    @field_validator("scan_type")
+    @classmethod
+    def validate_scan_type(cls, v: str) -> str:
+        v = (v or "").strip().lower()
+        if v in {"auto", "nmap", "masscan"}:
+            return v
+        raise ValueError("scan_type 仅支持 auto/nmap/masscan")
 
 
 class ScanSubnetRequest(BaseModel):
     """单网段扫描请求。"""
 
     subnet: str = Field(..., description="网段 (CIDR 格式，如 192.168.1.0/24)")
-    scan_type: str = Field(default="nmap", description="扫描类型")
+    scan_type: str = Field(default="auto", description="扫描类型 (auto/nmap/masscan)")
     ports: str | None = Field(default=None, description="扫描端口")
+
+    @field_validator("scan_type")
+    @classmethod
+    def validate_scan_type(cls, v: str) -> str:
+        v = (v or "").strip().lower()
+        if v in {"auto", "nmap", "masscan"}:
+            return v
+        raise ValueError("scan_type 仅支持 auto/nmap/masscan")
 
 
 # ===== 扫描结果 =====

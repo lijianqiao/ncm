@@ -9,6 +9,7 @@
 """
 
 import asyncio
+import shutil
 import subprocess
 from datetime import datetime
 from typing import Any
@@ -69,6 +70,12 @@ class ScanService:
             started_at=started_at,
         )
 
+        if not self.is_nmap_available():
+            result.error = "Nmap 未安装或不在 PATH 中，请安装 Nmap 并将 nmap 加入 PATH，或选择 masscan"
+            result.completed_at = datetime.now()
+            result.duration_seconds = int((result.completed_at - started_at).total_seconds())
+            return result
+
         try:
             # 在线程池中运行 nmap 扫描 (避免阻塞事件循环)
             scan_result = await asyncio.get_event_loop().run_in_executor(
@@ -88,10 +95,13 @@ class ScanService:
 
         except Exception as e:
             logger.error(f"Nmap 扫描失败: {subnet}", error=str(e))
-            result.error = str(e)
+            result.error = f"Nmap 扫描失败: {e}"
             result.completed_at = datetime.now()
 
         return result
+
+    def is_nmap_available(self) -> bool:
+        return shutil.which("nmap") is not None
 
     def _run_nmap_scan(self, subnet: str, ports: str, arguments: str) -> dict[str, Any]:
         """
@@ -201,6 +211,12 @@ class ScanService:
             started_at=started_at,
         )
 
+        if not self.is_masscan_available():
+            result.error = "Masscan 未安装或不在 PATH 中，请先安装 masscan 或选择 nmap"
+            result.completed_at = datetime.now()
+            result.duration_seconds = int((result.completed_at - started_at).total_seconds())
+            return result
+
         try:
             ports = ports or settings.SCAN_DEFAULT_PORTS
             rate = rate or settings.SCAN_RATE
@@ -225,6 +241,24 @@ class ScanService:
             result.completed_at = datetime.now()
 
         return result
+
+    def is_masscan_available(self) -> bool:
+        return shutil.which("masscan") is not None
+
+    def resolve_scan_type(self, scan_type: str) -> str:
+        scan_type = (scan_type or "").strip().lower()
+
+        if scan_type in {"nmap", "masscan"}:
+            return scan_type
+
+        if scan_type in {"auto", ""}:
+            if self.is_masscan_available():
+                return "masscan"
+            if self.is_nmap_available():
+                return "nmap"
+            return "none"
+
+        raise ValueError("scan_type 仅支持 auto/nmap/masscan")
 
     def _run_masscan(self, subnet: str, ports: str, rate: int) -> list[ScanHost]:
         """
@@ -314,35 +348,38 @@ class ScanService:
         Returns:
             处理的主机数量
         """
-        count = 0
+        data_list: list[DiscoveryCreate] = []
 
         for host in scan_result.hosts:
             try:
-                # 创建发现记录数据
-                discovery_data = DiscoveryCreate(
-                    ip_address=host.ip_address,
-                    mac_address=host.mac_address,
-                    vendor=host.vendor,
-                    hostname=host.hostname,
-                    os_info=host.os_info,
-                    open_ports=host.open_ports,
-                    scan_source=scan_result.scan_type,
-                    scan_task_id=scan_task_id,
+                data_list.append(
+                    DiscoveryCreate(
+                        ip_address=host.ip_address,
+                        mac_address=host.mac_address,
+                        vendor=host.vendor,
+                        hostname=host.hostname,
+                        os_info=host.os_info,
+                        open_ports=host.open_ports,
+                        scan_source=scan_result.scan_type,
+                        scan_task_id=scan_task_id,
+                    )
                 )
-
-                # 插入或更新发现记录
-                await self.discovery_crud.upsert_discovery(
-                    db,
-                    data=discovery_data,
-                    scan_source=scan_result.scan_type,
-                    scan_task_id=scan_task_id,
-                )
-                count += 1
-
             except Exception as e:
-                logger.error(f"处理扫描结果失败: {host.ip_address}", error=str(e))
+                logger.error(f"构造发现数据失败: {host.ip_address}", error=str(e))
 
-        return count
+        if not data_list:
+            return 0
+
+        try:
+            return await self.discovery_crud.upsert_many(
+                db,
+                data_list=data_list,
+                scan_source=scan_result.scan_type,
+                scan_task_id=scan_task_id,
+            )
+        except Exception as e:
+            logger.error("批量处理扫描结果失败", error=str(e))
+            raise
 
     @transactional()
     async def compare_with_cmdb(self, db: AsyncSession) -> CMDBCompareResult:

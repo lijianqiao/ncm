@@ -122,9 +122,18 @@ async def get_scan_task_status(task_id: str) -> ResponseBase[ScanTaskStatus]:
     """
     result = AsyncResult(task_id)
 
+    progress = 0
+    try:
+        info = result.info
+        if isinstance(info, dict) and isinstance(info.get("progress"), int):
+            progress = int(info["progress"])
+    except Exception:
+        progress = 0
+
     status = ScanTaskStatus(
         task_id=task_id,
         status=result.status,
+        progress=progress,
     )
 
     if result.ready():

@@ -28,7 +28,7 @@ from app.services.scan_service import ScanService
 def scan_subnet(
     self,
     subnet: str,
-    scan_type: str = "nmap",
+    scan_type: str = "auto",
     ports: str | None = None,
 ) -> dict[str, Any]:
     """
@@ -51,11 +51,36 @@ def scan_subnet(
                 device_crud=device_crud,
             )
 
+            # 阶段：开始扫描
+            self.update_state(state="PROGRESS", meta={"progress": 5, "stage": "scanning", "subnet": subnet})
+
             # 执行扫描
-            if scan_type == "masscan":
+            resolved = scan_service.resolve_scan_type(scan_type)
+            if resolved == "masscan":
                 result = await scan_service.masscan_scan(subnet, ports=ports)
-            else:
+            elif resolved == "nmap":
                 result = await scan_service.nmap_scan(subnet, ports=ports)
+            else:
+                from datetime import datetime
+
+                from app.schemas.discovery import ScanResult as ScanResultSchema
+
+                result = ScanResultSchema(
+                    subnet=subnet,
+                    scan_type="auto",
+                    hosts_found=0,
+                    hosts=[],
+                    started_at=datetime.now(),
+                    completed_at=datetime.now(),
+                    duration_seconds=0,
+                    error="未检测到可用扫描器：请安装 nmap 或 masscan，并确保在 PATH 中",
+                )
+
+            # 阶段：扫描完成，准备入库
+            self.update_state(
+                state="PROGRESS",
+                meta={"progress": 70, "stage": "saving", "subnet": subnet, "hosts_found": result.hosts_found},
+            )
 
             # 处理扫描结果
             if result.hosts:
@@ -67,6 +92,9 @@ def scan_subnet(
                     hosts_found=result.hosts_found,
                     processed=processed,
                 )
+
+            # 阶段：完成
+            self.update_state(state="PROGRESS", meta={"progress": 100, "stage": "done", "subnet": subnet})
 
             return result.model_dump()
 
@@ -82,7 +110,7 @@ def scan_subnet(
 def scan_subnets_batch(
     self,
     subnets: list[str],
-    scan_type: str = "nmap",
+    scan_type: str = "auto",
     ports: str | None = None,
 ) -> dict[str, Any]:
     """
@@ -108,13 +136,55 @@ def scan_subnets_batch(
                 device_crud=device_crud,
             )
 
-            for subnet in subnets:
+            total = len(subnets) if subnets else 0
+
+            for idx, subnet in enumerate(subnets, start=1):
                 try:
+                    base_progress = int(((idx - 1) / max(total, 1)) * 100)
+                    self.update_state(
+                        state="PROGRESS",
+                        meta={
+                            "progress": base_progress,
+                            "stage": "scanning",
+                            "subnet": subnet,
+                            "current": idx,
+                            "total": total,
+                        },
+                    )
+
                     # 执行扫描
-                    if scan_type == "masscan":
+                    resolved = scan_service.resolve_scan_type(scan_type)
+                    if resolved == "masscan":
                         result = await scan_service.masscan_scan(subnet, ports=ports)
-                    else:
+                    elif resolved == "nmap":
                         result = await scan_service.nmap_scan(subnet, ports=ports)
+                    else:
+                        from datetime import datetime
+
+                        from app.schemas.discovery import ScanResult as ScanResultSchema
+
+                        result = ScanResultSchema(
+                            subnet=subnet,
+                            scan_type="auto",
+                            hosts_found=0,
+                            hosts=[],
+                            started_at=datetime.now(),
+                            completed_at=datetime.now(),
+                            duration_seconds=0,
+                            error="未检测到可用扫描器：请安装 nmap 或 masscan，并确保在 PATH 中",
+                        )
+
+                    self.update_state(
+                        state="PROGRESS",
+                        meta={
+                            "progress": min(base_progress + 10, 95),
+                            "stage": "saving",
+                            "subnet": subnet,
+                            "current": idx,
+                            "total": total,
+                            "hosts_found": result.hosts_found,
+                        },
+                    )
 
                     # 处理结果
                     if result.hosts:
@@ -139,6 +209,8 @@ def scan_subnets_batch(
                             "error": str(e),
                         }
                     )
+
+            self.update_state(state="PROGRESS", meta={"progress": 100, "stage": "done", "total_hosts": total_hosts})
 
         return {
             "task_id": self.request.id,
