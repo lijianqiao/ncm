@@ -217,7 +217,7 @@ async def list_discoveries(
 
 
 @router.get(
-    "/{discovery_id}",
+    "/{discovery_id:uuid}",
     summary="获取发现记录详情",
     response_model=ResponseBase[DiscoveryResponse],
     dependencies=[Depends(require_permissions([PermissionCode.DISCOVERY_LIST.value]))],
@@ -267,7 +267,7 @@ async def get_discovery(
 
 
 @router.delete(
-    "/{discovery_id}",
+    "/{discovery_id:uuid}",
     summary="删除发现记录",
     response_model=ResponseBase[DeleteResponse],
     dependencies=[Depends(require_permissions([PermissionCode.DISCOVERY_DELETE.value]))],
@@ -299,7 +299,7 @@ async def delete_discovery(
 
 
 @router.post(
-    "/{discovery_id}/adopt",
+    "/{discovery_id:uuid}/adopt",
     summary="纳管设备",
     response_model=ResponseBase[AdoptResponse],
     dependencies=[Depends(require_permissions([PermissionCode.DISCOVERY_ADOPT.value]))],

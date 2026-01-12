@@ -5,7 +5,6 @@ import {
   NSpace,
   NCard,
   NSelect,
-  NCode,
   NAlert,
   NTag,
 } from 'naive-ui'
@@ -13,6 +12,7 @@ import { $alert } from '@/utils/alert'
 import { getDeviceLatestDiff, type DiffResponse } from '@/api/diff'
 import { getDevices, type Device } from '@/api/devices'
 import { formatDateTime } from '@/utils/date'
+import UnifiedDiffViewer from '@/components/common/UnifiedDiffViewer.vue'
 
 defineOptions({
   name: 'DiffManagement',
@@ -107,11 +107,7 @@ const handleFetchDiff = async () => {
                   <span v-if="diffData.new_hash">新版本: {{ diffData.new_hash?.substring(0, 8) }}...</span>
                 </n-space>
               </template>
-              <n-code
-                :code="diffData.diff_content"
-                language="diff"
-                style="max-height: 600px; overflow: auto"
-              />
+              <UnifiedDiffViewer :diff="diffData.diff_content" :max-height="600" />
             </n-card>
           </template>
 

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, h } from 'vue'
+import { ref, h, computed, onMounted } from 'vue'
 import {
   NButton,
   NModal,
@@ -11,7 +11,6 @@ import {
   type DataTableColumns,
   NTag,
   NSpace,
-  NProgress,
   NAlert,
   NTreeSelect,
   NTabs,
@@ -51,21 +50,24 @@ const tableRef = ref()
 // ==================== 常量定义 ====================
 
 const statusOptions = [
-  { label: '新发现', value: 'new' },
-  { label: '已忽略', value: 'ignored' },
   { label: '已匹配', value: 'matched' },
+  { label: '待确认', value: 'pending' },
+  { label: '影子资产', value: 'shadow' },
+  { label: '离线设备', value: 'offline' },
 ]
 
 const statusLabelMap: Record<DiscoveryStatus, string> = {
-  new: '新发现',
-  ignored: '已忽略',
   matched: '已匹配',
+  pending: '待确认',
+  shadow: '影子资产',
+  offline: '离线设备',
 }
 
 const statusColorMap: Record<DiscoveryStatus, 'info' | 'default' | 'success'> = {
-  new: 'info',
-  ignored: 'default',
   matched: 'success',
+  pending: 'info',
+  shadow: 'default',
+  offline: 'default',
 }
 
 const deviceGroupOptions = [
@@ -160,8 +162,8 @@ const searchFilters: FilterConfig[] = [
 const loadData = async (params: DiscoverySearchParams) => {
   const res = await getDiscoveryRecords(params)
   return {
-    data: res.items,
-    total: res.total,
+    data: res.data.items,
+    total: res.data.total,
   }
 }
 
@@ -262,19 +264,57 @@ const scanModel = ref({
   async_mode: true,
 })
 
+const DISCOVERY_SCAN_TASK_ID_KEY = 'ncm.discovery.scan_task_id'
+
 // 使用 useTaskPolling composable
 const {
   taskStatus: scanTaskStatus,
+  isPolling: scanIsPolling,
   start: startPollingScanStatus,
-  stop: stopPollingScanStatus,
-  reset: resetScanTask,
 } = useTaskPolling<ScanTaskStatus>(
   (taskId) => getScanTaskStatus(taskId),
   {
-    onComplete: () => tableRef.value?.reload(),
-    onError: () => tableRef.value?.reload(),
+    onComplete: () => {
+      localStorage.removeItem(DISCOVERY_SCAN_TASK_ID_KEY)
+      tableRef.value?.reload()
+    },
+    onError: () => {
+      localStorage.removeItem(DISCOVERY_SCAN_TASK_ID_KEY)
+      tableRef.value?.reload()
+    },
   }
 )
+
+const scanButtonType = computed<'primary' | 'default' | 'success' | 'error'>(() => {
+  const status = scanTaskStatus.value?.status
+  if (!status) return 'primary'
+  if (scanIsPolling.value) return 'default'
+  if (status === 'SUCCESS') return 'success'
+  if (status === 'FAILURE') return 'error'
+  return 'default'
+})
+
+const scanButtonText = computed(() => {
+  const status = scanTaskStatus.value?.status
+  if (!status) return '触发扫描'
+  if (scanIsPolling.value) {
+    const p = scanTaskStatus.value?.progress
+    return p !== null && p !== undefined ? `扫描中 ${p}%` : '扫描中'
+  }
+  if (status === 'SUCCESS') return '✅完成'
+  if (status === 'FAILURE') return '失败'
+  return String(status)
+})
+
+const showScanStatusDetail = () => {
+  const s = scanTaskStatus.value
+  if (!s) return
+  dialog.info({
+    title: '扫描任务状态',
+    content: `任务ID: ${s.task_id}\n状态: ${s.status}${s.error ? `\n错误: ${s.error}` : ''}`,
+    positiveText: '关闭',
+  })
+}
 
 const handleTriggerScan = () => {
   scanModel.value = {
@@ -283,7 +323,7 @@ const handleTriggerScan = () => {
     ports: '22,23,80,443',
     async_mode: true,
   }
-  resetScanTask()
+  // 只重置表单，不打断已有扫描轮询
   showScanModal.value = true
 }
 
@@ -306,10 +346,13 @@ const submitScan = async () => {
     })
     if (res.data.task_id) {
       $alert.success('扫描任务已提交')
+      localStorage.setItem(DISCOVERY_SCAN_TASK_ID_KEY, res.data.task_id)
       startPollingScanStatus(res.data.task_id)
-    } else if (res.data.result) {
-      $alert.success('扫描完成')
+      showScanModal.value = false
+    } else {
+      $alert.success(res.data.message || '扫描完成')
       tableRef.value?.reload()
+      showScanModal.value = false
     }
   } catch {
     // Error handled
@@ -317,10 +360,15 @@ const submitScan = async () => {
 }
 
 const closeScanModal = () => {
-  stopPollingScanStatus()
   showScanModal.value = false
-  scanTaskStatus.value = null
 }
+
+onMounted(() => {
+  const taskId = localStorage.getItem(DISCOVERY_SCAN_TASK_ID_KEY)
+  if (taskId) {
+    startPollingScanStatus(taskId)
+  }
+})
 
 // ==================== 影子资产 & 离线设备 ====================
 
@@ -339,7 +387,7 @@ const handleShowExtra = async () => {
       getShadowAssets({ page_size: 100 }),
       getOfflineDevices(offlineDaysThreshold.value),
     ])
-    shadowAssets.value = shadowRes.items || []
+    shadowAssets.value = shadowRes.data.items || []
     offlineDevices.value = offlineRes.data || []
   } catch {
     // Error handled
@@ -401,7 +449,13 @@ const handleCompareCMDB = () => {
     >
       <template #toolbar-left>
         <n-space>
-          <n-button type="primary" @click="handleTriggerScan">触发扫描</n-button>
+          <n-button
+            :type="scanButtonType as any"
+            :loading="scanIsPolling"
+            @click="scanTaskStatus ? showScanStatusDetail() : handleTriggerScan()"
+          >
+            {{ scanButtonText }}
+          </n-button>
           <n-button type="info" @click="handleShowExtra">影子资产/离线设备</n-button>
           <n-button @click="handleCompareCMDB">CMDB 比对</n-button>
         </n-space>
@@ -414,82 +468,30 @@ const handleCompareCMDB = () => {
       preset="card"
       title="触发网络扫描"
       style="width: 600px"
-      :closable="!scanTaskPolling"
-      :mask-closable="!scanTaskPolling"
       @close="closeScanModal"
     >
-      <template v-if="!scanTaskStatus">
-        <n-space vertical style="width: 100%">
-          <n-form-item label="扫描网段 (每行一个或逗号分隔)">
-            <n-input
-              v-model:value="scanModel.subnets"
-              type="textarea"
-              placeholder="例如: 192.168.1.0/24, 10.0.0.0/24"
-              :rows="3"
-            />
-          </n-form-item>
-          <n-form-item label="扫描类型">
-            <n-select v-model:value="scanModel.scan_type" :options="scanTypeOptions" />
-          </n-form-item>
-          <n-form-item label="扫描端口">
-            <n-input v-model:value="scanModel.ports" placeholder="22,23,80,443" />
-          </n-form-item>
-        </n-space>
-        <div style="margin-top: 20px; text-align: right">
-          <n-space>
-            <n-button @click="closeScanModal">取消</n-button>
-            <n-button type="primary" @click="submitScan">开始扫描</n-button>
-          </n-space>
-        </div>
-      </template>
-      <template v-else>
-        <n-space vertical style="width: 100%">
-          <div style="text-align: center">
-            <p>任务 ID: {{ scanTaskStatus.task_id }}</p>
-            <p>
-              状态:
-              <n-tag
-                :type="
-                  scanTaskStatus.status === 'SUCCESS'
-                    ? 'success'
-                    : scanTaskStatus.status === 'FAILURE'
-                      ? 'error'
-                      : 'info'
-                "
-              >
-                {{ scanTaskStatus.status }}
-              </n-tag>
-            </p>
-          </div>
-          <n-progress
-            v-if="scanTaskStatus.progress !== null"
-            type="line"
-            :percentage="scanTaskStatus.progress"
-            :status="
-              scanTaskStatus.status === 'SUCCESS'
-                ? 'success'
-                : scanTaskStatus.status === 'FAILURE'
-                  ? 'error'
-                  : 'default'
-            "
+      <n-space vertical style="width: 100%">
+        <n-form-item label="扫描网段 (每行一个或逗号分隔)">
+          <n-input
+            v-model:value="scanModel.subnets"
+            type="textarea"
+            placeholder="例如: 192.168.1.0/24, 10.0.0.0/24"
+            :rows="3"
           />
-          <template v-if="scanTaskStatus.result">
-            <div style="text-align: center">
-              <p>总主机数: {{ scanTaskStatus.result.total_hosts }}</p>
-              <p>在线主机: {{ scanTaskStatus.result.online_hosts }}</p>
-              <p>新发现: {{ scanTaskStatus.result.new_hosts }}</p>
-              <p>已匹配: {{ scanTaskStatus.result.matched_hosts }}</p>
-            </div>
-          </template>
-          <n-alert v-if="scanTaskStatus.error" type="error" :title="scanTaskStatus.error" />
+        </n-form-item>
+        <n-form-item label="扫描类型">
+          <n-select v-model:value="scanModel.scan_type" :options="scanTypeOptions" />
+        </n-form-item>
+        <n-form-item label="扫描端口">
+          <n-input v-model:value="scanModel.ports" placeholder="22,23,80,443" />
+        </n-form-item>
+      </n-space>
+      <div style="margin-top: 20px; text-align: right">
+        <n-space>
+          <n-button @click="closeScanModal">取消</n-button>
+          <n-button type="primary" @click="submitScan">开始扫描</n-button>
         </n-space>
-        <div
-          v-if="scanTaskStatus.status === 'SUCCESS' || scanTaskStatus.status === 'FAILURE'"
-          style="margin-top: 20px; text-align: right"
-        >
-          <n-button @click="closeScanModal">关闭</n-button>
-        </div>
-      </template>
+      </div>
     </n-modal>
 
     <!-- 纳管设备 Modal -->

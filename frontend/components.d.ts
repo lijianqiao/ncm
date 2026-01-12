@@ -26,5 +26,6 @@ declare module 'vue' {
     ProTable: typeof import('./src/components/common/ProTable.vue')['default']
     RouterLink: typeof import('vue-router')['RouterLink']
     RouterView: typeof import('vue-router')['RouterView']
+    UnifiedDiffViewer: typeof import('./src/components/common/UnifiedDiffViewer.vue')['default']
   }
 }

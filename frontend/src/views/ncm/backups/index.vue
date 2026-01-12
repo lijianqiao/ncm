@@ -35,6 +35,7 @@ import { cacheOTP, type OTPCacheRequest } from '@/api/credentials'
 import { formatDateTime } from '@/utils/date'
 import { useTaskPolling } from '@/composables'
 import ProTable, { type FilterConfig } from '@/components/common/ProTable.vue'
+import UnifiedDiffViewer from '@/components/common/UnifiedDiffViewer.vue'
 
 defineOptions({
   name: 'BackupManagement',
@@ -306,19 +307,6 @@ const handleViewDiff = async (row: Backup) => {
   } finally {
     diffLoading.value = false
   }
-}
-
-const diffLines = computed(() => {
-  const text = diffData.value?.diff_content || ''
-  return text ? text.split('\n') : []
-})
-
-const getDiffLineClass = (line: string): string => {
-  if (line.startsWith('@@')) return 'diff-line hunk'
-  if (line.startsWith('+++') || line.startsWith('---')) return 'diff-line meta'
-  if (line.startsWith('+')) return 'diff-line add'
-  if (line.startsWith('-')) return 'diff-line del'
-  return 'diff-line'
 }
 
 // ==================== 删除备份 ====================
@@ -634,9 +622,7 @@ const closeBatchBackupModal = () => {
             </n-space>
           </div>
           <div v-if="diffData.has_changes && diffData.diff_content" class="backup-modal-scroll">
-            <pre class="diff-pre"><code class="diff-code">
-<template v-for="(line, idx) in diffLines" :key="idx"><span :class="getDiffLineClass(line)">{{ line || ' ' }}</span>
-</template></code></pre>
+            <UnifiedDiffViewer :diff="diffData.diff_content" :max-height="'100%'" />
           </div>
           <n-alert v-else type="success" title="配置无变化">
             最新两次备份的配置内容完全一致
@@ -822,33 +808,6 @@ const closeBatchBackupModal = () => {
 .backup-code {
   margin: 0;
   white-space: pre;
-}
-
-.diff-pre {
-  margin: 0;
-}
-
-.diff-code {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
-  font-size: 12px;
-  line-height: 1.5;
-  white-space: pre;
-}
-
-.diff-line.add {
-  color: #18a058;
-}
-
-.diff-line.del {
-  color: #d03050;
-}
-
-.diff-line.hunk {
-  color: #2080f0;
-}
-
-.diff-line.meta {
-  color: rgba(0, 0, 0, 0.55);
 }
 
 .otp-center {
