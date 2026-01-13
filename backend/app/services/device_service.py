@@ -410,3 +410,21 @@ class DeviceService:
             raise BadRequestException(message=f"IP 地址 {device.ip_address} 已被其他设备使用")
 
         return device
+
+    @transactional()
+    async def batch_restore_devices(self, ids: list[UUID]) -> DeviceBatchResult:
+        """
+        批量恢复设备（从回收站）
+
+        Args:
+            ids: 设备ID列表
+
+        Returns:
+            DeviceBatchResult: 批量操作结果
+        """
+        success_count, failed_ids = await self.device_crud.batch_restore(self.db, ids=ids)
+        return DeviceBatchResult(
+            success_count=success_count,
+            failed_count=len(failed_ids),
+            failed_items=[{"id": str(id_), "reason": "设备不存在或恢复失败"} for id_ in failed_ids],
+        )

@@ -26,6 +26,7 @@ import {
   batchDeleteDevices,
   getRecycleBinDevices,
   restoreDevice,
+  batchRestoreDevices,
   transitionDeviceStatus,
   batchTransitionDeviceStatus,
   getDeviceLifecycleStats,
@@ -484,9 +485,7 @@ const handleRecycleBinContextMenuSelect = async (key: string | number, row: Devi
 const handleBatchRestore = async () => {
   if (checkedRecycleBinRowKeys.value.length === 0) return
   try {
-    for (const id of checkedRecycleBinRowKeys.value) {
-      await restoreDevice(id as string)
-    }
+    await batchRestoreDevices(checkedRecycleBinRowKeys.value as string[])
     $alert.success('批量恢复成功')
     checkedRecycleBinRowKeys.value = []
     recycleBinTableRef.value?.reload()

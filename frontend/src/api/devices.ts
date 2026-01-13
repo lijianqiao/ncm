@@ -200,6 +200,15 @@ export function restoreDevice(id: string) {
   })
 }
 
+/** 批量恢复设备 */
+export function batchRestoreDevices(ids: string[]) {
+  return request<ResponseBase<DeviceBatchResult>>({
+    url: '/devices/batch/restore',
+    method: 'post',
+    data: { ids },
+  })
+}
+
 /** 设备状态流转 */
 export function transitionDeviceStatus(id: string, toStatus: DeviceStatus, reason?: string) {
   return request<ResponseBase<Device>>({
@@ -228,5 +237,14 @@ export function getDeviceLifecycleStats(params?: { dept_id?: string; vendor?: De
     url: '/devices/lifecycle/stats',
     method: 'get',
     params,
+  })
+}
+
+/** 获取设备选项列表（用于下拉选择，返回大页数据） */
+export function getDeviceOptions(params?: { status?: DeviceStatus }) {
+  return request<ResponseBase<PaginatedResponse<Device>>>({
+    url: '/devices/',
+    method: 'get',
+    params: { page_size: 500, ...params },
   })
 }

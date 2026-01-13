@@ -16,6 +16,7 @@ from nornir.core.task import AggregatedResult, MultiResult, Result, Task
 from nornir_scrapli.tasks import send_command, send_commands, send_configs
 
 from app.core.logger import logger
+from app.network.platform_config import get_command
 from app.network.textfsm_parser import parse_command_output
 
 
@@ -28,20 +29,13 @@ def backup_config(task: Task) -> Result:
     Returns:
         Result: 包含配置内容的结果
     """
-    platform = task.host.platform or ""
+    platform = task.host.platform or "cisco_iosxe"
 
-    # 根据平台选择备份命令
-    command_mapping = {
-        "cisco_iosxe": "show running-config",
-        "cisco_ios": "show running-config",
-        "cisco_nxos": "show running-config",
-        "huawei_vrp": "display current-configuration",
-        "hp_comware": "display current-configuration",
-        "arista_eos": "show running-config",
-        "juniper_junos": "show configuration | display set",
-    }
-
-    command = command_mapping.get(platform, "show running-config")
+    # 使用统一的命令映射
+    try:
+        command = get_command("backup_config", platform)
+    except ValueError:
+        command = "show running-config"
 
     result = task.run(task=send_command, command=command)
 
@@ -146,45 +140,39 @@ def deploy_from_host_data(task: Task) -> Result:
 
 def get_arp_table(task: Task) -> MultiResult:
     """获取设备 ARP 表（自动解析）。"""
-    platform = task.host.platform or "cisco_ios"
+    platform = task.host.platform or "cisco_iosxe"
 
-    command_mapping = {
-        "cisco_iosxe": "show ip arp",
-        "cisco_ios": "show ip arp",
-        "huawei_vrp": "display arp",
-        "hp_comware": "display arp",
-    }
-    command = command_mapping.get(platform, "show ip arp")
+    # 使用统一的命令映射
+    try:
+        command = get_command("arp_table", platform)
+    except ValueError:
+        command = "show ip arp"
 
     return task.run(task=execute_command, command=command, parse=True)
 
 
 def get_mac_table(task: Task) -> MultiResult:
     """获取设备 MAC 地址表（自动解析）。"""
-    platform = task.host.platform or "cisco_ios"
+    platform = task.host.platform or "cisco_iosxe"
 
-    command_mapping = {
-        "cisco_iosxe": "show mac address-table",
-        "cisco_ios": "show mac address-table",
-        "huawei_vrp": "display mac-address",
-        "hp_comware": "display mac-address",
-    }
-    command = command_mapping.get(platform, "show mac address-table")
+    # 使用统一的命令映射
+    try:
+        command = get_command("mac_table", platform)
+    except ValueError:
+        command = "show mac address-table"
 
     return task.run(task=execute_command, command=command, parse=True)
 
 
 def get_lldp_neighbors(task: Task) -> MultiResult:
     """获取设备 LLDP 邻居信息（自动解析）。"""
-    platform = task.host.platform or "cisco_ios"
+    platform = task.host.platform or "cisco_iosxe"
 
-    command_mapping = {
-        "cisco_iosxe": "show lldp neighbors detail",
-        "cisco_ios": "show lldp neighbors detail",
-        "huawei_vrp": "display lldp neighbor brief",
-        "hp_comware": "display lldp neighbor-information list",
-    }
-    command = command_mapping.get(platform, "show lldp neighbors detail")
+    # 使用统一的命令映射
+    try:
+        command = get_command("lldp_neighbors", platform)
+    except ValueError:
+        command = "show lldp neighbors detail"
 
     return task.run(task=execute_command, command=command, parse=True)
 

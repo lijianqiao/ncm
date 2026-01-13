@@ -27,7 +27,7 @@ import {
   type BackupType,
   type BackupTaskStatus,
 } from '@/api/backups'
-import { getDevices, type Device } from '@/api/devices'
+import { getDeviceOptions, type Device } from '@/api/devices'
 import { getDeviceLatestDiff, type DiffResponse } from '@/api/diff'
 import { cacheOTP, type OTPCacheRequest } from '@/api/credentials'
 import { formatDateTime } from '@/utils/date'
@@ -346,7 +346,7 @@ const handleManualBackup = async () => {
   deviceLoading.value = true
   showBackupModal.value = true
   try {
-    const res = await getDevices({ page_size: 100, status: 'active' })
+    const res = await getDeviceOptions({ status: 'active' })
     deviceMap.value = Object.fromEntries(res.data.items.map((d: Device) => [d.id, d]))
     deviceOptions.value = res.data.items.map((d: Device) => ({
       label: `${d.name} (${d.ip_address})`,
@@ -495,7 +495,7 @@ const handleBatchBackup = async () => {
   showBatchBackupModal.value = true
   resetBatchTask()
   try {
-    const res = await getDevices({ page_size: 100, status: 'active' })
+    const res = await getDeviceOptions({ status: 'active' })
     deviceOptions.value = res.data.items.map((d: Device) => ({
       label: `${d.name} (${d.ip_address})`,
       value: d.id,

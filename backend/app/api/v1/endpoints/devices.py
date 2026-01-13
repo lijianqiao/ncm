@@ -275,6 +275,30 @@ async def restore_device(
     return ResponseBase(data=DeviceResponse.model_validate(device), message="设备恢复成功")
 
 
+@router.post("/batch/restore", response_model=ResponseBase[DeviceBatchResult], summary="批量恢复设备")
+async def batch_restore_devices(
+    obj_in: DeviceBatchDeleteRequest,
+    device_service: deps.DeviceServiceDep,
+    current_user: deps.CurrentUser,
+    _: deps.User = Depends(deps.require_permissions([PermissionCode.DEVICE_RESTORE.value])),
+) -> Any:
+    """批量从回收站中恢复设备。
+
+    Args:
+        obj_in (DeviceBatchDeleteRequest): 包含目标设备 ID 列表。
+        device_service (DeviceService): 设备服务依赖。
+        current_user (User): 当前登录用户。
+
+    Returns:
+        ResponseBase[DeviceBatchResult]: 批量恢复操作的结果报告。
+    """
+    result = await device_service.batch_restore_devices(obj_in.ids)
+    return ResponseBase(
+        data=result,
+        message=f"批量恢复完成：成功 {result.success_count}，失败 {result.failed_count}",
+    )
+
+
 @router.post(
     "/{device_id}/status/transition",
     response_model=ResponseBase[DeviceResponse],
