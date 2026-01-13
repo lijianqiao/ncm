@@ -821,3 +821,162 @@ async def _perform_incremental_check(task) -> dict[str, Any]:
         "backup_triggered": backup_triggered,
         "changed_devices": changed_devices[:10],  # 只返回前 10 个变更设备
     }
+
+
+# ===== 异步版本备份任务 (Phase 3 - AsyncRunner) =====
+
+
+@celery_app.task(
+    base=BaseTask,
+    bind=True,
+    name="app.celery.tasks.backup.async_backup_devices",
+    queue="backup",
+)
+def async_backup_devices(
+    self,
+    hosts_data: list[dict[str, Any]],
+    num_workers: int = 100,
+    backup_type: str = BackupType.MANUAL.value,
+) -> dict[str, Any]:
+    """
+    异步批量备份设备配置的 Celery 任务。
+
+    使用 AsyncRunner + Scrapli Async 实现真正的异步并发，
+    相比 ThreadedRunner 显著降低资源开销。
+
+    Args:
+        hosts_data: 主机数据列表
+        num_workers: 最大并发连接数（默认 100）
+        backup_type: 备份类型
+
+    Returns:
+        dict: 包含备份结果的字典
+    """
+    from app.network.async_runner import run_async_tasks_sync
+    from app.network.async_tasks import async_collect_config
+    from app.network.nornir_config import init_nornir_async
+
+    logger.info(
+        "开始异步配置备份任务",
+        task_id=self.request.id,
+        hosts_count=len(hosts_data),
+        num_workers=num_workers,
+        backup_type=backup_type,
+    )
+
+    self.update_state(
+        state="PROGRESS",
+        meta={"stage": "initializing", "message": "正在初始化异步 Inventory..."},
+    )
+
+    try:
+        # 初始化异步 Inventory
+        inventory = init_nornir_async(hosts_data)
+
+        self.update_state(
+            state="PROGRESS",
+            meta={
+                "stage": "executing",
+                "message": f"正在异步备份 {len(inventory.hosts)} 台设备...",
+            },
+        )
+
+        # 使用 AsyncRunner 执行异步任务
+        results = run_async_tasks_sync(
+            inventory.hosts,
+            async_collect_config,
+            num_workers=num_workers,
+        )
+
+        # 聚合结果（转换为与同步版本兼容的格式）
+        summary = _aggregate_async_results(results, hosts_data)
+
+        # 保存备份结果到数据库
+        run_async(_save_backup_results(hosts_data, summary, backup_type=backup_type))
+
+        self.update_state(
+            state="PROGRESS",
+            meta={
+                "stage": "completed",
+                "message": f"异步备份完成: 成功 {summary['success']}, 失败 {summary['failed']}",
+            },
+        )
+
+        logger.info(
+            "异步配置备份任务完成",
+            task_id=self.request.id,
+            success=summary["success"],
+            failed=summary["failed"],
+        )
+
+        return summary
+
+    except Exception as e:
+        logger.error(
+            "异步配置备份任务失败",
+            task_id=self.request.id,
+            error=str(e),
+            exc_info=True,
+        )
+        raise
+
+
+def _aggregate_async_results(
+    results: Any,
+    hosts_data: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """
+    聚合 AsyncRunner 结果为与同步版本兼容的格式。
+
+    Args:
+        results: AsyncRunner 返回的 AggregatedResult
+        hosts_data: 原始主机数据
+
+    Returns:
+        dict: 兼容格式的聚合结果
+    """
+    success_count = 0
+    failed_count = 0
+    results_dict: dict[str, dict[str, Any]] = {}
+
+    # 构建 device_id -> name 映射
+    id_to_name = {h.get("name"): h.get("name") for h in hosts_data}
+    for h in hosts_data:
+        if h.get("device_id"):
+            id_to_name[h.get("device_id")] = h.get("name")
+
+    for host_name, multi_result in results.items():
+        # multi_result 是 MultiResult，取第一个 Result
+        if not multi_result or multi_result.failed:
+            failed_count += 1
+            error_msg = "执行失败"
+            if multi_result and len(multi_result) > 0:
+                r = multi_result[0]
+                if r.exception:
+                    error_msg = str(r.exception)
+
+            # 尝试映射回设备名
+            name = id_to_name.get(host_name) or host_name
+            results_dict[name] = {
+                "status": "failed",
+                "error": error_msg,
+                "result": None,
+            }
+        else:
+            success_count += 1
+            r = multi_result[0]
+            result_data = r.result or {}
+
+            name = id_to_name.get(host_name) or host_name
+            results_dict[name] = {
+                "status": "success" if result_data.get("success") else "failed",
+                "result": result_data.get("config"),
+                "error": None,
+            }
+
+    return {
+        "success": success_count,
+        "failed": failed_count,
+        "total": success_count + failed_count,
+        "results": results_dict,
+    }

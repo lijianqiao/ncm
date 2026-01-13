@@ -123,6 +123,12 @@ class Settings(BaseSettings):
     TOPOLOGY_CACHE_TTL: int = 1800  # 拓扑缓存过期时间（秒），默认 30 分钟
     CELERY_BEAT_TOPOLOGY_HOUR: int = 4  # 定时拓扑刷新小时
 
+    # 异步 SSH 执行配置
+    ASYNC_SSH_SEMAPHORE: int = 100  # 最大并发 SSH 连接数
+    ASYNC_SSH_TIMEOUT: int = 30  # 单设备 SSH 命令超时（秒）
+    ASYNC_SSH_CONNECT_TIMEOUT: int = 10  # SSH 连接超时（秒）
+    USE_ASYNC_NETWORK_TASKS: bool = False  # 是否使用异步网络任务（AsyncRunner + asyncssh）
+
     # 告警配置（Phase 3）
     ALERT_OFFLINE_DAYS_THRESHOLD: int = 3  # 离线告警阈值（天）
 

@@ -695,14 +695,26 @@ class BackupService:
         if not hosts_data:
             raise BadRequestException(message="没有可备份的设备（凭据获取失败）")
 
-        # 6. 提交 Celery 任务
-        task = backup_devices.delay(  # type: ignore[attr-defined]
-            hosts_data=hosts_data,
-            num_workers=min(50, len(hosts_data)),
-            backup_type=request.backup_type.value,
-        )
+        # 6. 提交 Celery 任务（根据配置选择同步或异步）
+        from app.celery.tasks.backup import async_backup_devices
+        from app.core.config import settings
 
-        logger.info(f"批量备份任务已提交: task_id={task.id}, devices={len(hosts_data)}")
+        if settings.USE_ASYNC_NETWORK_TASKS:
+            task = async_backup_devices.delay(  # type: ignore[attr-defined]
+                hosts_data=hosts_data,
+                num_workers=min(100, len(hosts_data)),  # 异步版本支持更高并发
+                backup_type=request.backup_type.value,
+            )
+        else:
+            task = backup_devices.delay(  # type: ignore[attr-defined]
+                hosts_data=hosts_data,
+                num_workers=min(50, len(hosts_data)),
+                backup_type=request.backup_type.value,
+            )
+
+        logger.info(
+            f"批量备份任务已提交: task_id={task.id}, devices={len(hosts_data)}, async={settings.USE_ASYNC_NETWORK_TASKS}"
+        )
 
         return BackupBatchResult(
             task_id=task.id,

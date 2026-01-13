@@ -413,3 +413,281 @@ async def _rollback_task_async(self, task_id: str) -> dict[str, Any]:
         await db.flush()
         await db.commit()
         return {"status": "success", "deploy_summary": deploy_summary, "verify": verify}
+
+
+# ===== 异步版本下发任务 (Phase 3 - AsyncRunner) =====
+
+
+@celery_app.task(
+    base=BaseTask,
+    bind=True,
+    name="app.celery.tasks.deploy.async_deploy_task",
+    queue="deploy",
+    max_retries=0,
+    autoretry_for=(),
+)
+def async_deploy_task(self, task_id: str) -> dict[str, Any]:
+    """
+    异步执行下发任务（使用 AsyncRunner + Scrapli Async）。
+
+    与同步版本 deploy_task 相比：
+    - 使用 AsyncRunner 替代 ThreadedRunner
+    - 使用 asyncssh 替代 paramiko
+    - 显著降低资源开销，支持更高并发
+
+    Args:
+        task_id: 任务 ID（Task 表主键）
+
+    Returns:
+        dict: 下发结果
+    """
+    celery_task_id = getattr(self.request, "id", None)
+    logger.info("开始异步下发任务", task_id=celery_task_id, deploy_task_id=task_id)
+    if celery_task_id:
+        self.update_state(task_id=celery_task_id, state="PROGRESS", meta={"stage": "initializing"})
+
+    try:
+        return run_async(_async_deploy_task_impl(self, task_id, celery_task_id=celery_task_id))
+    except Exception as e:
+        error_text = str(e)
+        logger.error("异步下发任务执行异常", deploy_task_id=task_id, error=error_text, exc_info=True)
+
+        async def _mark_failed(error_message: str = error_text) -> None:
+            async with AsyncSessionLocal() as db:
+                task_uuid = UUID(task_id)
+                task = await db.get(Task, task_uuid)
+                if not task:
+                    return
+                task.status = TaskStatus.FAILED.value
+                task.error_message = error_message
+                task.finished_at = datetime.now(UTC)
+                await db.flush()
+                await db.commit()
+
+        try:
+            run_async(_mark_failed())
+        except Exception:
+            pass
+        raise
+
+
+async def _async_deploy_task_impl(self, task_id: str, *, celery_task_id: str | None) -> dict[str, Any]:
+    """异步下发任务的核心实现。"""
+    from app.network.async_runner import run_async_tasks
+    from app.network.async_tasks import async_collect_config, async_deploy_from_host_data
+    from app.network.nornir_config import create_nornir_inventory_async
+
+    render_service = RenderService()
+
+    def _update_progress(meta: dict[str, Any]) -> None:
+        if not celery_task_id:
+            return
+        try:
+            self.update_state(task_id=celery_task_id, state="PROGRESS", meta=meta)
+        except Exception:
+            return
+
+    async with AsyncSessionLocal() as db:
+        task_uuid = UUID(task_id)
+        task = await db.get(Task, task_uuid)
+        if not task:
+            raise ValueError("任务不存在")
+        if task.task_type != TaskType.DEPLOY.value:
+            raise ValueError("非下发任务")
+
+        # 更新任务状态为 RUNNING
+        if task.status != TaskStatus.RUNNING.value:
+            task.status = TaskStatus.RUNNING.value
+        if task.started_at is None:
+            task.started_at = datetime.now(UTC)
+        await db.flush()
+        await db.commit()
+
+        template = await db.get(Template, task.template_id) if task.template_id else None
+        if not template:
+            raise ValueError("模板不存在")
+
+        deploy_plan = task.deploy_plan or {}
+        concurrency = int(deploy_plan.get("concurrency", 100))
+        strict_allowlist = bool(deploy_plan.get("strict_allowlist", False))
+        dry_run = bool(deploy_plan.get("dry_run", False))
+
+        # 获取目标设备
+        device_ids = []
+        if task.target_devices and isinstance(task.target_devices, dict):
+            device_ids = task.target_devices.get("device_ids", []) or []
+        devices = (await db.execute(select(Device).where(Device.id.in_([UUID(x) for x in device_ids])))).scalars().all()
+        devices = [d for d in devices if d.status == DeviceStatus.ACTIVE.value]
+
+        if not devices:
+            task.status = TaskStatus.FAILED.value
+            task.error_message = "没有可下发的设备"
+            await db.flush()
+            await db.commit()
+            return {"status": "failed", "error": task.error_message}
+
+        # 预渲染 + 校验
+        _update_progress({"stage": "rendering", "total": len(devices)})
+        rendered_map: dict[str, list[str]] = {}
+        rendered_hash: dict[str, str] = {}
+        failed_devices: list[str] = []
+
+        for idx, device in enumerate(devices, start=1):
+            _update_progress({"stage": "rendering", "progress": idx, "total": len(devices)})
+            try:
+                rendered = render_service.render(template, task.template_params or {}, device=device)
+                cmds = normalize_rendered_config(rendered)
+                validate_commands(cmds, strict_allowlist=strict_allowlist)
+                rendered_map[str(device.id)] = cmds
+                rendered_hash[str(device.id)] = hashlib.md5(rendered.encode("utf-8")).hexdigest()
+            except Exception as e:
+                failed_devices.append(str(device.id))
+                logger.warning("渲染/校验失败", device_id=str(device.id), error=str(e))
+
+        if failed_devices:
+            task.failed_count = len(failed_devices)
+            task.success_count = 0
+            task.status = TaskStatus.FAILED.value
+            task.result = {"failed_devices": failed_devices, "stage": "render"}
+            task.error_message = "部分设备渲染/校验失败"
+            await db.flush()
+            await db.commit()
+            return {"status": "failed", "failed_devices": failed_devices}
+
+        if dry_run:
+            task.status = TaskStatus.SUCCESS.value
+            task.progress = 100
+            task.success_count = len(rendered_map)
+            task.failed_count = 0
+            task.result = {"render_hash": rendered_hash, "dry_run": True}
+            task.finished_at = datetime.now(UTC)
+            await db.flush()
+            await db.commit()
+            return {"status": "success", "dry_run": True, "devices": len(rendered_map)}
+
+        # 构建异步 hosts_data
+        _update_progress({"stage": "preparing_credentials", "total": len(devices)})
+        hosts_data: list[dict[str, Any]] = []
+        for d in devices:
+            try:
+                cred = await _get_device_credential(db, d, failed_devices=[str(x.id) for x in devices])
+                platform = d.platform or get_platform_for_vendor(d.vendor)
+                hosts_data.append(
+                    {
+                        "name": str(d.id),
+                        "hostname": d.ip_address,
+                        "platform": platform,
+                        "username": cred.username,
+                        "password": cred.password,
+                        "port": d.ssh_port or 22,
+                        "groups": [d.device_group] if d.device_group else [],
+                        "data": {
+                            "deploy_configs": rendered_map[str(d.id)],
+                            "device_id": str(d.id),
+                            "device_name": d.name,
+                        },
+                    }
+                )
+            except OTPRequiredException as e:
+                task.status = TaskStatus.PAUSED.value
+                task.error_message = e.message
+                task.result = e.details
+                await db.flush()
+                await db.commit()
+                return {"status": "paused", "otp_required": e.details}
+            except Exception as e:
+                logger.warning("获取凭据失败", device_id=str(d.id), error=str(e))
+                failed_devices.append(str(d.id))
+
+        if not hosts_data:
+            task.status = TaskStatus.FAILED.value
+            task.error_message = "所有设备凭据获取失败"
+            await db.flush()
+            await db.commit()
+            return {"status": "failed", "error": task.error_message}
+
+        # 创建异步 Inventory
+        inventory = create_nornir_inventory_async(hosts_data)
+
+        # 变更前备份（异步）
+        _update_progress({"stage": "pre_change_backup", "total": len(inventory.hosts)})
+        backup_results = await run_async_tasks(
+            inventory.hosts,
+            async_collect_config,
+            num_workers=concurrency,
+        )
+
+        pre_change_backup_ids: dict[str, str] = {}
+        for host_name, multi_result in backup_results.items():
+            if not multi_result or multi_result.failed:
+                continue
+            r = multi_result[0].result or {}
+            if r.get("success") and r.get("config"):
+                # 查找对应设备
+                device = next((d for d in devices if str(d.id) == host_name), None)
+                if device:
+                    b = await _save_pre_change_backup(db, device, r["config"])
+                    pre_change_backup_ids[host_name] = str(b.id)
+                    if task.rollback_backup_id is None:
+                        task.rollback_backup_id = b.id
+        await db.commit()
+
+        # 异步下发
+        _update_progress({"stage": "deploying", "total": len(inventory.hosts)})
+        deploy_results = await run_async_tasks(
+            inventory.hosts,
+            async_deploy_from_host_data,
+            num_workers=concurrency,
+        )
+
+        # 聚合结果
+        all_results: dict[str, Any] = {"results": {}}
+        success_count = 0
+        failed_count = 0
+
+        for host_name, multi_result in deploy_results.items():
+            if not multi_result or multi_result.failed:
+                failed_count += 1
+                error_msg = "执行失败"
+                if multi_result and len(multi_result) > 0:
+                    r = multi_result[0]
+                    if r.exception:
+                        error_msg = str(r.exception)
+                all_results["results"][host_name] = {"status": "failed", "error": error_msg}
+            else:
+                r = multi_result[0].result or {}
+                if r.get("success"):
+                    success_count += 1
+                    all_results["results"][host_name] = {
+                        "status": "success",
+                        "result": r.get("result"),
+                    }
+                else:
+                    failed_count += 1
+                    all_results["results"][host_name] = {
+                        "status": "failed",
+                        "error": r.get("error", "未知错误"),
+                    }
+
+        # 更新任务状态
+        task.success_count = success_count
+        task.failed_count = failed_count
+        task.progress = 100
+        task.status = TaskStatus.SUCCESS.value if failed_count == 0 else TaskStatus.PARTIAL.value
+        task.result = {
+            "render_hash": rendered_hash,
+            "pre_change_backup_ids": pre_change_backup_ids,
+            **all_results,
+        }
+        task.finished_at = datetime.now(UTC)
+        await db.flush()
+        await db.commit()
+
+        logger.info(
+            "异步下发任务完成",
+            task_id=task_id,
+            success=success_count,
+            failed=failed_count,
+        )
+
+        return {"status": task.status, "success": success_count, "failed": failed_count}

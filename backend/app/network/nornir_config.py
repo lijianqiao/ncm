@@ -243,3 +243,202 @@ def init_nornir_from_db(
         hosts_data.append(host_info)
 
     return init_nornir(hosts_data, num_workers=num_workers)
+
+
+def create_nornir_inventory_async(
+    hosts_data: list[dict[str, Any]],
+    groups_data: list[dict[str, Any]] | None = None,
+) -> Inventory:
+    """
+    创建异步模式的 Nornir Inventory（使用 asyncssh 传输层）。
+
+    与同步版本的主要区别：
+    - transport 默认使用 asyncssh
+    - 移除 paramiko 相关配置
+
+    Args:
+        hosts_data: 主机数据列表
+        groups_data: 分组数据列表 (可选)
+
+    Returns:
+        Inventory: Nornir Inventory 实例
+    """
+    hosts = Hosts()
+    groups = Groups()
+
+    # 创建默认分组（异步版本）
+    default_groups = {
+        "core": Group(name="core", data={"role": "core", "priority": 1}),
+        "distribution": Group(name="distribution", data={"role": "distribution", "priority": 2}),
+        "access": Group(name="access", data={"role": "access", "priority": 3}),
+        "cisco": Group(
+            name="cisco",
+            platform="cisco_iosxe",
+            connection_options={
+                "scrapli": ConnectionOptions(extras={"auth_strict_key": False, "ssh_config_file": False})
+            },
+        ),
+        "huawei": Group(
+            name="huawei",
+            platform="huawei_vrp",
+            connection_options={
+                "scrapli": ConnectionOptions(extras={"auth_strict_key": False, "ssh_config_file": False})
+            },
+        ),
+        "h3c": Group(
+            name="h3c",
+            platform="hp_comware",
+            connection_options={
+                "scrapli": ConnectionOptions(extras={"auth_strict_key": False, "ssh_config_file": False})
+            },
+        ),
+    }
+    groups.update(default_groups)
+
+    # 添加自定义分组
+    if groups_data:
+        for group_info in groups_data:
+            group_name = group_info.get("name")
+            if group_name and group_name not in groups:
+                groups[group_name] = Group(
+                    name=group_name,
+                    platform=group_info.get("platform"),
+                    data=group_info.get("data", {}),
+                )
+
+    # 创建主机（异步版本使用 asyncssh）
+    for host_info in hosts_data:
+        host_name = host_info.get("name")
+        if not host_name:
+            logger.warning("跳过缺少 name 字段的主机", host_info=host_info)
+            continue
+
+        platform = host_info.get("platform")
+        scrapli_extras: dict[str, Any] = {
+            "auth_strict_key": False,
+            "ssh_config_file": False,
+            # asyncssh 传输层（关键区别）
+            "transport": "asyncssh",
+        }
+        # 编码处理
+        if platform in {"hp_comware", "huawei_vrp"}:
+            scrapli_extras["transport_options"] = {
+                "encoding": "gb18030",
+                "errors": "replace",
+            }
+
+        host_groups = []
+        for g in host_info.get("groups", []):
+            if g in groups:
+                host_groups.append(groups[g])
+
+        hosts[host_name] = Host(
+            name=host_name,
+            hostname=host_info.get("hostname", host_name),
+            platform=platform,
+            username=host_info.get("username"),
+            password=host_info.get("password"),
+            port=host_info.get("port", 22),
+            groups=ParentGroups(host_groups),
+            data=host_info.get("data", {}),
+            connection_options={"scrapli": ConnectionOptions(extras=scrapli_extras)},
+        )
+
+    # 默认配置（异步版本）
+    defaults = Defaults(
+        username=settings.FIRST_SUPERUSER,
+        password=settings.FIRST_SUPERUSER_PASSWORD,
+        connection_options={
+            "scrapli": ConnectionOptions(
+                extras={
+                    "auth_strict_key": False,
+                    "ssh_config_file": False,
+                    "transport": "asyncssh",
+                }
+            )
+        },
+    )
+
+    return Inventory(hosts=hosts, groups=groups, defaults=defaults)
+
+
+def init_nornir_async(
+    hosts_data: list[dict[str, Any]],
+    groups_data: list[dict[str, Any]] | None = None,
+    num_workers: int | None = None,
+) -> Inventory:
+    """
+    初始化异步模式的 Nornir Inventory。
+
+    注意：返回 Inventory 而非 Nornir 对象，因为 AsyncRunner 不兼容 Nornir RunnerPlugin 协议。
+    应配合 run_async_tasks() 或 run_async_tasks_sync() 使用。
+
+    Args:
+        hosts_data: 主机数据列表
+        groups_data: 分组数据列表 (可选)
+        num_workers: 未使用，保留以兼容 API
+
+    Returns:
+        Inventory: Nornir Inventory 实例
+
+    Example:
+        ```python
+        from app.network.nornir_config import init_nornir_async
+        from app.network.async_runner import run_async_tasks_sync
+        from app.network.async_tasks import async_send_command
+
+        inventory = init_nornir_async(hosts_data)
+        results = run_async_tasks_sync(
+            inventory.hosts,
+            async_send_command,
+            command=\"display version\",
+        )
+        ```
+    """
+    inventory = create_nornir_inventory_async(hosts_data, groups_data)
+
+    logger.info(
+        "Nornir 异步 Inventory 创建完成",
+        hosts_count=len(inventory.hosts),
+        groups_count=len(inventory.groups),
+    )
+
+    return inventory
+
+
+def init_nornir_async_from_db(
+    devices: list[Any],
+    num_workers: int | None = None,
+) -> Inventory:
+    """
+    从数据库 Device 模型列表初始化异步 Nornir Inventory。
+
+    Args:
+        devices: Device 模型实例列表
+        num_workers: 未使用，保留以兼容 API
+
+    Returns:
+        Inventory: Nornir Inventory 实例
+    """
+    hosts_data = []
+
+    for device in devices:
+        host_info = {
+            "name": str(device.id),
+            "hostname": device.ip_address,
+            "platform": device.platform,
+            "username": device.username,
+            "password": device.password,
+            "port": device.ssh_port or 22,
+            "groups": [device.device_group] if device.device_group else [],
+            "data": {
+                "device_id": str(device.id),
+                "device_name": device.name,
+                "vendor": device.vendor,
+                "model": device.model,
+                "location": device.location,
+            },
+        }
+        hosts_data.append(host_info)
+
+    return init_nornir_async(hosts_data, num_workers=num_workers)

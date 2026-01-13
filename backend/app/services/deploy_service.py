@@ -188,13 +188,18 @@ class DeployService:
                 raise NotFoundException("任务不存在")
             return task_with_related
 
-        from app.celery.tasks.deploy import deploy_task
+        from app.celery.tasks.deploy import async_deploy_task, deploy_task
+        from app.core.config import settings
 
         # 重新执行：清理暂停原因/提示
         task.error_message = None
         task.result = None
 
-        celery_result = deploy_task.delay(task_id=str(task_id))  # type: ignore[attr-defined]
+        # 根据配置选择同步或异步任务
+        if settings.USE_ASYNC_NETWORK_TASKS:
+            celery_result = async_deploy_task.delay(task_id=str(task_id))  # type: ignore[attr-defined]
+        else:
+            celery_result = deploy_task.delay(task_id=str(task_id))  # type: ignore[attr-defined]
         task.celery_task_id = celery_result.id
         task.status = TaskStatus.RUNNING.value
         task.started_at = datetime.now(UTC)

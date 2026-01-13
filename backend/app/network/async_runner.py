@@ -1,0 +1,263 @@
+"""
+@Author: li
+@Email: lijianqiao2906@live.com
+@FileName: async_runner.py
+@DateTime: 2026-01-14 00:26:00
+@Docs: Nornir 异步运行器，替代 ThreadedRunner 实现真正的 asyncio 并发。
+
+使用 asyncio.Semaphore 控制最大并发数，配合 Scrapli Async 驱动实现高效网络自动化。
+"""
+
+import asyncio
+from collections.abc import Callable, Coroutine
+from typing import TYPE_CHECKING, Any
+
+from nornir.core.task import AggregatedResult, MultiResult, Result
+
+from app.core.config import settings
+from app.core.logger import logger
+
+if TYPE_CHECKING:
+    from nornir.core.inventory import Host, Inventory
+
+
+class AsyncRunner:
+    """
+    异步任务运行器。
+
+    替换 Nornir 默认的 ThreadedRunner，使用 asyncio 事件循环实现真正的异步并发。
+    适用于大批量设备操作场景，显著降低线程开销。
+
+    Attributes:
+        semaphore_limit: 最大并发连接数（通过 asyncio.Semaphore 控制）
+    """
+
+    def __init__(self, num_workers: int | None = None):
+        """
+        初始化异步运行器。
+
+        Args:
+            num_workers: 最大并发数，默认从配置读取 ASYNC_SSH_SEMAPHORE
+        """
+        self.semaphore_limit = num_workers or settings.ASYNC_SSH_SEMAPHORE
+
+    def run(
+        self,
+        task: Callable[["Host"], Coroutine[Any, Any, Any]],
+        hosts: dict[str, "Host"],
+        **kwargs: Any,
+    ) -> AggregatedResult:
+        """
+        同步入口，供 Nornir.run() 兼容调用。
+
+        内部使用 asyncio.run() 启动异步执行。
+
+        Args:
+            task: 异步任务函数，签名为 async def task(host: Host) -> Any
+            hosts: 主机字典 {host_name: Host}
+            **kwargs: 传递给任务函数的额外参数
+
+        Returns:
+            AggregatedResult: Nornir 标准聚合结果
+        """
+        return asyncio.run(self._run_async(task, hosts, **kwargs))
+
+    async def _run_async(
+        self,
+        task: Callable[["Host"], Coroutine[Any, Any, Any]],
+        hosts: dict[str, "Host"],
+        **kwargs: Any,
+    ) -> AggregatedResult:
+        """
+        异步执行主体。
+
+        使用 Semaphore 控制并发，asyncio.gather 并行执行所有任务。
+
+        Args:
+            task: 异步任务函数
+            hosts: 主机字典
+            **kwargs: 额外参数
+
+        Returns:
+            AggregatedResult: 聚合结果
+        """
+        task_name = getattr(task, "__name__", "async_task")
+        results = AggregatedResult(task_name)
+        semaphore = asyncio.Semaphore(self.semaphore_limit)
+
+        async def _execute_host(host: "Host") -> tuple[str, Result]:
+            """单设备执行（带信号量控制）。"""
+            async with semaphore:
+                try:
+                    logger.debug("开始执行异步任务", host=host.name, task=task_name)
+                    result_data = await task(host, **kwargs)
+                    return host.name, Result(host=host, result=result_data)
+                except TimeoutError:
+                    logger.warning("任务超时", host=host.name, task=task_name)
+                    return host.name, Result(
+                        host=host,
+                        exception=TimeoutError(f"任务超时: {host.name}"),
+                        failed=True,
+                    )
+                except Exception as e:
+                    logger.error("任务执行失败", host=host.name, task=task_name, error=str(e))
+                    return host.name, Result(host=host, exception=e, failed=True)
+
+        # 并行执行所有主机任务
+        tasks = [_execute_host(host) for host in hosts.values()]
+        completed = await asyncio.gather(*tasks, return_exceptions=False)
+
+        # 组装结果
+        for host_name, result in completed:
+            multi = MultiResult(host_name)
+            multi.append(result)
+            results[host_name] = multi
+
+        # 统计
+        failed_count = sum(1 for r in results.values() if r.failed)
+        success_count = len(results) - failed_count
+        logger.info(
+            "异步任务批量执行完成",
+            task=task_name,
+            total=len(results),
+            success=success_count,
+            failed=failed_count,
+        )
+
+        return results
+
+
+async def run_async_tasks(
+    hosts: "dict[str, Host] | Inventory",
+    task_fn: "Callable[[Host], Coroutine[Any, Any, Any]]",
+    num_workers: "int | None" = None,
+    **kwargs: Any,
+) -> AggregatedResult:
+    """
+    独立的异步任务执行入口（不依赖 Nornir.run()）。
+
+    这是推荐的异步执行方式，绕过 Nornir 的同步 Runner 协议限制。
+
+    Args:
+        hosts: Nornir Inventory 或主机字典
+        task_fn: 异步任务函数，签名为 async def task(host: Host, **kwargs) -> Any
+        num_workers: 最大并发数，默认从配置读取
+        **kwargs: 传递给任务函数的额外参数
+
+    Returns:
+        AggregatedResult: 标准聚合结果
+
+    Example:
+        ```python
+        from app.network.async_runner import run_async_tasks
+        from app.network.async_tasks import async_send_command
+
+        nr = init_nornir_async_from_db(devices)
+        results = await run_async_tasks(
+            nr.inventory.hosts,
+            async_send_command,
+            command="display version",
+        )
+        ```
+    """
+    # 处理 Inventory 对象
+    if hasattr(hosts, "hosts"):
+        hosts_dict: dict[str, Host] = hosts.hosts  # type: ignore[union-attr]
+    else:
+        hosts_dict = hosts  # type: ignore[assignment]
+
+    runner = AsyncRunner(num_workers=num_workers)
+    return await runner._run_async(task_fn, hosts_dict, **kwargs)
+
+
+def run_async_tasks_sync(
+    hosts: "dict[str, Host] | Inventory",
+    task_fn: "Callable[[Host], Coroutine[Any, Any, Any]]",
+    num_workers: "int | None" = None,
+    **kwargs: Any,
+) -> AggregatedResult:
+    """
+    同步包装的异步任务执行入口（用于 Celery 等同步上下文）。
+
+    内部使用 asyncio.run() 启动事件循环。
+
+    Args:
+        hosts: Nornir Inventory 或主机字典
+        task_fn: 异步任务函数
+        num_workers: 最大并发数
+        **kwargs: 额外参数
+
+    Returns:
+        AggregatedResult: 标准聚合结果
+    """
+    return asyncio.run(run_async_tasks(hosts, task_fn, num_workers, **kwargs))
+
+
+class AsyncRunnerWithRetry(AsyncRunner):
+    """
+    带重试机制的异步运行器。
+
+    继承 AsyncRunner，增加失败重试逻辑。
+    """
+
+    def __init__(
+        self,
+        num_workers: int | None = None,
+        max_retries: int = 2,
+        retry_delay: float = 1.0,
+    ):
+        """
+        初始化带重试的异步运行器。
+
+        Args:
+            num_workers: 最大并发数
+            max_retries: 最大重试次数
+            retry_delay: 重试间隔（秒）
+        """
+        super().__init__(num_workers)
+        self.max_retries = max_retries
+        self.retry_delay = retry_delay
+
+    async def _run_async(
+        self,
+        task: Callable[["Host"], Coroutine[Any, Any, Any]],
+        hosts: dict[str, "Host"],
+        **kwargs: Any,
+    ) -> AggregatedResult:
+        """带重试的异步执行。"""
+        task_name = getattr(task, "__name__", "async_task")
+        results = AggregatedResult(task_name)
+        semaphore = asyncio.Semaphore(self.semaphore_limit)
+
+        async def _execute_with_retry(host: "Host") -> tuple[str, Result]:
+            """单设备执行（带重试）。"""
+            last_exception: Exception | None = None
+
+            for attempt in range(self.max_retries + 1):
+                async with semaphore:
+                    try:
+                        result_data = await task(host, **kwargs)
+                        return host.name, Result(host=host, result=result_data)
+                    except Exception as e:
+                        last_exception = e
+                        if attempt < self.max_retries:
+                            logger.warning(
+                                "任务失败，准备重试",
+                                host=host.name,
+                                attempt=attempt + 1,
+                                max_retries=self.max_retries,
+                                error=str(e),
+                            )
+                            await asyncio.sleep(self.retry_delay)
+
+            return host.name, Result(host=host, exception=last_exception, failed=True)
+
+        tasks = [_execute_with_retry(host) for host in hosts.values()]
+        completed = await asyncio.gather(*tasks, return_exceptions=False)
+
+        for host_name, result in completed:
+            multi = MultiResult(host_name)
+            multi.append(result)
+            results[host_name] = multi
+
+        return results
