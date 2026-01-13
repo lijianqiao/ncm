@@ -146,6 +146,17 @@ class Settings(BaseSettings):
     MINIO_BUCKET: str = "ncm"
     MINIO_SECURE: bool = False
 
+    # 备份保留策略（按设备+类型保留最近 N 条，0 表示不限制）
+    BACKUP_RETENTION_SCHEDULED_KEEP: int = 500  # 定时备份保留条数
+    BACKUP_RETENTION_MANUAL_KEEP: int = 200  # 手动备份保留条数
+    BACKUP_RETENTION_PRE_CHANGE_KEEP: int = 200  # 变更前备份保留条数
+    BACKUP_RETENTION_POST_CHANGE_KEEP: int = 200  # 变更后备份保留条数
+    BACKUP_RETENTION_INCREMENTAL_KEEP: int = 1000  # 增量备份保留条数
+
+    # 备份保留策略（按天数）：默认保留最近 30 天的所有备份类型，0 表示不限制
+    # 注意：即便超过天数，也至少保留每台设备 1 条备份（优先保留最新成功备份）
+    BACKUP_RETENTION_KEEP_DAYS: int = 30
+
     @computed_field
     @property
     def CELERY_BROKER_URL(self) -> RedisDsn:

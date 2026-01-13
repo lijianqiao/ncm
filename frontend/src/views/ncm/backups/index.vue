@@ -563,7 +563,7 @@ const closeBatchBackupModal = () => {
       search-placeholder="搜索设备名称"
       :search-filters="searchFilters"
       @context-menu-select="handleContextMenuSelect"
-      :scroll-x="1000"
+      :scroll-x="2200"
     >
       <template #toolbar-left>
         <n-space>

@@ -12,17 +12,18 @@
 
 import difflib
 import hashlib
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import select
 
 from app.celery.app import celery_app
 from app.celery.base import BaseTask, run_async
+from app.core.config import settings
 from app.core.db import AsyncSessionLocal
 from app.core.enums import AlertSeverity, AlertType, AuthType, BackupStatus, BackupType, DeviceStatus
 from app.core.logger import logger
-from app.core.minio_client import put_text
+from app.core.minio_client import delete_object, put_text
 from app.core.otp_service import otp_service
 from app.crud.crud_alert import alert_crud
 from app.crud.crud_backup import backup as backup_crud
@@ -38,6 +39,105 @@ from app.services.notification_service import NotificationService
 
 # 存储阈值：小于 64KB 存 DB
 CONTENT_SIZE_THRESHOLD = 64 * 1024
+
+
+def _get_keep_count(bt: BackupType) -> int:
+    if bt == BackupType.SCHEDULED:
+        return settings.BACKUP_RETENTION_SCHEDULED_KEEP
+    if bt == BackupType.MANUAL:
+        return settings.BACKUP_RETENTION_MANUAL_KEEP
+    if bt == BackupType.PRE_CHANGE:
+        return settings.BACKUP_RETENTION_PRE_CHANGE_KEEP
+    if bt == BackupType.POST_CHANGE:
+        return settings.BACKUP_RETENTION_POST_CHANGE_KEEP
+    if bt == BackupType.INCREMENTAL:
+        return settings.BACKUP_RETENTION_INCREMENTAL_KEEP
+    return 0
+
+
+async def _enforce_retention_for_device(db: Any, device_id: str) -> None:
+    """按条数+按天数清理备份，保证每台设备至少保留 1 条（优先保留最新成功备份）。"""
+    from uuid import UUID
+
+    did = UUID(device_id)
+
+    keep_ids: set[UUID] = set()
+
+    latest_any_q = (
+        select(Backup.id)
+        .where(Backup.device_id == did)
+        .where(Backup.is_deleted.is_(False))
+        .order_by(Backup.created_at.desc())
+        .limit(1)
+    )
+    latest_any = await db.execute(latest_any_q)
+    latest_any_id = latest_any.scalar()
+    if latest_any_id:
+        keep_ids.add(latest_any_id)
+
+    latest_success_q = (
+        select(Backup.id)
+        .where(Backup.device_id == did)
+        .where(Backup.is_deleted.is_(False))
+        .where(Backup.status == BackupStatus.SUCCESS.value)
+        .order_by(Backup.created_at.desc())
+        .limit(1)
+    )
+    latest_success = await db.execute(latest_success_q)
+    latest_success_id = latest_success.scalar()
+    if latest_success_id:
+        keep_ids.add(latest_success_id)
+
+    to_delete: dict[UUID, Backup] = {}
+
+    # 1) 按条数（按类型、仅成功备份；失败备份交给按天数清理）
+    for bt in BackupType:
+        keep = _get_keep_count(bt)
+        if keep <= 0:
+            continue
+
+        q = (
+            select(Backup)
+            .where(Backup.device_id == did)
+            .where(Backup.is_deleted.is_(False))
+            .where(Backup.status == BackupStatus.SUCCESS.value)
+            .where(Backup.backup_type == bt.value)
+            .order_by(Backup.created_at.desc())
+            .offset(keep)
+        )
+        r = await db.execute(q)
+        for b in r.scalars().all():
+            if b.id in keep_ids:
+                continue
+            to_delete[b.id] = b
+
+    # 2) 按天数（所有备份类型）
+    keep_days = settings.BACKUP_RETENTION_KEEP_DAYS
+    if keep_days > 0:
+        cutoff = datetime.now(UTC) - timedelta(days=keep_days)
+        q = (
+            select(Backup)
+            .where(Backup.device_id == did)
+            .where(Backup.is_deleted.is_(False))
+            .where(Backup.created_at < cutoff)
+        )
+        r = await db.execute(q)
+        for b in r.scalars().all():
+            if b.id in keep_ids:
+                continue
+            to_delete[b.id] = b
+
+    if not to_delete:
+        return
+
+    for b in to_delete.values():
+        if b.content_path:
+            try:
+                await delete_object(b.content_path)
+            except Exception as e:
+                logger.warning(f"MinIO 删除对象失败: path={b.content_path}, error={e}")
+        b.is_deleted = True
+        db.add(b)
 
 
 def _normalize_lines(text: str) -> list[str]:
@@ -72,7 +172,12 @@ def _compute_unified_diff(old_text: str, new_text: str, context_lines: int = 3) 
     name="app.celery.tasks.backup.backup_devices",
     queue="backup",
 )
-def backup_devices(self, hosts_data: list[dict[str, Any]], num_workers: int = 50) -> dict[str, Any]:
+def backup_devices(
+    self,
+    hosts_data: list[dict[str, Any]],
+    num_workers: int = 50,
+    backup_type: str = BackupType.MANUAL.value,
+) -> dict[str, Any]:
     """
     批量备份设备配置的 Celery 任务。
 
@@ -96,6 +201,7 @@ def backup_devices(self, hosts_data: list[dict[str, Any]], num_workers: int = 50
         task_id=self.request.id,
         hosts_count=len(hosts_data),
         num_workers=num_workers,
+        backup_type=backup_type,
     )
 
     # 更新任务状态
@@ -123,7 +229,7 @@ def backup_devices(self, hosts_data: list[dict[str, Any]], num_workers: int = 50
         summary = aggregate_results(results)
 
         # 保存备份结果到数据库
-        run_async(_save_backup_results(hosts_data, summary))
+        run_async(_save_backup_results(hosts_data, summary, backup_type=backup_type))
 
         self.update_state(
             state="PROGRESS",
@@ -152,9 +258,16 @@ def backup_devices(self, hosts_data: list[dict[str, Any]], num_workers: int = 50
         raise
 
 
-async def _save_backup_results(hosts_data: list[dict], summary: dict) -> None:
-    """保存备份结果到数据库。"""
+async def _save_backup_results(
+    hosts_data: list[dict], summary: dict, backup_type: str = BackupType.MANUAL.value
+) -> None:
+    """保存备份结果到数据库（支持指定备份类型、md5 去重、保留策略）。"""
     async with AsyncSessionLocal() as db:
+        try:
+            bt = BackupType(backup_type)
+        except Exception:
+            bt = BackupType.MANUAL
+
         for host in hosts_data:
             device_id = host.get("device_id")
             if not device_id:
@@ -176,6 +289,20 @@ async def _save_backup_results(hosts_data: list[dict], summary: dict) -> None:
                 content_size = len(config_content.encode("utf-8"))
                 md5_hash = hashlib.md5(config_content.encode("utf-8")).hexdigest()
 
+                # md5 去重：仅对 pre/post 变更备份生效
+                if bt in {BackupType.PRE_CHANGE, BackupType.POST_CHANGE}:
+                    try:
+                        from uuid import UUID
+
+                        old_md5 = await backup_crud.get_latest_md5_by_device(db, UUID(device_id))
+                        if old_md5 and old_md5 == md5_hash:
+                            logger.info(
+                                f"备份内容未变化，跳过保存: device_id={device_id}, type={bt.value}, md5={md5_hash}"
+                            )
+                            continue
+                    except Exception as e:
+                        logger.warning(f"md5 去重检查失败，继续保存: device_id={device_id}, error={e}")
+
                 if content_size < CONTENT_SIZE_THRESHOLD:
                     content = config_content
                 else:
@@ -194,7 +321,7 @@ async def _save_backup_results(hosts_data: list[dict], summary: dict) -> None:
 
                 backup_data = BackupCreate(
                     device_id=UUID(device_id),
-                    backup_type=BackupType.MANUAL,
+                    backup_type=bt,
                     content=content,
                     content_path=content_path,
                     content_size=content_size,
@@ -207,6 +334,16 @@ async def _save_backup_results(hosts_data: list[dict], summary: dict) -> None:
                 db.add(backup)
             except Exception as e:
                 logger.error(f"保存备份记录失败: device_id={device_id}, error={e}")
+
+        await db.commit()
+
+        # 保留策略清理：按条数（各类型可配）+ 按天数（默认 7 天），每台设备至少保留 1 条（优先最新成功）
+        unique_device_ids: list[str] = sorted({str(h["device_id"]) for h in hosts_data if h.get("device_id")})
+        for did in unique_device_ids:
+            try:
+                await _enforce_retention_for_device(db, did)
+            except Exception as e:
+                logger.warning(f"备份保留策略清理失败: device_id={did}, error={e}")
 
         await db.commit()
 
