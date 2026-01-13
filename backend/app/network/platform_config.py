@@ -147,11 +147,19 @@ PLATFORM_SCRAPLI_OPTIONS: dict[str, dict[str, Any]] = {
         "auth_strict_key": False,
         "ssh_config_file": False,
         "transport": "asyncssh",
+        "transport_options": {
+            "encoding": "gb18030",
+            "errors": "replace",
+        },
     },
     "huawei_vrp": {
         "auth_strict_key": False,
         "ssh_config_file": False,
         "transport": "asyncssh",
+        "transport_options": {
+            "encoding": "gb18030",
+            "errors": "replace",
+        },
     },
     "cisco_iosxe": {
         "auth_strict_key": False,

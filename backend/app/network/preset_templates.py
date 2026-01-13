@@ -217,24 +217,8 @@ end
         "description": "修改接口的描述信息",
         "category": PRESET_CATEGORY_CONFIG,
         "supported_vendors": ["h3c", "huawei", "cisco"],
-        "template": """{% if device.vendor == 'h3c' %}
-system-view
-interface {{ params.interface_name }}
- description {{ params.description }}
-quit
-return
-{% elif device.vendor == 'huawei' %}
-system-view
-interface {{ params.interface_name }}
- description {{ params.description }}
-quit
-return
-{% elif device.vendor == 'cisco' %}
-configure terminal
-interface {{ params.interface_name }}
- description {{ params.description }}
-end
-{% endif %}""",
+        "template": """interface {{ params.interface_name }}
+description {{ params.description }}""",
         "parameters_schema": {
             "type": "object",
             "properties": {

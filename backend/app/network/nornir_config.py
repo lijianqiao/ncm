@@ -123,6 +123,19 @@ def create_nornir_inventory(
             logger.warning("跳过缺少 name 字段的主机", host_info=host_info)
             continue
 
+        platform = host_info.get("platform")
+        scrapli_extras: dict[str, Any] = {
+            "auth_strict_key": False,
+            "ssh_config_file": False,
+            "transport": "paramiko",
+        }
+        # 部分设备（如 H3C/华为）输出常为 GBK 系编码，统一用 gb18030 做兼容，避免中文乱码
+        if platform in {"hp_comware", "huawei_vrp"}:
+            scrapli_extras["transport_options"] = {
+                "encoding": "gb18030",
+                "errors": "replace",
+            }
+
         host_groups = []
         for g in host_info.get("groups", []):
             if g in groups:
@@ -131,21 +144,13 @@ def create_nornir_inventory(
         hosts[host_name] = Host(
             name=host_name,
             hostname=host_info.get("hostname", host_name),
-            platform=host_info.get("platform"),
+            platform=platform,
             username=host_info.get("username"),
             password=host_info.get("password"),
             port=host_info.get("port", 22),
             groups=ParentGroups(host_groups),
             data=host_info.get("data", {}),
-            connection_options={
-                "scrapli": ConnectionOptions(
-                    extras={
-                        "auth_strict_key": False,
-                        "ssh_config_file": False,
-                        "transport": "paramiko",
-                    }
-                )
-            },
+            connection_options={"scrapli": ConnectionOptions(extras=scrapli_extras)},
         )
 
     # 创建默认配置

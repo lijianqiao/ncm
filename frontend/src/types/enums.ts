@@ -72,6 +72,7 @@ export enum BackupType {
   SCHEDULED = 'scheduled',
   MANUAL = 'manual',
   PRE_CHANGE = 'pre_change',
+  POST_CHANGE = 'post_change',
   INCREMENTAL = 'incremental',
 }
 

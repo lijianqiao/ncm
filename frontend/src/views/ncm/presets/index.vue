@@ -5,8 +5,6 @@
 import { ref, computed, onMounted } from 'vue'
 import {
   NCard,
-  NGrid,
-  NGridItem,
   NModal,
   NForm,
   NFormItem,
@@ -31,7 +29,10 @@ import {
   type PresetDetail,
   type PresetExecuteResult,
 } from '@/api/presets'
-import { getDeviceOptions, type Device } from '@/api/devices'
+import { getDeviceOptions, type Device, type AuthType, type DeviceGroup } from '@/api/devices'
+import { backupDevice, batchBackup } from '@/api/backups'
+import { cacheOTP } from '@/api/credentials'
+import OtpModal from '@/components/common/OtpModal.vue'
 import { $alert } from '@/utils/alert'
 
 defineOptions({
@@ -47,11 +48,32 @@ const currentPreset = ref<PresetDetail | null>(null)
 const showExecuteModal = ref(false)
 
 // 执行表单
-const deviceOptions = ref<{ label: string; value: string; vendor: string }[]>([])
+const deviceOptions = ref<
+  Array<{
+    label: string
+    value: string
+    vendor: string
+    auth_type: AuthType
+    dept_id: string | null
+    device_group: DeviceGroup | null
+    device_name: string
+    ip_address: string
+  }>
+>([])
 const deviceLoading = ref(false)
 const selectedDeviceId = ref<string | null>(null)
 const formParams = ref<Record<string, unknown>>({})
 const executing = ref(false)
+
+// OTP 弹窗
+const showOtpModal = ref(false)
+const otpLoading = ref(false)
+const otpRequiredGroups = ref<Array<{ dept_id: string; device_group: string }>>([])
+const pendingExecute = ref<{
+  preset_id: string
+  device_id: string
+  params: Record<string, unknown>
+} | null>(null)
 
 // 执行结果
 const showResultModal = ref(false)
@@ -82,9 +104,14 @@ const loadDevices = async () => {
   try {
     const res = await getDeviceOptions({ status: 'active' })
     deviceOptions.value = res.data.items.map((d: Device) => ({
-      label: `${d.name} (${d.ip_address}) - ${d.vendor || 'Unknown'}`,
+      label: `${d.name} (${d.ip_address}) - ${d.vendor || 'Unknown'}${d.auth_type === 'otp_manual' ? ' [OTP]' : ''}`,
       value: d.id,
       vendor: d.vendor || '',
+      auth_type: d.auth_type,
+      dept_id: d.dept_id,
+      device_group: d.device_group,
+      device_name: d.name,
+      ip_address: d.ip_address,
     }))
   } catch {
     // Error handled
@@ -92,6 +119,11 @@ const loadDevices = async () => {
     deviceLoading.value = false
   }
 }
+
+const selectedDevice = computed(() => {
+  if (!selectedDeviceId.value) return null
+  return deviceOptions.value.find((d) => d.value === selectedDeviceId.value) || null
+})
 
 // 打开执行弹窗
 const openExecuteModal = async (preset: PresetInfo) => {
@@ -113,6 +145,72 @@ const filteredDeviceOptions = computed(() => {
   const supportedVendors = currentPreset.value.supported_vendors
   return deviceOptions.value.filter((d) => supportedVendors.includes(d.vendor))
 })
+
+const otpInfoItems = computed(() => {
+  const items: Array<{ label: string; value: string }> = []
+  if (selectedDevice.value) {
+    items.push({ label: '设备', value: `${selectedDevice.value.device_name} (${selectedDevice.value.ip_address})` })
+  }
+  if (otpRequiredGroups.value.length) {
+    const groupText = otpRequiredGroups.value
+      .map((g) => `dept_id=${g.dept_id}, device_group=${g.device_group}`)
+      .join('；')
+    items.push({ label: '凭据组', value: groupText })
+  }
+  return items
+})
+
+const buildOtpGroupsFromSelectedDevice = () => {
+  const d = selectedDevice.value
+  if (!d?.dept_id || !d.device_group) return []
+  return [{ dept_id: d.dept_id, device_group: d.device_group }]
+}
+
+const backupBeforeConfigChange = async (deviceId: string) => {
+  if (currentPreset.value?.category !== 'config') return
+
+  try {
+    await backupDevice(deviceId, { backup_type: 'pre_change' })
+    $alert.success('变更前备份已触发')
+  } catch {
+    $alert.error('变更前备份失败，已取消本次配置下发')
+    throw new Error('pre_change_backup_failed')
+  }
+}
+
+const doExecutePreset = async (presetId: string, deviceId: string, params: Record<string, unknown>) => {
+  const res = await executePreset(presetId, {
+    device_id: deviceId,
+    params,
+  })
+
+  // 断点：需要 OTP
+  if (res.data?.otp_required) {
+    otpRequiredGroups.value = res.data.otp_required_groups?.length
+      ? (res.data.otp_required_groups as Array<{ dept_id: string; device_group: string }>)
+      : buildOtpGroupsFromSelectedDevice()
+    showExecuteModal.value = false
+    showOtpModal.value = true
+    return
+  }
+
+  executeResult.value = res.data
+  showExecuteModal.value = false
+  showResultModal.value = true
+  resultTab.value = 'raw'
+
+  // 配置类操作：执行成功后触发一次“变更后备份”（异步任务，不阻塞 UI）
+  if (currentPreset.value?.category === 'config' && res.data?.success) {
+    void (async () => {
+      try {
+        const r = await batchBackup({ device_ids: [deviceId], backup_type: 'post_change' })
+        $alert.success(`变更后备份任务已提交：${r.data.task_id}`)
+      } catch {
+        $alert.warning('变更后备份任务提交失败（不影响本次执行结果）')
+      }
+    })()
+  }
+}
 
 // 根据 JSON Schema 生成表单字段
 const schemaProperties = computed(() => {
@@ -160,19 +258,63 @@ const handleExecute = async () => {
     }
   }
 
+  pendingExecute.value = {
+    preset_id: currentPreset.value.id,
+    device_id: selectedDeviceId.value,
+    params: formParams.value,
+  }
+
+  // otp_manual：执行前先提示输入 OTP
+  if (selectedDevice.value?.auth_type === 'otp_manual') {
+    otpRequiredGroups.value = buildOtpGroupsFromSelectedDevice()
+    if (!otpRequiredGroups.value.length) {
+      $alert.warning('当前设备缺少 dept_id 或 device_group，无法缓存 OTP')
+      return
+    }
+    showOtpModal.value = true
+    return
+  }
+
   executing.value = true
   try {
-    const res = await executePreset(currentPreset.value.id, {
-      device_id: selectedDeviceId.value,
-      params: formParams.value,
-    })
-    executeResult.value = res.data
-    showExecuteModal.value = false
-    showResultModal.value = true
-    resultTab.value = 'raw'
+    await backupBeforeConfigChange(selectedDeviceId.value)
+    await doExecutePreset(currentPreset.value.id, selectedDeviceId.value, formParams.value)
   } catch {
     // Error handled
   } finally {
+    executing.value = false
+  }
+}
+
+const handleOtpConfirm = async (otpCode: string) => {
+  if (!otpRequiredGroups.value.length) {
+    $alert.warning('缺少 OTP 缓存目标信息')
+    return
+  }
+  if (!pendingExecute.value) {
+    $alert.warning('缺少待执行请求，请重新执行')
+    return
+  }
+
+  otpLoading.value = true
+  try {
+    for (const g of otpRequiredGroups.value) {
+      await cacheOTP({
+        dept_id: g.dept_id,
+        device_group: g.device_group as DeviceGroup,
+        otp_code: otpCode,
+      })
+    }
+
+    showOtpModal.value = false
+
+    executing.value = true
+    await backupBeforeConfigChange(pendingExecute.value.device_id)
+    await doExecutePreset(pendingExecute.value.preset_id, pendingExecute.value.device_id, pendingExecute.value.params)
+  } catch {
+    // Error handled
+  } finally {
+    otpLoading.value = false
     executing.value = false
   }
 }
@@ -197,8 +339,8 @@ onMounted(() => {
     <n-spin :show="loading">
       <!-- 查看类操作 -->
       <n-card title="查看类操作" size="small" style="margin-bottom: 16px">
-        <n-grid :cols="4" :x-gap="12" :y-gap="12">
-          <n-grid-item v-for="preset in showPresets" :key="preset.id">
+        <div class="preset-grid">
+          <div v-for="preset in showPresets" :key="preset.id" class="preset-item">
             <n-card hoverable class="preset-card" @click="openExecuteModal(preset)">
               <template #header>
                 <div class="preset-header">
@@ -225,14 +367,14 @@ onMounted(() => {
                 </n-popover>
               </div>
             </n-card>
-          </n-grid-item>
-        </n-grid>
+          </div>
+        </div>
       </n-card>
 
       <!-- 配置类操作 -->
       <n-card title="配置类操作" size="small">
-        <n-grid :cols="4" :x-gap="12" :y-gap="12">
-          <n-grid-item v-for="preset in configPresets" :key="preset.id">
+        <div class="preset-grid">
+          <div v-for="preset in configPresets" :key="preset.id" class="preset-item">
             <n-card hoverable class="preset-card" @click="openExecuteModal(preset)">
               <template #header>
                 <div class="preset-header">
@@ -252,8 +394,8 @@ onMounted(() => {
                 </n-tag>
               </div>
             </n-card>
-          </n-grid-item>
-        </n-grid>
+          </div>
+        </div>
       </n-card>
     </n-spin>
 
@@ -317,6 +459,14 @@ onMounted(() => {
       </template>
     </n-modal>
 
+    <!-- OTP 弹窗 -->
+    <OtpModal
+      v-model:show="showOtpModal"
+      :loading="otpLoading"
+      :info-items="otpInfoItems"
+      @confirm="handleOtpConfirm"
+    />
+
     <!-- 结果弹窗 -->
     <n-modal
       v-model:show="showResultModal"
@@ -334,11 +484,12 @@ onMounted(() => {
         <template v-else>
           <n-tabs v-model:value="resultTab" type="line">
             <n-tab-pane name="raw" tab="原始输出">
-              <n-code
-                :code="executeResult.raw_output || '(无输出)'"
-                language="text"
-                style="max-height: 500px; overflow: auto"
-              />
+              <div class="code-scroll">
+                <n-code
+                  :code="executeResult.raw_output || '(无输出)'"
+                  language="text"
+                />
+              </div>
             </n-tab-pane>
             <n-tab-pane name="parsed" tab="结构化数据">
               <template v-if="executeResult.parse_error">
@@ -349,11 +500,12 @@ onMounted(() => {
                 />
               </template>
               <template v-else-if="executeResult.parsed_output">
-                <n-code
-                  :code="formattedParsedOutput"
-                  language="json"
-                  style="max-height: 500px; overflow: auto"
-                />
+                <div class="code-scroll">
+                  <n-code
+                    :code="formattedParsedOutput"
+                    language="json"
+                  />
+                </div>
               </template>
               <template v-else>
                 <n-result status="info" title="无结构化数据" description="此操作不支持结构化解析" />
@@ -369,6 +521,18 @@ onMounted(() => {
 <style scoped>
 .preset-operations {
   padding: 16px;
+}
+
+.preset-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.preset-item {
+  flex: 1 1 260px;
+  min-width: 240px;
+  max-width: 420px;
 }
 
 .preset-card {
@@ -398,5 +562,11 @@ onMounted(() => {
 
 .preset-vendors {
   margin-top: 8px;
+}
+
+.code-scroll {
+  max-height: 55vh;
+  overflow: auto;
+  max-width: 100%;
 }
 </style>

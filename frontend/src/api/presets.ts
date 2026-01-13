@@ -31,6 +31,11 @@ export interface PresetExecuteResult {
   parsed_output: unknown
   parse_error: string | null
   error_message: string | null
+
+  otp_required?: boolean
+  otp_required_groups?: Array<{ dept_id: string; device_group: string }>
+  expires_in?: number | null
+  next_action?: string | null
 }
 
 /** 获取预设列表 */

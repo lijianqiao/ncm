@@ -51,6 +51,7 @@ const backupTypeOptions = [
   { label: '定时备份', value: 'scheduled' },
   { label: '手动备份', value: 'manual' },
   { label: '变更前备份', value: 'pre_change' },
+  { label: '变更后备份', value: 'post_change' },
   { label: '增量备份', value: 'incremental' },
 ]
 
@@ -58,6 +59,7 @@ const backupTypeLabelMap: Record<BackupType, string> = {
   scheduled: '定时备份',
   manual: '手动备份',
   pre_change: '变更前备份',
+  post_change: '变更后备份',
   incremental: '增量备份',
 }
 
@@ -65,6 +67,7 @@ const backupTypeColorMap: Record<BackupType, 'info' | 'success' | 'warning'> = {
   scheduled: 'info',
   manual: 'success',
   pre_change: 'warning',
+  post_change: 'warning',
   incremental: 'info',
 }
 
