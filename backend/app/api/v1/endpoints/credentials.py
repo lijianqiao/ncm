@@ -36,10 +36,10 @@ async def read_credentials(
     current_user: deps.CurrentUser,
     _: deps.User = Depends(deps.require_permissions([PermissionCode.CREDENTIAL_LIST.value])),
     page: int = Query(1, ge=1, description="页码"),
-    page_size: int = Query(20, ge=1, le=100, description="每页数量"),
+    page_size: int = Query(20, ge=1, le=500, description="每页数量"),
     dept_id: UUID | None = Query(None, description="部门筛选"),
     device_group: DeviceGroup | None = Query(None, description="设备分组筛选"),
-) -> Any:
+) -> ResponseBase[PaginatedResponse[DeviceGroupCredentialResponse]]:
     """查询凭据列表（分页）。
 
     支持按部门和设备分组进行过滤。

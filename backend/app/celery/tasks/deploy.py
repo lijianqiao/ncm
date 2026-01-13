@@ -32,6 +32,9 @@ from app.network.nornir_tasks import aggregate_results, backup_config, deploy_fr
 from app.network.platform_config import get_platform_for_vendor
 from app.services.render_service import RenderService
 
+# 支持回滚的厂商列表（扩展支持 Huawei/Cisco）
+SUPPORTED_ROLLBACK_VENDORS: set[str] = {"h3c", "huawei", "cisco"}
+
 
 async def _get_device_credential(db, device: Device, failed_devices: list[str] | None = None):
     auth_type = AuthType(device.auth_type)
@@ -352,7 +355,7 @@ async def _rollback_task_async(self, task_id: str) -> dict[str, Any]:
         hosts_data: list[dict[str, Any]] = []
         verify_expected_md5: dict[str, str] = {}
         for d in devices:
-            if d.vendor != "h3c":
+            if d.vendor not in SUPPORTED_ROLLBACK_VENDORS:
                 continue
             backup_id = pre_change_backup_ids.get(str(d.id))
             if not backup_id:
@@ -375,7 +378,7 @@ async def _rollback_task_async(self, task_id: str) -> dict[str, Any]:
                 {
                     "name": str(d.id),
                     "hostname": d.ip_address,
-                    "platform": d.platform or "hp_comware",
+                    "platform": d.platform or get_platform_for_vendor(d.vendor),
                     "username": cred.username,
                     "password": cred.password,
                     "port": d.ssh_port or 22,
@@ -384,7 +387,7 @@ async def _rollback_task_async(self, task_id: str) -> dict[str, Any]:
             )
 
         if not hosts_data:
-            return {"status": "failed", "error": "无可回滚设备(仅支持 h3c)"}
+            return {"status": "failed", "error": "无可回滚设备(支持 h3c/huawei/cisco)"}
 
         nr = init_nornir(hosts_data, num_workers=min(50, len(hosts_data)))
         results = nr.run(task=deploy_from_host_data)

@@ -33,7 +33,7 @@ import {
   type DeviceType,
 } from '@/api/templates'
 import { getUsers } from '@/api/users'
-import { getDevices, type Device, type DeviceVendor } from '@/api/devices'
+import { getDeviceOptions, type Device, type DeviceVendor } from '@/api/devices'
 import { renderTemplate } from '@/api/render'
 import { formatDateTime } from '@/utils/date'
 import { formatUserDisplayNameParts } from '@/utils/user'
@@ -295,7 +295,7 @@ const loadRenderDevices = async () => {
 
   renderDeviceLoading.value = true
   try {
-    const res = await getDevices({ page: 1, page_size: 100 })
+    const res = await getDeviceOptions()
     renderDeviceOptions.value = res.data.items.map((d: Device) => ({
       label: `${d.name} (${d.ip_address})`,
       value: d.id,
@@ -554,9 +554,7 @@ const approveComment = ref('')
 
 const _inferNextApprovalLevel = (tpl: Template): number | null => {
   const steps = tpl.approvals || []
-  const pending = steps
-    .filter((s) => s.status === 'pending')
-    .sort((a, b) => a.level - b.level)
+  const pending = steps.filter((s) => s.status === 'pending').sort((a, b) => a.level - b.level)
 
   if (pending.length === 0) return null
   const first = pending[0]

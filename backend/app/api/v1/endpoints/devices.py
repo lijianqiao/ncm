@@ -37,13 +37,13 @@ async def read_devices(
     current_user: deps.CurrentUser,
     _: deps.User = Depends(deps.require_permissions([PermissionCode.DEVICE_LIST.value])),
     page: int = Query(1, ge=1, description="页码"),
-    page_size: int = Query(20, ge=1, le=100, description="每页数量"),
+    page_size: int = Query(20, ge=1, le=500, description="每页数量"),
     keyword: str | None = Query(None, max_length=100, description="搜索关键词"),
     vendor: DeviceVendor | None = Query(None, description="厂商筛选"),
     status: DeviceStatus | None = Query(None, description="状态筛选"),
     device_group: DeviceGroup | None = Query(None, description="设备分组筛选"),
     dept_id: UUID | None = Query(None, description="部门筛选"),
-) -> Any:
+) -> ResponseBase[PaginatedResponse[DeviceResponse]]:
     """查询设备列表（分页）。
 
     支持按关键词、厂商、状态、设备分组、部门筛选。
@@ -90,8 +90,8 @@ async def read_recycle_bin(
     current_user: deps.CurrentUser,
     _: deps.User = Depends(deps.require_permissions([PermissionCode.DEVICE_RECYCLE.value])),
     page: int = Query(1, ge=1, description="页码"),
-    page_size: int = Query(20, ge=1, le=100, description="每页数量"),
-) -> Any:
+    page_size: int = Query(20, ge=1, le=500, description="每页数量"),
+) -> ResponseBase[PaginatedResponse[DeviceResponse]]:
     """查询回收站中的设备列表（分页）。
 
     Args:
@@ -254,27 +254,6 @@ async def batch_delete_devices(
     )
 
 
-@router.post("/{device_id}/restore", response_model=ResponseBase[DeviceResponse], summary="恢复设备")
-async def restore_device(
-    device_id: UUID,
-    device_service: deps.DeviceServiceDep,
-    current_user: deps.CurrentUser,
-    _: deps.User = Depends(deps.require_permissions([PermissionCode.DEVICE_RESTORE.value])),
-) -> Any:
-    """从回收站中恢复设备到正常状态。
-
-    Args:
-        device_id (UUID): 设备 ID。
-        device_service (DeviceService): 设备服务依赖。
-        current_user (User): 当前登录用户。
-
-    Returns:
-        ResponseBase[DeviceResponse]: 恢复后的设备详情。
-    """
-    device = await device_service.restore_device(device_id)
-    return ResponseBase(data=DeviceResponse.model_validate(device), message="设备恢复成功")
-
-
 @router.post("/batch/restore", response_model=ResponseBase[DeviceBatchResult], summary="批量恢复设备")
 async def batch_restore_devices(
     obj_in: DeviceBatchDeleteRequest,
@@ -297,6 +276,27 @@ async def batch_restore_devices(
         data=result,
         message=f"批量恢复完成：成功 {result.success_count}，失败 {result.failed_count}",
     )
+
+
+@router.post("/{device_id}/restore", response_model=ResponseBase[DeviceResponse], summary="恢复设备")
+async def restore_device(
+    device_id: UUID,
+    device_service: deps.DeviceServiceDep,
+    current_user: deps.CurrentUser,
+    _: deps.User = Depends(deps.require_permissions([PermissionCode.DEVICE_RESTORE.value])),
+) -> Any:
+    """从回收站中恢复设备到正常状态。
+
+    Args:
+        device_id (UUID): 设备 ID。
+        device_service (DeviceService): 设备服务依赖。
+        current_user (User): 当前登录用户。
+
+    Returns:
+        ResponseBase[DeviceResponse]: 恢复后的设备详情。
+    """
+    device = await device_service.restore_device(device_id)
+    return ResponseBase(data=DeviceResponse.model_validate(device), message="设备恢复成功")
 
 
 @router.post(

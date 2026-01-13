@@ -23,16 +23,32 @@ class CommandPolicy:
 
 
 DEFAULT_FORBIDDEN_PATTERNS: tuple[re.Pattern[str], ...] = (
+    # 格式化/擦除系统
     re.compile(r"^\s*(format|reformat)\b", re.IGNORECASE),
     re.compile(r"^\s*(write\s+erase|erase\s+startup-config)\b", re.IGNORECASE),
+    # 重启/重置设备
     re.compile(r"^\s*(reload|reboot)\b", re.IGNORECASE),
     re.compile(r"^\s*(reset)\b", re.IGNORECASE),
+    # 删除启动/系统文件
     re.compile(r"^\s*(delete)\s+.*(startup|boot|system)\b", re.IGNORECASE),
+    # 删除本地用户/超级用户
     re.compile(r"^\s*(undo)\s+(local-user|super)\b", re.IGNORECASE),
+    # 关机命令
+    re.compile(r"^\s*(shutdown)\s*(system|device)?\s*$", re.IGNORECASE),
+    # 恢复出厂设置
+    re.compile(r"^\s*(restore)\s*(factory-default|default)\b", re.IGNORECASE),
+    # 清除安全配置（AAA/SSH/Crypto）
+    re.compile(r"^\s*(no\s+)?(crypto|ssh|aaa)\s+.*(delete|remove|clear)\b", re.IGNORECASE),
+    # Shell 逃逸命令
+    re.compile(r"^\s*(terminal\s+(shell|exec))\b", re.IGNORECASE),
+    # H3C 启动配置危险操作
+    re.compile(r"^\s*(startup\s+saved-configuration)\s*$", re.IGNORECASE),
+    # 清除配置
+    re.compile(r"^\s*(clear)\s+(configuration|config|running-config)\b", re.IGNORECASE),
 )
 
-# 注意：白名单过严会阻断正常配置。这里给一个“相对安全”的基础集合，
-# 若你后续希望更严格，可以在 deploy_plan 里打开严格模式/自定义前缀列表。
+# 注意：白名单仅在 strict_allowlist=True 时生效
+# 生产环境建议在 deploy_plan 中启用 strict_allowlist 模式以获得更严格的安全保障
 DEFAULT_ALLOWED_PREFIXES: tuple[str, ...] = (
     "system-view",
     "return",

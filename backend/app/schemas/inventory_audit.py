@@ -111,5 +111,5 @@ class InventoryAuditResponse(BaseModel):
 
 class InventoryAuditListQuery(BaseModel):
     page: int = Field(default=1, ge=1)
-    page_size: int = Field(default=20, ge=1, le=100)
+    page_size: int = Field(default=20, ge=1, le=500)
     status: InventoryAuditStatus | None = None

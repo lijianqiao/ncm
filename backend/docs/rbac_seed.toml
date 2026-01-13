@@ -844,6 +844,112 @@ is_hidden = true
 permission = "device:stats:view"
 parent_key = "devices"
 
+[[menus]]
+key = "presets"
+title = "快捷操作"
+name = "PresetOps"
+path = "/ncm/presets"
+component = "/views/ncm/presets/index.vue"
+icon = "FlashOutline"
+sort = 207
+type = "MENU"
+is_hidden = false
+permission = ""
+parent_key = "ncm"
+
+# ---- 预设模板权限点（preset:*）----
+
+[[menus]]
+key = "perm_preset_list"
+title = "预设模板-列表"
+name = "PermPresetList"
+path = ""
+component = ""
+icon = "KeyOutline"
+sort = 2071
+type = "PERMISSION"
+is_hidden = true
+permission = "preset:list"
+parent_key = "presets"
+
+[[menus]]
+key = "perm_preset_create"
+title = "预设模板-创建"
+name = "PermPresetCreate"
+path = ""
+component = ""
+icon = "KeyOutline"
+sort = 2072
+type = "PERMISSION"
+is_hidden = true
+permission = "preset:create"
+parent_key = "presets"
+
+[[menus]]
+key = "perm_preset_update"
+title = "预设模板-更新"
+name = "PermPresetUpdate"
+path = ""
+component = ""
+icon = "KeyOutline"
+sort = 2073
+type = "PERMISSION"
+is_hidden = true
+permission = "preset:update"
+parent_key = "presets"
+
+[[menus]]
+key = "perm_preset_delete"
+title = "预设模板-删除"
+name = "PermPresetDelete"
+path = ""
+component = ""
+icon = "KeyOutline"
+sort = 2074
+type = "PERMISSION"
+is_hidden = true
+permission = "preset:delete"
+parent_key = "presets"
+
+[[menus]]
+key = "perm_preset_execute"
+title = "预设模板-执行"
+name = "PermPresetExecute"
+path = ""
+component = ""
+icon = "KeyOutline"
+sort = 2075
+type = "PERMISSION"
+is_hidden = true
+permission = "preset:execute"
+parent_key = "presets"
+
+[[menus]]
+key = "perm_preset_recycle"
+title = "预设模板-回收站"
+name = "PermPresetRecycle"
+path = ""
+component = ""
+icon = "KeyOutline"
+sort = 2076
+type = "PERMISSION"
+is_hidden = true
+permission = "preset:recycle"
+parent_key = "presets"
+
+[[menus]]
+key = "perm_preset_restore"
+title = "预设模板-恢复"
+name = "PermPresetRestore"
+path = ""
+component = ""
+icon = "KeyOutline"
+sort = 2077
+type = "PERMISSION"
+is_hidden = true
+permission = "preset:restore"
+parent_key = "presets"
+
 # ---- 凭据权限点（credential:*）----
 
 [[menus]]

@@ -133,7 +133,7 @@ class DeviceListQuery(BaseModel):
     """设备列表查询参数。"""
 
     page: int = Field(default=1, ge=1, description="页码")
-    page_size: int = Field(default=20, ge=1, le=100, description="每页数量")
+    page_size: int = Field(default=20, ge=1, le=500, description="每页数量")
     keyword: str | None = Field(default=None, max_length=100, description="搜索关键词(名称/IP)")
     vendor: DeviceVendor | None = Field(default=None, description="厂商筛选")
     status: DeviceStatus | None = Field(default=None, description="状态筛选")

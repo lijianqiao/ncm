@@ -35,7 +35,7 @@ router = APIRouter(tags=["模板库"])
 async def list_templates(
     service: TemplateServiceDep,
     page: int = Query(default=1, ge=1),
-    page_size: int = Query(default=20, ge=1, le=100),
+    page_size: int = Query(default=20, ge=1, le=500),
     vendor: DeviceVendor | None = Query(default=None),
     template_type: TemplateType | None = Query(default=None),
     status: TemplateStatus | None = Query(default=None),

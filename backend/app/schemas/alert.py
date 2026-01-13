@@ -64,7 +64,7 @@ class AlertListQuery(BaseModel):
     """告警列表查询。"""
 
     page: int = Field(default=1, ge=1, description="页码")
-    page_size: int = Field(default=20, ge=1, le=100, description="每页数量")
+    page_size: int = Field(default=20, ge=1, le=500, description="每页数量")
     keyword: str | None = Field(default=None, description="关键词(标题/正文)")
     alert_type: AlertType | None = Field(default=None, description="类型筛选")
     severity: AlertSeverity | None = Field(default=None, description="级别筛选")

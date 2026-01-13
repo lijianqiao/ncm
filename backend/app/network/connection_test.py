@@ -263,6 +263,65 @@ async def execute_command_on_device(
         }
 
 
+async def execute_commands_on_device(
+    host: str,
+    username: str,
+    password: str,
+    commands: list[str],
+    *,
+    platform: str = "hp_comware",
+    port: int = 22,
+    timeout: int = 120,
+    is_config: bool = False,
+) -> dict[str, Any]:
+    """在设备上执行命令列表。
+
+    - 查看类：默认只执行第一条；若传入多条则依次执行并拼接输出。
+    - 配置类：使用 scrapli 的 send_configs 逐条下发（模板里应包含进入/退出配置视图的命令）。
+
+    Returns:
+        dict: {"success": bool, "output": str, "error": str | None}
+    """
+    safe_commands = [c.strip() for c in (commands or []) if isinstance(c, str) and c.strip()]
+    if not safe_commands:
+        return {"success": False, "output": "", "error": "命令为空"}
+
+    scrapli_options = get_scrapli_options(platform)
+    scrapli_options["timeout_ops"] = timeout
+
+    device_config = {
+        "host": host,
+        "auth_username": username,
+        "auth_password": password,
+        "port": port,
+        "platform": platform,
+        **scrapli_options,
+    }
+
+    try:
+        async with AsyncScrapli(**device_config) as conn:
+            if is_config:
+                response = await conn.send_configs(safe_commands)
+                if response.failed:
+                    return {"success": False, "output": "", "error": f"配置下发失败: {response.result}"}
+                return {"success": True, "output": response.result, "error": None}
+
+            # 查看类
+            if len(safe_commands) == 1:
+                response = await conn.send_command(safe_commands[0])
+                if response.failed:
+                    return {"success": False, "output": "", "error": f"命令执行失败: {response.result}"}
+                return {"success": True, "output": response.result, "error": None}
+
+            response = await conn.send_commands(safe_commands)
+            if response.failed:
+                return {"success": False, "output": "", "error": f"命令执行失败: {response.result}"}
+            return {"success": True, "output": response.result, "error": None}
+
+    except Exception as e:
+        return {"success": False, "output": "", "error": str(e)}
+
+
 async def batch_test_connections(
     devices: list[dict[str, Any]],
     concurrency: int = 10,

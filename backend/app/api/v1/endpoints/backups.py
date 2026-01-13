@@ -60,7 +60,7 @@ def _format_operator_display(user: object | None) -> str | None:
 async def get_backups(
     service: BackupServiceDep,
     page: int = Query(default=1, ge=1, description="页码"),
-    page_size: int = Query(default=20, ge=1, le=100, description="每页数量"),
+    page_size: int = Query(default=20, ge=1, le=500, description="每页数量"),
     device_id: UUID | None = Query(default=None, description="设备ID筛选"),
     backup_type: BackupType | None = Query(default=None, description="备份类型筛选"),
 ) -> ResponseBase[PaginatedResponse[BackupResponse]]:
@@ -379,7 +379,7 @@ async def get_device_backup_history(
     device_id: UUID,
     service: BackupServiceDep,
     page: int = Query(default=1, ge=1, description="页码"),
-    page_size: int = Query(default=20, ge=1, le=100, description="每页数量"),
+    page_size: int = Query(default=20, ge=1, le=500, description="每页数量"),
 ) -> ResponseBase[PaginatedResponse[BackupResponse]]:
     """分页获取单个设备的全部备份记录历史。
 

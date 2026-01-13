@@ -68,6 +68,15 @@ class PermissionCode(str, Enum):
     DEVICE_STATUS_TRANSITION = "device:status:transition"
     DEVICE_STATS_VIEW = "device:stats:view"
 
+    # NCM 预设模板权限
+    PRESET_LIST = "preset:list"
+    PRESET_CREATE = "preset:create"
+    PRESET_UPDATE = "preset:update"
+    PRESET_DELETE = "preset:delete"
+    PRESET_EXECUTE = "preset:execute"
+    PRESET_RECYCLE = "preset:recycle"
+    PRESET_RESTORE = "preset:restore"
+
     # NCM 凭据权限
     CREDENTIAL_LIST = "credential:list"
     CREDENTIAL_CREATE = "credential:create"
@@ -172,6 +181,16 @@ PERMISSION_DEFS: tuple[PermissionDef, ...] = (
     PermissionDef(PermissionCode.DEVICE_RESTORE, "设备-恢复"),
     PermissionDef(PermissionCode.DEVICE_STATUS_TRANSITION, "设备-状态流转", "设备生命周期状态流转"),
     PermissionDef(PermissionCode.DEVICE_STATS_VIEW, "设备-统计-查看", "设备生命周期统计"),
+    # NCM 预设模板权限
+    PermissionDef(PermissionCode.PRESET_LIST, "预设模板-列表"),
+    PermissionDef(PermissionCode.PRESET_CREATE, "预设模板-创建"),
+    PermissionDef(PermissionCode.PRESET_UPDATE, "预设模板-更新"),
+    PermissionDef(PermissionCode.PRESET_DELETE, "预设模板-删除"),
+    PermissionDef(PermissionCode.PRESET_RECYCLE, "预设模板-回收站"),
+    PermissionDef(PermissionCode.PRESET_RESTORE, "预设模板-恢复"),
+    PermissionDef(PermissionCode.PRESET_EXECUTE, "预设模板-执行", "执行预设模板快捷操作"),
+    PermissionDef(PermissionCode.PRESET_EXECUTE, "预设模板-执行", "执行预设模板快捷操作"),
+    PermissionDef(PermissionCode.PRESET_EXECUTE, "预设模板-执行", "执行预设模板快捷操作"),
     # NCM 凭据权限
     PermissionDef(PermissionCode.CREDENTIAL_LIST, "凭据-列表"),
     PermissionDef(PermissionCode.CREDENTIAL_CREATE, "凭据-创建"),

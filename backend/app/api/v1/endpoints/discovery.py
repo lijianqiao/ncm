@@ -158,7 +158,7 @@ async def get_scan_task_status(task_id: str) -> ResponseBase[ScanTaskStatus]:
 async def list_discoveries(
     db: SessionDep,
     page: int = Query(1, ge=1, description="页码"),
-    page_size: int = Query(20, ge=1, le=100, description="每页数量"),
+    page_size: int = Query(20, ge=1, le=500, description="每页数量"),
     status: DiscoveryStatus | None = Query(None, description="状态筛选"),
     keyword: str | None = Query(None, description="关键词搜索"),
     scan_source: str | None = Query(None, description="扫描来源"),
@@ -376,7 +376,7 @@ async def list_shadow_assets(
     db: SessionDep,
     scan_service: ScanServiceDep,
     page: int = Query(1, ge=1),
-    page_size: int = Query(20, ge=1, le=100),
+    page_size: int = Query(20, ge=1, le=500),
 ) -> ResponseBase[PaginatedResponse[DiscoveryResponse]]:
     """获取所有已在线但尚未关联正式 CMDB 的网路资产。
 

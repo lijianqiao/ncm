@@ -25,7 +25,7 @@ async def read_alerts(
     current_user: deps.CurrentUser,
     _: deps.User = Depends(deps.require_permissions([PermissionCode.ALERT_LIST.value])),
     page: int = Query(1, ge=1, description="页码"),
-    page_size: int = Query(20, ge=1, le=100, description="每页数量"),
+    page_size: int = Query(20, ge=1, le=500, description="每页数量"),
     keyword: str | None = Query(None, description="关键词(标题/正文)"),
     alert_type: AlertType | None = Query(None, description="类型筛选"),
     severity: AlertSeverity | None = Query(None, description="级别筛选"),

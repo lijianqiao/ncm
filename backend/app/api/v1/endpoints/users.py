@@ -44,7 +44,7 @@ async def read_users(
     keyword: str | None = None,
     is_superuser: bool | None = None,
     is_active: bool | None = None,
-) -> Any:
+) -> ResponseBase[PaginatedResponse[UserResponse]]:
     """
     查询用户列表 (分页)。
 

@@ -147,7 +147,7 @@ async def rollback_task(task_id: UUID) -> ResponseBase[DeployRollbackResponse]:
 async def list_deploy_tasks(
     service: DeployServiceDep,
     page: int = Query(default=1, ge=1),
-    page_size: int = Query(default=20, ge=1, le=100),
+    page_size: int = Query(default=20, ge=1, le=500),
 ) -> ResponseBase[PaginatedResponse[DeployTaskResponse]]:
     """获取所有批量配置下发任务的列表。
 

@@ -89,7 +89,7 @@ class TemplateListQuery(BaseModel):
     """模板列表查询参数。"""
 
     page: int = Field(default=1, ge=1)
-    page_size: int = Field(default=20, ge=1, le=100)
+    page_size: int = Field(default=20, ge=1, le=500)
     vendor: DeviceVendor | None = None
     template_type: TemplateType | None = None
     status: TemplateStatus | None = None

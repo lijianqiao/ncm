@@ -78,6 +78,7 @@ from app.services.inventory_audit_service import InventoryAuditService
 from app.services.log_service import LogService
 from app.services.menu_service import MenuService
 from app.services.permission_service import PermissionService
+from app.services.preset_service import PresetService
 from app.services.render_service import RenderService
 from app.services.role_service import RoleService
 from app.services.scan_service import ScanService
@@ -590,3 +591,16 @@ def get_collect_service(
 
 
 CollectServiceDep = Annotated[CollectService, Depends(get_collect_service)]
+
+
+# ----- 预设模板依赖 -----
+
+
+def get_preset_service(
+    db: SessionDep,
+    device_crud: Annotated[CRUDDevice, Depends(get_device_crud)],
+) -> PresetService:
+    return PresetService(db, device_crud)
+
+
+PresetServiceDep = Annotated[PresetService, Depends(get_preset_service)]

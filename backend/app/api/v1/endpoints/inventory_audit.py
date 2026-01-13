@@ -61,9 +61,9 @@ async def list_inventory_audits(
     current_user: deps.CurrentUser,
     _: deps.User = Depends(deps.require_permissions([PermissionCode.INVENTORY_AUDIT_VIEW.value])),
     page: int = Query(default=1, ge=1),
-    page_size: int = Query(default=20, ge=1, le=100),
+    page_size: int = Query(default=20, ge=1, le=500),
     status: str | None = Query(default=None, description="状态筛选"),
-) -> Any:
+) -> ResponseBase[PaginatedResponse[InventoryAuditResponse]]:
     """获取所有历史和正在进行的资产盘点任务记录。
 
     Args:

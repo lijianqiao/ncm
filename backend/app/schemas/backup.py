@@ -78,7 +78,7 @@ class BackupListQuery(BaseModel):
     """备份列表查询参数。"""
 
     page: int = Field(default=1, ge=1, description="页码")
-    page_size: int = Field(default=20, ge=1, le=100, description="每页数量")
+    page_size: int = Field(default=20, ge=1, le=500, description="每页数量")
     device_id: UUID | None = Field(default=None, description="设备ID筛选")
     backup_type: BackupType | None = Field(default=None, description="备份类型筛选")
     status: BackupStatus | None = Field(default=None, description="状态筛选")

@@ -6,6 +6,7 @@
 @Docs: Template 业务服务。
 """
 
+import json
 from datetime import UTC, datetime
 from uuid import UUID
 
@@ -60,6 +61,19 @@ class TemplateService:
 
     @transactional()
     async def create_template(self, data: TemplateCreate, creator_id: UUID):
+        # 校验 parameters 必须是有效的 JSON Schema
+        parameters = data.parameters
+        if parameters:
+            try:
+                schema = json.loads(parameters)
+                if not isinstance(schema, dict) or "type" not in schema:
+                    raise BadRequestException("parameters 必须是包含 type 字段的有效 JSON Schema 对象")
+            except json.JSONDecodeError as e:
+                raise BadRequestException(f"parameters 不是合法 JSON: {e}") from e
+        else:
+            # 默认填充空 Schema（允许任意参数）
+            parameters = '{"type": "object"}'
+
         create_data = data.model_dump()
         obj = Template(
             name=create_data["name"],
@@ -68,7 +82,7 @@ class TemplateService:
             content=create_data["content"],
             vendors=[v.value for v in data.vendors],
             device_type=data.device_type.value,
-            parameters=create_data.get("parameters"),
+            parameters=parameters,
             creator_id=creator_id,
             approval_required=True,
             approval_status=ApprovalStatus.NONE.value,
