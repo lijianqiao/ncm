@@ -68,6 +68,17 @@ class DeployApprovalRecord(BaseModel):
     approved_at: datetime | None = None
 
 
+class DeviceDeployResult(BaseModel):
+    """单设备下发结果。"""
+
+    device_id: UUID
+    device_name: str | None
+    status: str
+    output: str | None = None
+    error: str | None = None
+    executed_at: datetime | None = None
+
+
 class DeployTaskResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -90,6 +101,10 @@ class DeployTaskResponse(BaseModel):
     error_message: str | None = None
     created_by: UUID | None = None
     created_by_name: str | None = None
+    change_description: str | None = None
+    impact_scope: str | None = None
+    rollback_plan: str | None = None
+    device_results: list[DeviceDeployResult] | None = None
     approvals: list[DeployApprovalRecord] = Field(default_factory=list)
     created_at: datetime
     updated_at: datetime

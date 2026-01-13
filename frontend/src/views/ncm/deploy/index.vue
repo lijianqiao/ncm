@@ -29,6 +29,7 @@ import {
   type DeployTask,
   type DeploySearchParams,
   type DeployTaskStatus,
+  type DeviceDeployResult,
 } from '@/api/deploy'
 import { cacheOTP } from '@/api/credentials'
 import { getTemplates, type Template } from '@/api/templates'
@@ -256,13 +257,13 @@ const contextMenuOptions: DropdownOption[] = [
 
 const handleContextMenuSelect = (key: string | number, row: DeployTask) => {
   if (key === 'view') handleView(row)
-  if (key === 'result') handleView(row)
+  if (key === 'result') handleResult(row)
   if (key === 'approve') handleApprove(row)
   if (key === 'execute') handleExecute(row)
   if (key === 'rollback') handleRollback(row)
 }
 
-// ==================== 查看详情 ====================
+// ==================== 查看详情（Plan/Approval） ====================
 
 const showViewModal = ref(false)
 const viewData = ref<DeployTask | null>(null)
@@ -279,6 +280,36 @@ const handleView = async (row: DeployTask) => {
   } finally {
     viewLoading.value = false
   }
+}
+
+// ==================== 查看结果（Execution/Result） ====================
+
+const showResultModal = ref(false)
+const resultData = ref<DeployTask | null>(null)
+const resultLoading = ref(false)
+
+// 详情（单设备）弹窗
+const showDeviceOutputModal = ref(false)
+const currentDeviceResult = ref<DeviceDeployResult | null>(null)
+const resultTab = ref<'raw' | 'parsed'>('raw')
+
+const handleResult = async (row: DeployTask) => {
+  resultLoading.value = true
+  showResultModal.value = true
+  try {
+    const res = await getDeployTask(row.id)
+    resultData.value = res.data
+  } catch {
+    showResultModal.value = false
+  } finally {
+    resultLoading.value = false
+  }
+}
+
+const openDeviceOutput = (res: DeviceDeployResult) => {
+  currentDeviceResult.value = res
+  resultTab.value = 'raw'
+  showDeviceOutputModal.value = true
 }
 
 // ==================== 创建下发任务 ====================
@@ -717,72 +748,6 @@ const handleRollback = (row: DeployTask) => {
               style="max-height: 300px; overflow: auto"
             />
           </div>
-
-          <!-- 执行结果（后端 result JSON） -->
-          <div
-            v-if="
-              viewData.result ||
-              viewData.status === 'running' ||
-              viewData.status === 'partial' ||
-              viewData.status === 'success' ||
-              viewData.status === 'failed'
-            "
-          >
-            <h4>执行结果</h4>
-            <n-code
-              :code="
-                viewData.result
-                  ? formatJson(viewData.result)
-                  : viewData.status === 'running'
-                    ? '执行中，暂无结果，请稍后刷新'
-                    : '-'
-              "
-              language="json"
-              style="max-height: 300px; overflow: auto"
-            />
-          </div>
-
-          <!-- 设备执行结果 -->
-          <div v-if="(viewData.device_results || []).length > 0">
-            <h4>设备执行结果</h4>
-            <n-table :bordered="false" :single-line="false">
-              <thead>
-                <tr>
-                  <th>设备</th>
-                  <th>状态</th>
-                  <th>执行时间</th>
-                  <th>输出/错误</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-for="result in viewData.device_results || []" :key="result.device_id">
-                  <td>{{ result.device_name || result.device_id }}</td>
-                  <td>
-                    <n-tag
-                      :type="
-                        result.status === 'success'
-                          ? 'success'
-                          : result.status === 'failed'
-                            ? 'error'
-                            : 'default'
-                      "
-                      size="small"
-                    >
-                      {{
-                        result.status === 'success'
-                          ? '成功'
-                          : result.status === 'failed'
-                            ? '失败'
-                            : '待执行'
-                      }}
-                    </n-tag>
-                  </td>
-                  <td>{{ formatDateTime(result.executed_at) }}</td>
-                  <td>{{ result.error || result.output || '-' }}</td>
-                </tr>
-              </tbody>
-            </n-table>
-          </div>
         </n-space>
       </template>
     </n-modal>
@@ -913,6 +878,109 @@ const handleRollback = (row: DeployTask) => {
       confirm-text="提交并继续"
       @confirm="submitOtpAndRetry"
     />
+
+    <!-- 查看结果 Modal -->
+    <n-modal
+      v-model:show="showResultModal"
+      preset="card"
+      title="下发执行结果"
+      style="width: 900px; max-height: 80vh"
+    >
+      <div v-if="resultLoading" style="text-align: center; padding: 40px">加载中...</div>
+      <template v-else-if="resultData">
+        <n-space vertical>
+          <!-- 汇总信息 -->
+          <n-space>
+            <n-tag :type="statusColorMap[resultData.status]">
+              状态: {{ statusLabelMap[resultData.status] }}
+            </n-tag>
+            <n-tag type="success">成功: {{ resultData.success_count || 0 }}</n-tag>
+            <n-tag type="error">失败: {{ resultData.failed_count || 0 }}</n-tag>
+          </n-space>
+
+          <n-table :bordered="false" :single-line="false">
+            <thead>
+              <tr>
+                <th>设备</th>
+                <th>状态</th>
+                <th>执行时间</th>
+                <th>简略信息</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="result in resultData.device_results || []" :key="result.device_id">
+                <td>{{ result.device_name || result.device_id }}</td>
+                <td>
+                  <n-tag
+                    :type="
+                      result.status === 'success'
+                        ? 'success'
+                        : result.status === 'failed'
+                          ? 'error'
+                          : 'default'
+                    "
+                    size="small"
+                  >
+                    {{
+                      result.status === 'success'
+                        ? '成功'
+                        : result.status === 'failed'
+                          ? '失败'
+                          : '待执行'
+                    }}
+                  </n-tag>
+                </td>
+                <td>{{ formatDateTime(result.executed_at) }}</td>
+                <td
+                  style="
+                    max-width: 300px;
+                    overflow: hidden;
+                    text-overflow: ellipsis;
+                    white-space: nowrap;
+                  "
+                >
+                  {{ result.error || (result.output ? '有输出内容' : '-') }}
+                </td>
+                <td>
+                  <n-button size="tiny" secondary @click="openDeviceOutput(result)">
+                    查看输出
+                  </n-button>
+                </td>
+              </tr>
+            </tbody>
+          </n-table>
+        </n-space>
+      </template>
+    </n-modal>
+
+    <!-- 设备详细输出 Modal -->
+    <n-modal
+      v-model:show="showDeviceOutputModal"
+      preset="card"
+      :title="`设备输出: ${currentDeviceResult?.device_name || currentDeviceResult?.device_id}`"
+      style="width: 800px; max-height: 80vh"
+    >
+      <template v-if="currentDeviceResult">
+        <n-tabs v-model:value="resultTab" type="line">
+          <n-tab-pane name="raw" tab="原始输出">
+            <div class="code-scroll">
+              <n-code
+                :code="currentDeviceResult.output || currentDeviceResult.error || '(无输出)'"
+                language="text"
+              />
+            </div>
+          </n-tab-pane>
+          <n-tab-pane name="parsed" tab="结构化数据">
+            <n-result
+              status="info"
+              title="暂无结构化数据"
+              description="配置下发任务暂不支持 TextFSM 解析，请查看原始输出。"
+            />
+          </n-tab-pane>
+        </n-tabs>
+      </template>
+    </n-modal>
   </div>
 </template>
 
@@ -923,5 +991,11 @@ const handleRollback = (row: DeployTask) => {
 
 .p-4 {
   padding: 16px;
+}
+
+.code-scroll {
+  max-height: 55vh;
+  overflow: auto;
+  max-width: 100%;
 }
 </style>

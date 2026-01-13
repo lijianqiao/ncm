@@ -194,4 +194,6 @@ async def get_deploy_task(task_id: UUID, service: DeployServiceDep) -> ResponseB
         ResponseBase[DeployTaskResponse]: 包含设备下发日志及状态的详细数据。
     """
     task = await service.get_task(task_id)
-    return ResponseBase(data=DeployTaskResponse.model_validate(task))
+    data = DeployTaskResponse.model_validate(task)
+    data.device_results = await service.get_device_results(task)
+    return ResponseBase(data=data)

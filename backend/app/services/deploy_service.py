@@ -21,7 +21,7 @@ from app.crud.crud_task import CRUDTask
 from app.crud.crud_task_approval import CRUDTaskApprovalStep
 from app.models.task import Task
 from app.models.task_approval import TaskApprovalStep
-from app.schemas.deploy import DeployCreateRequest
+from app.schemas.deploy import DeployCreateRequest, DeviceDeployResult
 
 
 class DeployService:
@@ -56,6 +56,50 @@ class DeployService:
         if not task:
             raise NotFoundException("任务不存在")
         return task
+
+    async def get_device_results(self, task: Task) -> list[DeviceDeployResult]:
+        """获取设备维度的执行结果列表（补充设备名称）。"""
+        device_ids = self._get_target_device_ids(task)
+        if not device_ids:
+            return []
+
+        # 批量查询设备信息
+        devices = await self.device_crud.get_multi_by_ids(self.db, ids=device_ids)
+        device_map = {d.id: d for d in devices}
+
+        # 解析任务执行结果
+        # task.result 结构可能是:
+        # 1. 正常执行: {"results": { "uuid": {"status": "success", "result": "...", "error": null} }}
+        # 2. 暂停/OTP: {"otp_required": true, ...}
+        # 3. 未开始: None or {}
+        task_results = {}
+        if task.result and isinstance(task.result, dict):
+            task_results = task.result.get("results", {})
+
+        output_list: list[DeviceDeployResult] = []
+        for dev_id in device_ids:
+            dev = device_map.get(dev_id)
+
+            # 从结果字典中获取详情
+            res_entry = task_results.get(str(dev_id)) or {}
+
+            # 状态映射
+            status = res_entry.get("status", "pending")
+            # 如果整个任务已失败且设备无结果，可能标记为 failed/skipped?
+            # 暂时默认为 pending，除非明确有结果
+
+            output_list.append(
+                DeviceDeployResult(
+                    device_id=dev_id,
+                    device_name=dev.name if dev else None,
+                    status=status,
+                    output=res_entry.get("result"),  # Nornir result usually in 'result'
+                    error=res_entry.get("error"),
+                    executed_at=None,  # 暂无单设备执行时间
+                )
+            )
+
+        return output_list
 
     @transactional()
     async def execute_task(self, task_id: UUID) -> Task:
