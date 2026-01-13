@@ -34,9 +34,7 @@ import {
   type DeviceLifecycleStatsResponse,
 } from '@/api/devices'
 import {
-  DeviceVendor,
   DeviceStatus,
-  DeviceGroup,
   AuthType,
   type DeviceVendorType,
   type DeviceStatusType,
@@ -467,9 +465,7 @@ const recycleBinRequest = async (params: DeviceSearchParams) => {
   }
 }
 
-const recycleBinContextMenuOptions: DropdownOption[] = [
-  { label: '恢复', key: 'restore' },
-]
+const recycleBinContextMenuOptions: DropdownOption[] = [{ label: '恢复', key: 'restore' }]
 
 const handleRecycleBinContextMenuSelect = async (key: string | number, row: Device) => {
   if (key === 'restore') {

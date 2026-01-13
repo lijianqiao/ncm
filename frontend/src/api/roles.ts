@@ -39,6 +39,18 @@ export function getRoles(params?: RoleSearchParams) {
   })
 }
 
+/**
+ * 获取角色选项列表（用于下拉选择等场景）
+ * 返回完整的角色列表，不分页
+ */
+export function getRoleOptions() {
+  return request<ResponseBase<PaginatedResponse<Role>>>({
+    url: '/roles/',
+    method: 'get',
+    params: { page_size: 500 }, // 获取足够多的角色用于选择
+  })
+}
+
 export function createRole(data: RoleCreate) {
   return request<ResponseBase<Role>>({
     url: '/roles/',

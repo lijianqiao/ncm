@@ -29,7 +29,7 @@ import {
   type User,
   type UserSearchParams,
 } from '@/api/users'
-import { getRoles } from '@/api/roles'
+import { getRoleOptions } from '@/api/roles'
 import { getDeptTree, type Dept } from '@/api/depts'
 import { formatDateTime } from '@/utils/date'
 import ProTable, { type FilterConfig } from '@/components/common/ProTable.vue'
@@ -445,20 +445,15 @@ const handleAssignRoles = async (row: User) => {
   checkedRoleIds.value = []
 
   try {
-    // parallel fetch: all roles and user roles
-    // Use page_size=100 for roles to get most of them. Ideal is a dedicated 'options' API but getRoles works.
-    const [rolesRes, userRolesRes] = await Promise.all([
-      getRoles({ page_size: 100 }),
-      getUserRoles(row.id),
-    ])
+    // 并行获取：所有角色选项和用户当前角色
+    const [rolesRes, userRolesRes] = await Promise.all([getRoleOptions(), getUserRoles(row.id)])
 
     const roles = rolesRes.data.items || []
     roleOptions.value = roles.map((r) => ({ label: r.name, value: r.id }))
 
     const userRoleData = userRolesRes.data
     if (Array.isArray(userRoleData)) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      checkedRoleIds.value = userRoleData.map((r: any) => (typeof r === 'object' ? r.id : r))
+      checkedRoleIds.value = userRoleData.map((r) => r.id)
     }
   } catch (error: unknown) {
     // 403 错误已由 request.ts 统一处理

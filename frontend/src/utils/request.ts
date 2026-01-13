@@ -43,29 +43,62 @@ const service: AxiosInstance = axios.create({
   withCredentials: true,
 })
 
-// 请求拦截器
-service.interceptors.request.use(
-  (config) => {
-    // 从内存读取 Access Token
-    if (accessToken) {
-      config.headers['Authorization'] = `Bearer ${accessToken}`
-    }
+// 请求取消管理器
+const pendingRequests = new Map<string, AbortController>()
 
-    // 为状态修改请求添加 CSRF Token
-    const method = config.method?.toLowerCase()
-    if (method && ['post', 'put', 'delete', 'patch'].includes(method)) {
-      const csrfToken = getCsrfToken()
-      if (csrfToken) {
-        config.headers['X-CSRF-Token'] = csrfToken
-      }
-    }
+/**
+ * 生成请求唯一标识
+ */
+function generateRequestKey(config: AxiosRequestConfig): string {
+  const { method, url, params, data } = config
+  return `${method}:${url}:${JSON.stringify(params || {})}:${JSON.stringify(data || {})}`
+}
 
-    return config
-  },
-  (error) => {
-    return Promise.reject(error)
-  },
-)
+/**
+ * 添加待处理请求
+ */
+function addPendingRequest(config: AxiosRequestConfig): void {
+  const requestKey = generateRequestKey(config)
+  if (pendingRequests.has(requestKey)) {
+    // 取消之前的相同请求
+    const controller = pendingRequests.get(requestKey)
+    controller?.abort()
+  }
+  const controller = new AbortController()
+  config.signal = controller.signal
+  pendingRequests.set(requestKey, controller)
+}
+
+/**
+ * 移除已完成的请求
+ */
+function removePendingRequest(config: AxiosRequestConfig): void {
+  const requestKey = generateRequestKey(config)
+  pendingRequests.delete(requestKey)
+}
+
+/**
+ * 取消所有待处理请求
+ */
+export function cancelAllRequests(): void {
+  pendingRequests.forEach((controller) => {
+    controller.abort()
+  })
+  pendingRequests.clear()
+}
+
+/**
+ * 取消指定请求
+ */
+export function cancelRequest(method: string, url: string): void {
+  const pattern = `${method}:${url}`
+  pendingRequests.forEach((controller, key) => {
+    if (key.startsWith(pattern)) {
+      controller.abort()
+      pendingRequests.delete(key)
+    }
+  })
+}
 
 // Token 刷新状态管理
 let isRefreshing = false
@@ -140,9 +173,39 @@ function handleAuthFailure(): void {
   }
 }
 
+// 请求拦截器（支持取消）
+service.interceptors.request.use(
+  (config) => {
+    // 添加请求到待处理列表（支持取消）
+    addPendingRequest(config)
+
+    // 从内存读取 Access Token
+    if (accessToken) {
+      config.headers['Authorization'] = `Bearer ${accessToken}`
+    }
+
+    // 为状态修改请求添加 CSRF Token
+    const method = config.method?.toLowerCase()
+    if (method && ['post', 'put', 'delete', 'patch'].includes(method)) {
+      const csrfToken = getCsrfToken()
+      if (csrfToken) {
+        config.headers['X-CSRF-Token'] = csrfToken
+      }
+    }
+
+    return config
+  },
+  (error) => {
+    return Promise.reject(error)
+  },
+)
+
 // 响应拦截器
 service.interceptors.response.use(
   (response: AxiosResponse<ResponseBase>) => {
+    // 移除已完成的请求
+    removePendingRequest(response.config)
+
     const res = response.data
     // 成功响应
     if (response.status === 200) {
@@ -152,6 +215,16 @@ service.interceptors.response.use(
     return Promise.reject(new Error(res.message || '请求错误'))
   },
   async (error) => {
+    // 移除已完成的请求
+    if (error.config) {
+      removePendingRequest(error.config)
+    }
+
+    // 如果是取消的请求，静默处理
+    if (axios.isCancel(error)) {
+      return Promise.reject(error)
+    }
+
     const originalRequest = error.config
 
     // 网络错误等无响应情况
@@ -214,7 +287,6 @@ service.interceptors.response.use(
         // 重放原始请求
         return service(originalRequest)
       } catch (refreshErr) {
-        console.error('Token 刷新失败:', refreshErr)
         onTokenRefreshFailed(refreshErr instanceof Error ? refreshErr : new Error('Token 刷新失败'))
         handleAuthFailure()
         return Promise.reject(refreshErr)

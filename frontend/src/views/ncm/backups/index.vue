@@ -3,7 +3,6 @@ import { ref, h, computed } from 'vue'
 import {
   NButton,
   NModal,
-  NFormItem,
   useDialog,
   type DataTableColumns,
   NTag,
@@ -202,7 +201,11 @@ const columns: DataTableColumns<Backup> = [
     width: 80,
     render: (row) => {
       const ok = Boolean(row.has_content)
-      return h(NTag, { type: ok ? 'success' : 'warning', bordered: false, size: 'small' }, { default: () => (ok ? '是' : '否') })
+      return h(
+        NTag,
+        { type: ok ? 'success' : 'warning', bordered: false, size: 'small' },
+        { default: () => (ok ? '是' : '否') },
+      )
     },
   },
   {
@@ -479,16 +482,13 @@ const {
   start: startPollingTaskStatus,
   stop: stopPollingTaskStatus,
   reset: resetBatchTask,
-} = useTaskPolling<BackupTaskStatus>(
-  (taskId) => getBackupTaskStatus(taskId),
-  {
-    onComplete: (status) => {
-      if (status.status === 'success') {
-        tableRef.value?.reload()
-      }
-    },
+} = useTaskPolling<BackupTaskStatus>((taskId) => getBackupTaskStatus(taskId), {
+  onComplete: (status) => {
+    if (status.status === 'success') {
+      tableRef.value?.reload()
+    }
   },
-)
+})
 
 const handleBatchBackup = async () => {
   deviceLoading.value = true
@@ -591,7 +591,9 @@ const closeBatchBackupModal = () => {
             </n-space>
           </div>
           <div class="backup-modal-scroll">
-            <pre class="backup-code"><code class="hljs" v-html="highlightedContentHtml"></code></pre>
+            <pre
+              class="backup-code"
+            ><code class="hljs" v-html="highlightedContentHtml"></code></pre>
           </div>
         </div>
       </template>
@@ -667,10 +669,7 @@ const closeBatchBackupModal = () => {
           </div>
           <div>
             <label style="display: block; margin-bottom: 8px">备份类型:</label>
-            <n-select
-              v-model:value="batchBackupModel.backup_type"
-              :options="backupTypeOptions"
-            />
+            <n-select v-model:value="batchBackupModel.backup_type" :options="backupTypeOptions" />
           </div>
         </n-space>
         <div style="margin-top: 20px; text-align: right">
@@ -743,11 +742,17 @@ const closeBatchBackupModal = () => {
       title="需要 OTP 验证码"
       alert-title="设备需要 OTP 认证"
       alert-text="请输入当前有效的 OTP 验证码以继续操作。"
-      :info-items="otpRequiredInfo
-        ? [
-            { label: '设备分组', value: deviceGroupLabels[otpRequiredInfo.device_group] || otpRequiredInfo.device_group },
-          ]
-        : []"
+      :info-items="
+        otpRequiredInfo
+          ? [
+              {
+                label: '设备分组',
+                value:
+                  deviceGroupLabels[otpRequiredInfo.device_group] || otpRequiredInfo.device_group,
+              },
+            ]
+          : []
+      "
       confirm-text="确认"
       @confirm="submitOTP"
     />

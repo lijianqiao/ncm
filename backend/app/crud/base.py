@@ -206,14 +206,29 @@ class CRUDBase[ModelType: Base, CreateSchemaType: BaseModel, UpdateSchemaType: B
         if not ids:
             return success_count, failed_ids
 
-        for id_ in ids:
-            # 获取记录 (包括已软删除的，用于硬删除场景)
-            if hard_delete:
-                query = select(self.model).where(self.model.id == id_)  # pyright: ignore
-                result = await db.execute(query)
-                obj = result.scalars().first()
-            else:
-                obj = await self.get(db, id=id_)
+        # 去重
+        unique_ids = list(dict.fromkeys(ids))
+
+        # 批量查询所有记录（解决 N+1 问题）
+        if hard_delete:
+            # 硬删除：包含已软删除的记录
+            query = select(self.model).where(
+                self.model.id.in_(unique_ids)  # pyright: ignore[reportAttributeAccessIssue]
+            )
+        else:
+            # 软删除：仅查询未删除的记录
+            query = select(self.model).where(
+                self.model.id.in_(unique_ids)  # pyright: ignore[reportAttributeAccessIssue]
+            )
+            if issubclass(self.model, SoftDeleteMixin):
+                query = query.where(self.model.is_deleted.is_(False))
+
+        result = await db.execute(query)
+        objects_map: dict[UUID, ModelType] = {obj.id: obj for obj in result.scalars().all()}  # pyright: ignore[reportAttributeAccessIssue]
+
+        # 处理每条记录
+        for id_ in unique_ids:
+            obj = objects_map.get(id_)
 
             if not obj:
                 failed_ids.append(id_)
@@ -279,12 +294,40 @@ class CRUDBase[ModelType: Base, CreateSchemaType: BaseModel, UpdateSchemaType: B
         success_count = 0
         failed_ids: list[UUID] = []
 
-        for id_ in ids:
+        if not ids:
+            return success_count, failed_ids
+
+        # 去重
+        unique_ids = list(dict.fromkeys(ids))
+
+        # 批量查询所有记录（包括已删除的）
+        query = select(self.model).where(
+            self.model.id.in_(unique_ids)  # pyright: ignore[reportAttributeAccessIssue]
+        )
+        result = await db.execute(query)
+        objects_map: dict[UUID, ModelType] = {
+            obj.id: obj  # pyright: ignore[reportAttributeAccessIssue]
+            for obj in result.scalars().all()  # pyright: ignore[reportAttributeAccessIssue]
+        }
+
+        # 处理每条记录
+        for id_ in unique_ids:
+            obj = objects_map.get(id_)
+
+            if not obj:
+                failed_ids.append(id_)
+                continue
+
             try:
-                obj = await self.restore(db, id=id_)
-                if obj:
+                if isinstance(obj, SoftDeleteMixin) and obj.is_deleted:
+                    obj.is_deleted = False
+                    db.add(obj)
+                    success_count += 1
+                elif isinstance(obj, SoftDeleteMixin) and not obj.is_deleted:
+                    # 记录未被删除，视为成功（幂等操作）
                     success_count += 1
                 else:
+                    # 非软删除模型，无法恢复
                     failed_ids.append(id_)
             except Exception:
                 failed_ids.append(id_)

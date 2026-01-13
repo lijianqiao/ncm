@@ -1,5 +1,6 @@
 import { request } from '@/utils/request'
 import type { ResponseBase, PaginatedResponse } from '@/types/api'
+import type { Role } from '@/api/roles'
 
 export interface User {
   id: string
@@ -66,15 +67,15 @@ export function updateUser(id: string | number, data: UserUpdate) {
 
 // User Role Assignment
 export function getUserRoles(userId: string) {
-  // Returns list of Role IDs
-  return request<ResponseBase<string[]>>({
+  // 返回用户角色列表
+  return request<ResponseBase<Role[]>>({
     url: `/users/${userId}/roles`,
     method: 'get',
   })
 }
 
 export function updateUserRoles(userId: string, roleIds: string[]) {
-  return request<ResponseBase<string[]>>({
+  return request<ResponseBase<Role[]>>({
     url: `/users/${userId}/roles`,
     method: 'put',
     data: { role_ids: roleIds },
