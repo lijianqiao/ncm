@@ -59,10 +59,28 @@ export interface ScanRequest {
 
 /** 扫描结果 */
 export interface ScanResult {
+  task_id?: string | null
+  subnet: string
+  scan_type: string
+  hosts_found: number
+  hosts: unknown[]
+  started_at: string | null
+  completed_at: string | null
+  duration_seconds: number | null
+  error: string | null
+}
+
+export interface ScanSubnetSummary {
+  subnet: string
+  hosts_found: number
+  error: string | null
+}
+
+export interface ScanBatchResult {
+  task_id: string
+  total_subnets: number
   total_hosts: number
-  online_hosts: number
-  new_hosts: number
-  matched_hosts: number
+  results: ScanSubnetSummary[]
 }
 
 /** 扫描任务响应 */
@@ -75,9 +93,9 @@ export interface ScanTaskResponse {
 /** 扫描任务状态 */
 export interface ScanTaskStatus {
   task_id: string
-  status: 'PENDING' | 'STARTED' | 'SUCCESS' | 'FAILURE'
-  progress: number | null
-  result: ScanResult | null
+  status: 'PENDING' | 'STARTED' | 'PROGRESS' | 'SUCCESS' | 'FAILURE' | 'RETRY' | 'REVOKED'
+  progress: number
+  result: ScanResult | ScanBatchResult | null
   error: string | null
 }
 

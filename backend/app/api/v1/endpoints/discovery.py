@@ -32,6 +32,7 @@ from app.schemas.discovery import (
     DeleteResponse,
     DiscoveryResponse,
     OfflineDevice,
+    ScanBatchResult,
     ScanRequest,
     ScanResult,
     ScanTaskResponse,
@@ -139,7 +140,10 @@ async def get_scan_task_status(task_id: str) -> ResponseBase[ScanTaskStatus]:
     if result.ready():
         if result.successful():
             task_result = result.get()
-            status.result = ScanResult.model_validate(task_result)
+            if isinstance(task_result, dict) and ("total_subnets" in task_result or "results" in task_result):
+                status.result = ScanBatchResult.model_validate(task_result)
+            else:
+                status.result = ScanResult.model_validate(task_result)
         else:
             status.error = str(result.result)
 

@@ -94,13 +94,30 @@ class ScanResult(BaseModel):
     error: str | None = Field(default=None, description="错误信息")
 
 
+class ScanSubnetSummary(BaseModel):
+    """批量扫描单个网段摘要。"""
+
+    subnet: str = Field(..., description="扫描网段")
+    hosts_found: int = Field(default=0, description="发现主机数")
+    error: str | None = Field(default=None, description="错误信息")
+
+
+class ScanBatchResult(BaseModel):
+    """批量扫描任务结果。"""
+
+    task_id: str = Field(..., description="Celery 任务ID")
+    total_subnets: int = Field(default=0, description="扫描网段总数")
+    total_hosts: int = Field(default=0, description="发现主机总数")
+    results: list[ScanSubnetSummary] = Field(default_factory=list, description="各网段扫描结果摘要")
+
+
 class ScanTaskStatus(BaseModel):
     """扫描任务状态。"""
 
     task_id: str = Field(..., description="任务ID")
     status: str = Field(..., description="任务状态")
     progress: int = Field(default=0, description="进度百分比")
-    result: ScanResult | None = Field(default=None, description="扫描结果")
+    result: ScanResult | ScanBatchResult | None = Field(default=None, description="扫描结果")
     error: str | None = Field(default=None, description="错误信息")
 
 

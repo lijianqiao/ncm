@@ -11,7 +11,7 @@
 from typing import Any
 
 from app.celery.app import celery_app
-from app.celery.base import BaseTask, run_async
+from app.celery.base import BaseTask, run_async, safe_update_state
 from app.core.db import AsyncSessionLocal
 from app.core.logger import logger
 from app.crud.crud_device import device as device_crud
@@ -43,6 +43,8 @@ def scan_subnet(
         扫描结果字典
     """
 
+    celery_task_id = self.request.id
+
     async def _scan():
         async with AsyncSessionLocal() as db:
             scan_service = ScanService(
@@ -51,7 +53,12 @@ def scan_subnet(
             )
 
             # 阶段：开始扫描
-            self.update_state(state="PROGRESS", meta={"progress": 5, "stage": "scanning", "subnet": subnet})
+            safe_update_state(
+                self,
+                celery_task_id,
+                state="PROGRESS",
+                meta={"progress": 5, "stage": "scanning", "subnet": subnet},
+            )
 
             # 执行扫描
             resolved = scan_service.resolve_scan_type(scan_type)
@@ -76,15 +83,17 @@ def scan_subnet(
                 )
 
             # 阶段：扫描完成，准备入库
-            self.update_state(
+            safe_update_state(
+                self,
+                celery_task_id,
                 state="PROGRESS",
                 meta={"progress": 70, "stage": "saving", "subnet": subnet, "hosts_found": result.hosts_found},
             )
 
             # 处理扫描结果
+            result.task_id = celery_task_id
             if result.hosts:
-                result.task_id = self.request.id
-                processed = await scan_service.process_scan_result(db, scan_result=result, scan_task_id=self.request.id)
+                processed = await scan_service.process_scan_result(db, scan_result=result, scan_task_id=celery_task_id)
                 logger.info(
                     "扫描结果处理完成",
                     subnet=subnet,
@@ -93,7 +102,12 @@ def scan_subnet(
                 )
 
             # 阶段：完成
-            self.update_state(state="PROGRESS", meta={"progress": 100, "stage": "done", "subnet": subnet})
+            safe_update_state(
+                self,
+                celery_task_id,
+                state="PROGRESS",
+                meta={"progress": 100, "stage": "done", "subnet": subnet},
+            )
 
             return result.model_dump()
 
@@ -124,6 +138,8 @@ def scan_subnets_batch(
         批量扫描结果
     """
 
+    celery_task_id = self.request.id
+
     async def _batch_scan():
         results = []
         total_hosts = 0
@@ -139,7 +155,9 @@ def scan_subnets_batch(
             for idx, subnet in enumerate(subnets, start=1):
                 try:
                     base_progress = int(((idx - 1) / max(total, 1)) * 100)
-                    self.update_state(
+                    safe_update_state(
+                        self,
+                        celery_task_id,
                         state="PROGRESS",
                         meta={
                             "progress": base_progress,
@@ -172,7 +190,9 @@ def scan_subnets_batch(
                             error="未检测到可用扫描器：请安装 nmap 或 masscan，并确保在 PATH 中",
                         )
 
-                    self.update_state(
+                    safe_update_state(
+                        self,
+                        celery_task_id,
                         state="PROGRESS",
                         meta={
                             "progress": min(base_progress + 10, 95),
@@ -186,8 +206,8 @@ def scan_subnets_batch(
 
                     # 处理结果
                     if result.hosts:
-                        result.task_id = self.request.id
-                        await scan_service.process_scan_result(db, scan_result=result, scan_task_id=self.request.id)
+                        result.task_id = celery_task_id
+                        await scan_service.process_scan_result(db, scan_result=result, scan_task_id=celery_task_id)
                         total_hosts += result.hosts_found
 
                     results.append(
@@ -208,10 +228,15 @@ def scan_subnets_batch(
                         }
                     )
 
-            self.update_state(state="PROGRESS", meta={"progress": 100, "stage": "done", "total_hosts": total_hosts})
+            safe_update_state(
+                self,
+                celery_task_id,
+                state="PROGRESS",
+                meta={"progress": 100, "stage": "done", "total_hosts": total_hosts},
+            )
 
         return {
-            "task_id": self.request.id,
+            "task_id": celery_task_id,
             "total_subnets": len(subnets),
             "total_hosts": total_hosts,
             "results": results,
@@ -273,6 +298,8 @@ def scheduled_network_scan(self) -> dict[str, Any]:
     """
     from app.core.config import settings
 
+    celery_task_id = self.request.id
+
     async def _scheduled_scan():
         # 从配置读取待扫描网段列表
         subnets_str = settings.SCAN_SCHEDULED_SUBNETS.strip()
@@ -281,7 +308,7 @@ def scheduled_network_scan(self) -> dict[str, Any]:
         if not subnets:
             logger.info("定时扫描：未配置待扫描网段 (SCAN_SCHEDULED_SUBNETS)")
             return {
-                "task_id": self.request.id,
+                "task_id": celery_task_id,
                 "message": "未配置待扫描网段，请设置 SCAN_SCHEDULED_SUBNETS 环境变量",
                 "scanned": False,
             }
@@ -299,8 +326,8 @@ def scheduled_network_scan(self) -> dict[str, Any]:
                 try:
                     result = await scan_service.nmap_scan(subnet)
                     if result.hosts:
-                        result.task_id = self.request.id
-                        await scan_service.process_scan_result(db, scan_result=result, scan_task_id=self.request.id)
+                        result.task_id = celery_task_id
+                        await scan_service.process_scan_result(db, scan_result=result, scan_task_id=celery_task_id)
                         total_hosts += result.hosts_found
                     scan_results.append(
                         {
@@ -321,7 +348,7 @@ def scheduled_network_scan(self) -> dict[str, Any]:
             compare_result = await scan_service.compare_with_cmdb(db)
 
             return {
-                "task_id": self.request.id,
+                "task_id": celery_task_id,
                 "total_subnets": len(subnets),
                 "total_hosts": total_hosts,
                 "scan_results": scan_results,
@@ -345,6 +372,8 @@ def increment_offline_days(self) -> dict[str, Any]:
         更新结果
     """
 
+    celery_task_id = self.request.id
+
     async def _increment():
         async with AsyncSessionLocal() as db:
             count = await discovery_crud.increment_offline_days(db)
@@ -353,7 +382,7 @@ def increment_offline_days(self) -> dict[str, Any]:
             logger.info("离线天数更新完成", updated_count=count)
 
             return {
-                "task_id": self.request.id,
+                "task_id": celery_task_id,
                 "updated_count": count,
             }
 

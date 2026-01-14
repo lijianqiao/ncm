@@ -18,7 +18,7 @@ from typing import Any
 from sqlalchemy import select
 
 from app.celery.app import celery_app
-from app.celery.base import BaseTask, run_async
+from app.celery.base import BaseTask, run_async, safe_update_state
 from app.core.config import settings
 from app.core.db import AsyncSessionLocal
 from app.core.enums import AlertSeverity, AlertType, AuthType, BackupStatus, BackupType, DeviceStatus
@@ -659,14 +659,16 @@ def incremental_backup_check(self) -> dict[str, Any]:
         scheduled_time=start_time.isoformat(),
     )
 
-    self.update_state(
+    safe_update_state(
+        self,
+        task_id,
         state="PROGRESS",
         meta={"stage": "checking", "message": "正在检查配置变更..."},
     )
 
     try:
         # 执行增量检查
-        check_result = run_async(_perform_incremental_check(self))
+        check_result = run_async(_perform_incremental_check(self, task_id))
 
         end_time = datetime.now(UTC)
         result = {
@@ -699,7 +701,7 @@ def incremental_backup_check(self) -> dict[str, Any]:
         raise
 
 
-async def _perform_incremental_check(task) -> dict[str, Any]:
+async def _perform_incremental_check(task, celery_task_id: str | None) -> dict[str, Any]:
     """
     执行增量配置检查。
 
@@ -736,7 +738,9 @@ async def _perform_incremental_check(task) -> dict[str, Any]:
     for i in range(0, len(hosts_data), batch_size):
         batch = hosts_data[i : i + batch_size]
 
-        task.update_state(
+        safe_update_state(
+            task,
+            celery_task_id,
             state="PROGRESS",
             meta={
                 "stage": "checking",

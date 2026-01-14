@@ -124,6 +124,44 @@ def run_async[T](coro: Coroutine[Any, Any, T]) -> T:
     return future.result()
 
 
+def safe_update_state(
+    task: Task,
+    celery_task_id: str | None,
+    *,
+    state: str,
+    meta: dict[str, Any] | None = None,
+    **kwargs: Any,
+) -> bool:
+    """
+    安全更新工具
+
+    Args:
+        task: Celery 任务实例
+        celery_task_id: Celery 任务 ID
+        state: 任务状态
+        meta: 任务元数据
+        kwargs: 其他参数
+
+    Returns:
+        是否更新成功
+
+    """
+    if not celery_task_id:
+        return False
+    try:
+        task.update_state(task_id=celery_task_id, state=state, meta=meta, **kwargs)
+        return True
+    except Exception as e:
+        logger.warning(
+            "更新任务状态失败",
+            task_id=celery_task_id,
+            task_name=getattr(task, "name", None),
+            error=str(e),
+            exc_info=True,
+        )
+        return False
+
+
 class BaseTask(Task):
     """
     NCM 系统的 Celery 基础任务类。

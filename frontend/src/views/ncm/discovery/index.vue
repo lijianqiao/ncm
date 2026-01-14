@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, h, computed, onMounted } from 'vue'
+import { ref, h, computed } from 'vue'
 import {
   NButton,
   NModal,
@@ -114,7 +114,14 @@ const fetchDeptTree = async () => {
 
 const columns: DataTableColumns<DiscoveryRecord> = [
   { type: 'selection', fixed: 'left' },
-  { title: 'IP 地址', key: 'ip_address', width: 140, fixed: 'left', sorter: 'default', resizable: true },
+  {
+    title: 'IP 地址',
+    key: 'ip_address',
+    width: 140,
+    fixed: 'left',
+    sorter: 'default',
+    resizable: true,
+  },
   {
     title: 'MAC 地址',
     key: 'mac_address',
@@ -343,20 +350,17 @@ const {
   isPolling: scanIsPolling,
   start: startPollingScanStatus,
   clear: clearScanTask,
-} = usePersistentTaskPolling<ScanTaskStatus>(
-  (taskId) => getScanTaskStatus(taskId),
-  {
-    storageKey: DISCOVERY_SCAN_TASK_ID_KEY,
-    onComplete: () => {
-      clearScanTask()
-      tableRef.value?.reload()
-    },
-    onError: () => {
-      clearScanTask()
-      tableRef.value?.reload()
-    },
-  }
-)
+} = usePersistentTaskPolling<ScanTaskStatus>((taskId) => getScanTaskStatus(taskId), {
+  storageKey: DISCOVERY_SCAN_TASK_ID_KEY,
+  onComplete: () => {
+    clearScanTask()
+    tableRef.value?.reload()
+  },
+  onError: () => {
+    clearScanTask()
+    tableRef.value?.reload()
+  },
+})
 
 const scanButtonType = computed<'primary' | 'default' | 'success' | 'error'>(() => {
   const status = scanTaskStatus.value?.status
@@ -405,7 +409,10 @@ const submitScan = async () => {
     $alert.warning('请输入扫描网段')
     return
   }
-  const subnets = scanModel.value.subnets.split(/[,\n]/).map((s) => s.trim()).filter(Boolean)
+  const subnets = scanModel.value.subnets
+    .split(/[,\n]/)
+    .map((s) => s.trim())
+    .filter(Boolean)
   if (subnets.length === 0) {
     $alert.warning('请输入有效的网段')
     return
@@ -617,70 +624,70 @@ const handleCompareCMDB = () => {
       <div class="extra-modal-body">
         <n-tabs v-model:value="activeTab">
           <n-tab-pane name="shadow" tab="影子资产">
-          <div v-if="extraLoading" style="text-align: center; padding: 40px">加载中...</div>
-          <template v-else>
-            <n-alert type="info" style="margin-bottom: 16px">
-              影子资产是在网络中发现但未在 CMDB 中注册的设备
-            </n-alert>
-            <n-table :bordered="false" :single-line="false">
-              <thead>
-                <tr>
-                  <th>IP 地址</th>
-                  <th>MAC 地址</th>
-                  <th>厂商</th>
-                  <th>主机名</th>
-                  <th>首次发现</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-for="item in shadowAssets" :key="item.id">
-                  <td>{{ item.ip_address }}</td>
-                  <td>{{ item.mac_address || '-' }}</td>
-                  <td>{{ item.vendor || '-' }}</td>
-                  <td>{{ item.hostname || '-' }}</td>
-                  <td>{{ formatDateTime(item.first_seen_at) }}</td>
-                </tr>
-                <tr v-if="shadowAssets.length === 0">
-                  <td colspan="5" style="text-align: center">暂无影子资产</td>
-                </tr>
-              </tbody>
-            </n-table>
-          </template>
+            <div v-if="extraLoading" style="text-align: center; padding: 40px">加载中...</div>
+            <template v-else>
+              <n-alert type="info" style="margin-bottom: 16px">
+                影子资产是在网络中发现但未在 CMDB 中注册的设备
+              </n-alert>
+              <n-table :bordered="false" :single-line="false">
+                <thead>
+                  <tr>
+                    <th>IP 地址</th>
+                    <th>MAC 地址</th>
+                    <th>厂商</th>
+                    <th>主机名</th>
+                    <th>首次发现</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="item in shadowAssets" :key="item.id">
+                    <td>{{ item.ip_address }}</td>
+                    <td>{{ item.mac_address || '-' }}</td>
+                    <td>{{ item.vendor || '-' }}</td>
+                    <td>{{ item.hostname || '-' }}</td>
+                    <td>{{ formatDateTime(item.first_seen_at) }}</td>
+                  </tr>
+                  <tr v-if="shadowAssets.length === 0">
+                    <td colspan="5" style="text-align: center">暂无影子资产</td>
+                  </tr>
+                </tbody>
+              </n-table>
+            </template>
           </n-tab-pane>
           <n-tab-pane name="offline" tab="离线设备">
-          <div v-if="extraLoading" style="text-align: center; padding: 40px">加载中...</div>
-          <template v-else>
-            <n-space style="margin-bottom: 16px">
-              <span>离线天数阈值:</span>
-              <n-input-number v-model:value="offlineDaysThreshold" :min="1" :max="365" />
-              <n-button @click="refreshOfflineDevices">刷新</n-button>
-            </n-space>
-            <n-table :bordered="false" :single-line="false">
-              <thead>
-                <tr>
-                  <th>设备名称</th>
-                  <th>IP 地址</th>
-                  <th>最后发现时间</th>
-                  <th>离线天数</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-for="item in offlineDevices" :key="item.device_id">
-                  <td>{{ item.device_name }}</td>
-                  <td>{{ item.ip_address }}</td>
-                  <td>{{ formatDateTime(item.last_seen_at) }}</td>
-                  <td>
-                    <n-tag :type="item.offline_days > 30 ? 'error' : 'warning'" size="small">
-                      {{ item.offline_days }} 天
-                    </n-tag>
-                  </td>
-                </tr>
-                <tr v-if="offlineDevices.length === 0">
-                  <td colspan="4" style="text-align: center">暂无离线设备</td>
-                </tr>
-              </tbody>
-            </n-table>
-          </template>
+            <div v-if="extraLoading" style="text-align: center; padding: 40px">加载中...</div>
+            <template v-else>
+              <n-space style="margin-bottom: 16px">
+                <span>离线天数阈值:</span>
+                <n-input-number v-model:value="offlineDaysThreshold" :min="1" :max="365" />
+                <n-button @click="refreshOfflineDevices">刷新</n-button>
+              </n-space>
+              <n-table :bordered="false" :single-line="false">
+                <thead>
+                  <tr>
+                    <th>设备名称</th>
+                    <th>IP 地址</th>
+                    <th>最后发现时间</th>
+                    <th>离线天数</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="item in offlineDevices" :key="item.device_id">
+                    <td>{{ item.device_name }}</td>
+                    <td>{{ item.ip_address }}</td>
+                    <td>{{ formatDateTime(item.last_seen_at) }}</td>
+                    <td>
+                      <n-tag :type="item.offline_days > 30 ? 'error' : 'warning'" size="small">
+                        {{ item.offline_days }} 天
+                      </n-tag>
+                    </td>
+                  </tr>
+                  <tr v-if="offlineDevices.length === 0">
+                    <td colspan="4" style="text-align: center">暂无离线设备</td>
+                  </tr>
+                </tbody>
+              </n-table>
+            </template>
           </n-tab-pane>
         </n-tabs>
       </div>
