@@ -165,6 +165,8 @@ PLATFORM_SCRAPLI_OPTIONS: dict[str, dict[str, Any]] = {
         "auth_strict_key": False,
         "ssh_config_file": False,
         "transport": "asyncssh",
+        "timeout_transport": 90,
+        "timeout_ops": 90,
     },
 }
 

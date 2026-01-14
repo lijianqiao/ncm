@@ -121,6 +121,7 @@ export function collectDevice(deviceId: string, data: CollectDeviceRequest = {})
     url: `/collect/device/${deviceId}`,
     method: 'post',
     data,
+    timeout: 120000,
   })
 }
 

@@ -87,6 +87,13 @@ const otpInfoItems = otpFlow.infoItems
 const submitOTP = otpFlow.confirm
 const closeOTP = otpFlow.close
 
+const getRequestErrorMessage = (error: unknown): string => {
+  if (error instanceof Error && error.message) return error.message
+  const maybe = error as { message?: unknown }
+  if (typeof maybe?.message === 'string' && maybe.message.trim()) return maybe.message
+  return '请求失败'
+}
+
 const runManualCollect = async (deviceId: string, otpCode?: string) => {
   collectLoading.value = true
   try {
@@ -96,6 +103,20 @@ const runManualCollect = async (deviceId: string, otpCode?: string) => {
       $alert.success('采集完成')
     } else {
       $alert.error(res.data.error_message || res.message || '采集失败')
+    }
+  } catch (error: unknown) {
+    const err = error as { response?: { status?: number } }
+    if (err?.response?.status === 428) throw error
+
+    const device = getSelectedDevice(deviceId)
+    collectResult.value = {
+      device_id: deviceId,
+      device_name: device?.name || null,
+      success: false,
+      arp_count: 0,
+      mac_count: 0,
+      error_message: getRequestErrorMessage(error),
+      duration_ms: null,
     }
   } finally {
     collectLoading.value = false
@@ -123,13 +144,7 @@ const submitManualCollect = async () => {
     return
   }
 
-  try {
-    await runManualCollect(collectModel.value.device_id)
-  } catch (error: unknown) {
-    otpFlow.tryHandleOtpRequired(error, async (otpCode) => {
-      await runManualCollect(collectModel.value.device_id, otpCode)
-    })
-  }
+  await runManualCollect(collectModel.value.device_id)
 }
 
 // ==================== 批量采集 ====================

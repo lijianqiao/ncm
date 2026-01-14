@@ -52,15 +52,39 @@ export function useOtpFlow(options?: { length?: number }) {
     pendingAction.value = null
   }
 
+  const extractOtpRequiredDetails = (error: unknown): OtpRequiredDetails | null => {
+    const err = error as AxiosLikeError
+    if (err?.response?.status !== 428) return null
+    const d = err?.response?.data?.details as OtpRequiredDetails | undefined
+    if (!d || !d.dept_id || !d.device_group) return null
+    return {
+      dept_id: d.dept_id,
+      device_group: d.device_group,
+      failed_devices: d.failed_devices || [],
+    }
+  }
+
   const confirm = async (otpCode: string) => {
     const action = pendingAction.value
     if (!action) return
     if (otpCode.trim().length !== length) return
 
+    show.value = false
     loading.value = true
     try {
       await action(otpCode.trim())
-      close()
+      details.value = null
+      pendingAction.value = null
+    } catch (error: unknown) {
+      const nextDetails = extractOtpRequiredDetails(error)
+      if (nextDetails) {
+        details.value = nextDetails
+        pendingAction.value = action
+        show.value = true
+      } else {
+        details.value = null
+        pendingAction.value = null
+      }
     } finally {
       loading.value = false
     }
@@ -70,20 +94,10 @@ export function useOtpFlow(options?: { length?: number }) {
     error: unknown,
     action: (otpCode: string) => Promise<void>,
   ): boolean => {
-    const err = error as AxiosLikeError
-    if (err?.response?.status !== 428) return false
+    const d = extractOtpRequiredDetails(error)
+    if (!d) return false
 
-    const d = err?.response?.data?.details as OtpRequiredDetails | undefined
-    if (!d || !d.dept_id || !d.device_group) return false
-
-    open(
-      {
-        dept_id: d.dept_id,
-        device_group: d.device_group,
-        failed_devices: d.failed_devices || [],
-      },
-      action,
-    )
+    open(d, action)
     return true
   }
 
@@ -99,4 +113,3 @@ export function useOtpFlow(options?: { length?: number }) {
     tryHandleOtpRequired,
   }
 }
-
