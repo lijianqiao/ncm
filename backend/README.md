@@ -1,21 +1,61 @@
 # NCM 网络配置管理系统（后端）
 
-基于 FastAPI + SQLAlchemy 2.0（Async）构建的网络配置管理系统后端，提供 RBAC、审计、网络自动化等能力。
+基于 **FastAPI + SQLAlchemy 2.0 (Async)** 构建的网络配置管理系统后端，专注于网络自动化与配置生命周期管理。
+
+## 🌟 网络自动化核心
+
+### 异步网络任务架构
+
+```
+┌─────────────┐    ┌─────────────┐    ┌─────────────┐
+│  FastAPI    │───▶│   Celery    │───▶│  Scrapli    │
+│  REST API   │    │   Worker    │    │   Async     │
+└─────────────┘    └─────────────┘    └─────────────┘
+                          │
+                   ┌──────┴──────┐
+                   │   Nornir    │
+                   │  Inventory  │
+                   └─────────────┘
+```
+
+### 关键模块
+
+| 模块           | 路径                             | 功能                                                             |
+| -------------- | -------------------------------- | ---------------------------------------------------------------- |
+| **平台配置**   | `app/network/platform_config.py` | 统一命令映射、Scrapli 参数、NTC 解析模板                         |
+| **异步任务**   | `app/network/async_tasks.py`     | Scrapli Async 封装：`async_send_command`、`async_collect_config` |
+| **异步执行器** | `app/network/async_runner.py`    | 并发控制、结果聚合、超时处理                                     |
+| **备份任务**   | `app/celery/tasks/backup.py`     | 配置采集、MD5 去重、变更告警                                     |
+| **发现任务**   | `app/celery/tasks/discovery.py`  | SNMP 扫描、LLDP 拓扑、CMDB 对账                                  |
+| **部署任务**   | `app/celery/tasks/deploy.py`     | 批量下发、命令审计、回滚支持                                     |
+
+### 支持的设备平台
+
+| 厂商    | 平台标识        | Scrapli Driver         |
+| ------- | --------------- | ---------------------- |
+| Cisco   | `cisco_iosxe`   | `AsyncIOSXEDriver`     |
+| Cisco   | `cisco_nxos`    | `AsyncNXOSDriver`      |
+| Huawei  | `huawei_vrp`    | `AsyncHuaweiVRPDriver` |
+| H3C     | `hp_comware`    | `AsyncHPComwareDriver` |
+| Arista  | `arista_eos`    | `AsyncEOSDriver`       |
+| Juniper | `juniper_junos` | `AsyncJunosDriver`     |
 
 ## ✨ 核心特性
 
-### 🕸️ 网络自动化 (Network Automation)
-*   **配置备份**: 支持多品牌设备（Cisco, Huawei, H3C 等）的配置自动备份与版本对比。
-*   **资产发现**: 基于 SNMP/SSH 的资产发现与 CMDB 自动对账。
-*   **异步任务**: 基于 Celery 的大规模并行配置采集、下发与巡检。
-*   **命令审计**: 记录所有网络配置变更操作，支持差异对比（Diff）。
-*   **拓扑发现**: 自动采集 LLDP 邻居关系，构建网络物理拓扑。
+### 🕸️ 网络自动化
 
-### 🛡️ 基础架构 (Infrastructure)
-*   **RBAC 权限**: 细粒度控制用户对设备、菜单及操作码的访问。
-*   **审计日志**: 全量记录 API 调用与背景操作详情。
-*   **安全防护**: JWT 双令牌轮换、CSRF 防护、HttpOnly Cookie。
-*   **异步链路**: 全链路采用 `async/await`，适配高并发网络探测。
+- **配置备份**：多品牌设备配置自动备份、MD5 去重、版本差异对比
+- **批量下发**：模板变量替换、OTP 动态密码、断点续传
+- **资产发现**：SNMP/SSH 扫描、设备指纹识别、CMDB 自动对账
+- **拓扑发现**：LLDP/CDP 邻居采集，构建物理拓扑
+- **告警系统**：配置变更检测、Webhook 通知
+
+### 🛡️ 基础架构
+
+- **RBAC 权限**：细粒度控制用户对设备、菜单及操作码的访问
+- **审计日志**：全量记录 API 调用与后台操作详情
+- **安全防护**：JWT 双令牌轮换、CSRF 防护、HttpOnly Cookie
+- **异步链路**：全链路 `async/await`，支持 100+ 设备并行采集
 
 ## 🚀 快速开始
 
@@ -30,71 +70,106 @@ uv venv --python 3.13
 uv sync
 ```
 
-Windows 说明：一般无需手动 activate，直接使用 `uv run ...` 即可。
+### 2. 环境配置
 
-### 2. 初始化环境
 ```bash
 cp .env.example .env
-# 按需修改：数据库、Redis、SECRET_KEY、CORS 等
+# 按需修改：数据库、Redis、SECRET_KEY、网络任务参数等
 ```
 
-Windows PowerShell 可用：
+关键网络配置项：
 
-```bash
-Copy-Item .env.example .env
+```env
+# 异步网络任务开关
+USE_ASYNC_NETWORK_TASKS=true
+
+# SSH 超时配置
+ASYNC_SSH_TIMEOUT=60
+ASYNC_SSH_CONNECT_TIMEOUT=30
+ASYNC_SSH_MAX_WORKERS=100
+
+# 定时扫描网段
+SCAN_SCHEDULED_SUBNETS=192.168.1.0/24,10.0.0.0/24
 ```
 
-### 3. 数据库与数据
+### 3. 数据库初始化
+
 ```bash
-# 应用现有迁移
+# 应用迁移
 uv run alembic upgrade head
 
-# 初始化管理员账号（默认：admin/123123，详见 .env）
-uv run initial_data.py --init  # 初始账号: admin/123123
-```
-
-如需开发新增迁移（仅开发者使用）：
-
-```bash
-uv run alembic revision --autogenerate -m "your_message"
-uv run alembic upgrade head
+# 初始化管理员账号
+uv run initial_data.py --init
 ```
 
 ### 4. 启动服务
+
 ```bash
 # 启动 API 服务
 uv run start.py
 
-# 启动 Celery Worker (处理网络采集任务)
+# 启动 Celery Worker（网络任务处理）
 uv run start_worker.py
 ```
 
 API 文档：http://127.0.0.1:8000/docs
 
+## 📂 目录结构
+
+```
+app/
+├── api/v1/endpoints/     # REST API 接口
+│   ├── backups.py        # 配置备份
+│   ├── devices.py        # 设备管理
+│   ├── discovery.py      # 资产发现
+│   ├── topology.py       # 拓扑发现
+│   └── alerts.py         # 告警管理
+│
+├── network/              # 网络驱动层
+│   ├── platform_config.py    # 平台配置中心
+│   ├── async_tasks.py        # Scrapli 异步任务
+│   ├── async_runner.py       # 并发执行器
+│   └── nornir_config.py      # Nornir 初始化
+│
+├── celery/tasks/         # Celery 后台任务
+│   ├── backup.py         # 配置备份任务
+│   ├── discovery.py      # 网络发现任务
+│   └── deploy.py         # 配置下发任务
+│
+├── services/             # 业务逻辑层
+│   ├── backup_service.py
+│   ├── device_service.py
+│   └── alert_service.py
+│
+└── models/               # SQLAlchemy 模型
+    ├── device.py
+    ├── backup.py
+    └── alert.py
+```
+
 ## 🧩 常见问题
 
-### 1) Alembic 迁移报 Multiple head revisions
+### 1) Scrapli 平台未找到
 
-并行开发导致迁移分叉时会出现此错误。
+确保设备的 `platform` 字段使用正确的 Scrapli 平台标识（如 `hp_comware` 而非 `h3c`）。系统会自动转换常见厂商名。
 
-```bash
-uv run alembic heads
+### 2) SSH 连接超时
+
+调整 `.env` 中的超时参数：
+
+```env
+ASYNC_SSH_TIMEOUT=120
+ASYNC_SSH_CONNECT_TIMEOUT=60
 ```
 
-- 若存在多个 head：需要创建 merge revision 合并；确保拉取到最新代码后再执行：
+### 3) Celery Worker 任务不执行
+
+确保 Redis 服务正常，检查 Worker 日志：
 
 ```bash
-uv run alembic upgrade head
+uv run start_worker.py
 ```
 
-### 2) 数据库连接失败
+## 📄 License
 
-- 优先检查 `.env` 中 POSTGRES_* 配置与 PostgreSQL 是否可连接。
-- 若你使用容器/远程数据库，注意端口、用户名与网络访问策略。
-
-## 📂 目录结构 (简)
-*   `app/api/v1/endpoints/`: 业务接口（含备份、资产、巡检等）。
-*   `app/celery/tasks/`: 网络自动化后台任务逻辑。
-*   `app/services/`: 业务 Service 层（原子化编排）。
-*   `app/network/`: 网络驱动与协议封装（Netmiko/Scrapli等集成）。
-
+MIT License

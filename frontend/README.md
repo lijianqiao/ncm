@@ -1,21 +1,51 @@
-# NCM 管理后台（前端）
+# NCM 网络配置管理系统（前端）
 
-基于 Vue 3 + Naive UI + Vite + Pinia + TypeScript 构建的管理后台前端。
+基于 **Vue 3 + Naive UI + Vite + TypeScript** 构建的网络配置管理前端，提供直观的网络自动化操作界面。
 
-## 主要特性
+## 🌟 网络管理界面
 
-- **RBAC 权限控制**：基于角色/菜单/按钮的细粒度权限管理
-- **动态路由**：根据后端返回的菜单结构动态生成前端路由
-- **系统管理**：
-  - **用户/角色/菜单**：核心权限模型管理
-  - **部门管理**：树形结构展示、层级管理、回收站功能
-  - **会话管理**：实时监控在线用户、支持强制下线
-  - **操作/登录日志**：全方位审计追踪
-- **安全增强**：采用 HttpOnly Cookie + CSRF 认证方案，支持 Token 无感刷新
-- **性能优化**：ProTable 组件支持虚拟滚动，Vite 产物分包策略
-- **现代化架构**：TypeScript 类型安全，Vite 极速构建
+### 核心功能页面
 
-## 快速开始
+| 页面         | 路径             | 功能                              |
+| ------------ | ---------------- | --------------------------------- |
+| **设备管理** | `/ncm/devices`   | 网络设备 CRUD、状态监控、凭据管理 |
+| **配置备份** | `/ncm/backups`   | 手动/批量备份、版本对比、内容查看 |
+| **配置下发** | `/ncm/deploy`    | 模板部署、命令预览、执行结果回放  |
+| **资产发现** | `/ncm/discovery` | 网段扫描、CMDB 对账、扫描历史     |
+| **拓扑展示** | `/ncm/topology`  | 物理拓扑可视化、设备详情弹窗      |
+| **告警管理** | `/ncm/alerts`    | 告警列表、批量确认/关闭、筛选     |
+| **预设管理** | `/ncm/presets`   | 命令模板管理、变量定义            |
+
+### 特色组件
+
+- **ProTable**：通用表格组件，支持远程分页、筛选、排序、右键菜单、虚拟滚动
+- **OtpModal**：OTP 动态密码输入弹窗，支持设备组级别认证
+- **useTaskPolling**：异步任务状态轮询 Composable，自动检测认证失败
+- **vis-network**：网络拓扑可视化，支持交互操作
+
+## ✨ 核心特性
+
+### 🕸️ 网络自动化
+
+- **批量操作**：支持多设备选择、批量备份/下发/删除
+- **实时状态**：任务进度轮询、成功/失败统计
+- **OTP 认证**：动态密码输入、设备组缓存、认证失败自动提示
+- **差异对比**：配置版本 Diff 展示、语法高亮
+- **拓扑可视化**：vis-network 物理拓扑、设备状态着色
+
+### 🛡️ 权限管理
+
+- **RBAC 权限控制**：基于角色/菜单/按钮的细粒度权限
+- **动态路由**：根据后端返回的菜单结构动态生成路由
+- **部门数据隔离**：基于部门的设备访问控制
+
+### 🔒 安全增强
+
+- **HttpOnly Cookie + CSRF**：防止 XSS/CSRF 攻击
+- **Token 无感刷新**：Access Token 过期自动刷新
+- **请求取消**：相同请求自动取消前一个，防止竞态
+
+## 🚀 快速开始
 
 ### 1. 环境准备
 
@@ -30,19 +60,21 @@ pnpm install
 
 ### 3. 环境配置
 
-复制 `.env.example` 并按需修改：
-
-- `VITE_API_BASE_URL`：接口基础路径，默认 `/api/v1`
-- `VITE_PROXY_TARGET`：开发环境代理目标（后端真实地址），默认 `http://127.0.0.1:8000`
-
 ```bash
 cp .env.example .env.development
 ```
 
-Windows PowerShell 可用：
+关键配置项：
 
-```bash
-Copy-Item .env.example .env.development
+```env
+# API 基础路径
+VITE_API_BASE_URL=/api/v1
+
+# 开发代理目标
+VITE_PROXY_TARGET=http://127.0.0.1:8000
+
+# 站点标题
+VITE_SITE_TITLE=NCM 网络配置管理
 ```
 
 ### 4. 启动开发
@@ -51,28 +83,51 @@ Copy-Item .env.example .env.development
 pnpm dev
 ```
 
-启动后默认访问：http://127.0.0.1:5173
+访问地址：http://127.0.0.1:5173
 
-## 常用命令
+## 📂 目录结构
 
-| 命令          | 说明                  |
-| ------------- | --------------------- |
-| `pnpm dev`    | 启动本地开发服务      |
-| `pnpm build`  | 打包构建生产环境      |
-| `pnpm lint`   | 代码检查与修复        |
-| `pnpm format` | 代码格式化 (Prettier) |
+```
+src/
+├── api/                  # API 接口定义
+│   ├── devices.ts        # 设备管理
+│   ├── backups.ts        # 配置备份
+│   ├── discovery.ts      # 资产发现
+│   ├── topology.ts       # 拓扑发现
+│   └── alerts.ts         # 告警管理
+│
+├── views/ncm/            # 网络管理页面
+│   ├── devices/          # 设备管理
+│   ├── backups/          # 配置备份
+│   ├── deploy/           # 配置下发
+│   ├── discovery/        # 资产发现
+│   ├── topology/         # 拓扑展示
+│   ├── alerts/           # 告警管理
+│   └── presets/          # 预设管理
+│
+├── components/           # 公共组件
+│   └── common/
+│       ├── ProTable.vue  # 通用表格
+│       └── OtpModal.vue  # OTP 弹窗
+│
+├── composables/          # 组合式函数
+│   └── useTaskPolling.ts # 任务轮询
+│
+├── stores/               # Pinia 状态
+├── router/               # 路由配置
+└── utils/                # 工具函数
+```
 
-## 联调说明
+## 🧩 常用命令
 
-- 前端默认通过 Vite proxy 转发请求到后端：`VITE_PROXY_TARGET`。
-- 后端启动后可访问 Swagger：http://127.0.0.1:8000/docs
+| 命令              | 说明                |
+| ----------------- | ------------------- |
+| `pnpm dev`        | 启动本地开发服务    |
+| `pnpm build`      | 打包构建生产环境    |
+| `pnpm lint`       | 代码检查与修复      |
+| `pnpm format`     | 代码格式化          |
+| `pnpm type-check` | TypeScript 类型检查 |
 
-## 目录结构
+## 📄 License
 
-- `src/api`: 后端接口定义
-- `src/components`: 公共组件 (ProTable, BaseForm 等)
-- `src/layouts`: 布局组件 (Sidebar, Header)
-- `src/views`: 页面视图
-- `src/stores`: Pinia 状态管理
-- `src/router`: 路由配置与守卫
-- `src/utils`: 工具函数 (Request, Auth, Date)
+MIT License
