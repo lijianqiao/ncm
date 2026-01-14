@@ -7,7 +7,7 @@
  * @Docs: 部门管理页面，支持树形结构展示、CRUD、回收站
  */
 
-import { ref, h, onMounted, computed } from 'vue'
+import { ref, h, computed } from 'vue'
 import {
   NButton,
   NForm,
@@ -359,9 +359,9 @@ const searchFilters: FilterConfig[] = [
   },
 ]
 
-onMounted(() => {
-  fetchDeptTree()
-})
+// 注意：不在 onMounted 中调用 fetchDeptTree()
+// 因为 ProTable 会在 onMounted 中调用 loadData，两个相似请求会导致第一个被取消
+// fetchDeptTree 会在需要时（如打开新建/编辑弹窗）调用
 </script>
 
 <template>

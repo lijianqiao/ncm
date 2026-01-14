@@ -75,9 +75,15 @@ export interface BatchBackupRequest {
 export interface BackupBatchResult {
   task_id: string
   total: number
-  success_count: number
-  failed_count: number
-  failed_devices: Array<{ device_id: string; error: string }>
+  /** 同步接口返回 */
+  success_count?: number
+  failed_count?: number
+  failed_devices?: Array<{ device_id: string; error: string }>
+  /** 异步任务返回 */
+  success?: number
+  failed?: number
+  /** 设备级别的详细结果（异步任务返回） */
+  results?: Record<string, { status: string; error?: string; result?: unknown }>
 }
 
 /** 备份任务状态 */
@@ -87,6 +93,33 @@ export interface BackupTaskStatus {
   progress: number
   result: BackupBatchResult | null
   error: string | null
+}
+
+export interface BackupBatchDeleteRequest {
+  backup_ids: string[]
+}
+
+export interface BackupBatchDeleteResult {
+  success_count: number
+  failed_ids: string[]
+}
+
+export interface BackupBatchRestoreRequest {
+  backup_ids: string[]
+}
+
+export interface BackupBatchRestoreResult {
+  success_count: number
+  failed_ids: string[]
+}
+
+export interface BackupBatchHardDeleteRequest {
+  backup_ids: string[]
+}
+
+export interface BackupBatchHardDeleteResult {
+  success_count: number
+  failed_ids: string[]
 }
 
 // ==================== API 函数 ====================
@@ -124,12 +157,69 @@ export function deleteBackup(id: string) {
   })
 }
 
+/** 批量删除备份（软删除） */
+export function batchDeleteBackups(data: BackupBatchDeleteRequest) {
+  return request<ResponseBase<BackupBatchDeleteResult>>({
+    url: '/backups/batch-delete',
+    method: 'post',
+    data,
+  })
+}
+
+/** 获取回收站备份列表 */
+export function getRecycleBackups(params?: BackupSearchParams) {
+  return request<ResponseBase<PaginatedResponse<Backup>>>({
+    url: '/backups/recycle',
+    method: 'get',
+    params,
+  })
+}
+
+/** 恢复备份 */
+export function restoreBackup(id: string) {
+  return request<ResponseBase<{ id: string; restored: boolean }>>({
+    url: `/backups/${id}/restore`,
+    method: 'post',
+  })
+}
+
+/** 批量恢复备份 */
+export function batchRestoreBackups(data: BackupBatchRestoreRequest) {
+  return request<ResponseBase<BackupBatchRestoreResult>>({
+    url: '/backups/batch-restore',
+    method: 'post',
+    data,
+  })
+}
+
+/** 硬删除备份 */
+export function hardDeleteBackup(id: string) {
+  return request<ResponseBase<{ id: string; hard_deleted: boolean }>>({
+    url: `/backups/${id}/hard`,
+    method: 'delete',
+  })
+}
+
+/** 批量硬删除备份 */
+export function batchHardDeleteBackups(data: BackupBatchHardDeleteRequest) {
+  return request<ResponseBase<BackupBatchHardDeleteResult>>({
+    url: '/backups/batch-hard-delete',
+    method: 'post',
+    data,
+  })
+}
+
 /** 手动备份单设备 */
-export function backupDevice(deviceId: string, data?: { backup_type?: BackupTypeType; otp_code?: string }) {
+export function backupDevice(
+  deviceId: string,
+  data?: { backup_type?: BackupTypeType; otp_code?: string },
+) {
   return request<ResponseBase<Backup>>({
     url: `/backups/device/${deviceId}`,
     method: 'post',
     data: data ?? {},
+    // 手动备份属于长耗时操作（设备侧执行 show current-config 可能 10s+）
+    timeout: 60_000,
   })
 }
 

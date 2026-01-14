@@ -19,9 +19,15 @@ import {
   getBackups,
   getBackupContent,
   deleteBackup,
+  batchDeleteBackups,
   backupDevice,
   batchBackup,
   getBackupTaskStatus,
+  getRecycleBackups,
+  restoreBackup,
+  batchRestoreBackups,
+  hardDeleteBackup,
+  batchHardDeleteBackups,
   type Backup,
   type BackupSearchParams,
   type BackupType,
@@ -44,6 +50,11 @@ hljs.registerLanguage('plaintext', plaintext)
 
 const dialog = useDialog()
 const tableRef = ref()
+const recycleBinTableRef = ref()
+
+const checkedRowKeys = ref<Array<string | number>>([])
+const checkedRecycleBinRowKeys = ref<Array<string | number>>([])
+const showRecycleBin = ref(false)
 
 // ==================== 常量定义 ====================
 
@@ -242,6 +253,14 @@ const loadData = async (params: BackupSearchParams) => {
   }
 }
 
+const recycleBinRequest = async (params: BackupSearchParams) => {
+  const res = await getRecycleBackups(params)
+  return {
+    data: res.data.items,
+    total: res.data.total,
+  }
+}
+
 // ==================== 右键菜单 ====================
 
 const contextMenuOptions: DropdownOption[] = [
@@ -250,10 +269,20 @@ const contextMenuOptions: DropdownOption[] = [
   { label: '删除', key: 'delete' },
 ]
 
+const recycleBinContextMenuOptions: DropdownOption[] = [
+  { label: '恢复', key: 'restore' },
+  { label: '彻底删除', key: 'hard_delete' },
+]
+
 const handleContextMenuSelect = (key: string | number, row: Backup) => {
   if (key === 'view') handleViewContent(row)
   if (key === 'diff') handleViewDiff(row)
   if (key === 'delete') handleDelete(row)
+}
+
+const handleRecycleBinContextMenuSelect = (key: string | number, row: Backup) => {
+  if (key === 'restore') handleRestore(row)
+  if (key === 'hard_delete') handleHardDelete(row)
 }
 
 // ==================== 查看配置内容 ====================
@@ -328,11 +357,137 @@ const handleDelete = (row: Backup) => {
         await deleteBackup(row.id)
         $alert.success('备份已删除')
         tableRef.value?.reload()
+        if (showRecycleBin.value) recycleBinTableRef.value?.reload()
       } catch {
         // Error handled
       }
     },
   })
+}
+
+const handleRestore = (row: Backup) => {
+  dialog.warning({
+    title: '确认恢复',
+    content: `确定要恢复该备份吗？（设备: ${row.device?.name || row.device_name || row.device_id}）`,
+    positiveText: '确认',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      try {
+        await restoreBackup(row.id)
+        $alert.success('备份已恢复')
+        tableRef.value?.reload()
+        if (showRecycleBin.value) recycleBinTableRef.value?.reload()
+      } catch {
+        // Error handled
+      }
+    },
+  })
+}
+
+const handleHardDelete = (row: Backup) => {
+  dialog.error({
+    title: '确认彻底删除',
+    content: `彻底删除后不可恢复，确定继续吗？（设备: ${row.device?.name || row.device_name || row.device_id}）`,
+    positiveText: '确认',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      try {
+        await hardDeleteBackup(row.id)
+        $alert.success('备份已彻底删除')
+        tableRef.value?.reload()
+        if (showRecycleBin.value) recycleBinTableRef.value?.reload()
+      } catch {
+        // Error handled
+      }
+    },
+  })
+}
+
+const handleBatchDelete = (keys: Array<string | number>) => {
+  const ids = keys.map(String)
+  if (ids.length === 0) {
+    $alert.warning('请选择要删除的备份')
+    return
+  }
+  dialog.warning({
+    title: '确认批量删除',
+    content: `确定删除选中的 ${ids.length} 条备份吗？`,
+    positiveText: '确认',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      try {
+        const res = await batchDeleteBackups({ backup_ids: ids })
+        $alert.success(`已删除 ${res.data.success_count} 条`) 
+        tableRef.value?.reload()
+        checkedRowKeys.value = []
+        if (showRecycleBin.value) recycleBinTableRef.value?.reload()
+      } catch {
+        // Error handled
+      }
+    },
+  })
+}
+
+const handleBatchRestore = () => {
+  const ids = checkedRecycleBinRowKeys.value.map(String)
+  if (ids.length === 0) {
+    $alert.warning('请选择要恢复的备份')
+    return
+  }
+  dialog.warning({
+    title: '确认批量恢复',
+    content: `确定恢复选中的 ${ids.length} 条备份吗？`,
+    positiveText: '确认',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      try {
+        const res = await batchRestoreBackups({ backup_ids: ids })
+        $alert.success(`已恢复 ${res.data.success_count} 条`) 
+        checkedRecycleBinRowKeys.value = []
+        recycleBinTableRef.value?.reload()
+        tableRef.value?.reload()
+      } catch {
+        // Error handled
+      }
+    },
+  })
+}
+
+const handleRecycleBin = () => {
+  showRecycleBin.value = true
+  checkedRecycleBinRowKeys.value = []
+}
+
+const handleBatchHardDelete = () => {
+  const ids = checkedRecycleBinRowKeys.value.map(String)
+  if (ids.length === 0) {
+    $alert.warning('请选择要彻底删除的备份')
+    return
+  }
+  dialog.error({
+    title: '确认批量彻底删除',
+    content: `彻底删除后不可恢复，确定删除选中的 ${ids.length} 条备份吗？`,
+    positiveText: '确认',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      try {
+        const res = await batchHardDeleteBackups({ backup_ids: ids })
+        $alert.success(`已彻底删除 ${res.data.success_count} 条`)
+        checkedRecycleBinRowKeys.value = []
+        recycleBinTableRef.value?.reload()
+      } catch {
+        // Error handled
+      }
+    },
+  })
+}
+
+const handleMainSelectionChange = (keys: Array<string | number>) => {
+  checkedRowKeys.value = keys
+}
+
+const handleRecycleSelectionChange = (keys: Array<string | number>) => {
+  checkedRecycleBinRowKeys.value = keys
 }
 
 // ==================== 手动备份 ====================
@@ -487,8 +642,46 @@ const {
   reset: resetBatchTask,
 } = useTaskPolling<BackupTaskStatus>((taskId) => getBackupTaskStatus(taskId), {
   onComplete: (status) => {
+    // 检测认证失败：任务完成但有设备因认证失败而失败
+    const results = status.result?.results as
+      | Record<string, { status: string; error?: string }>
+      | undefined
+    if (results) {
+      const authFailedDevices: string[] = []
+      for (const [deviceName, result] of Object.entries(results)) {
+        if (result.error && result.error.includes('authentication')) {
+          authFailedDevices.push(deviceName)
+        }
+      }
+
+      if (authFailedDevices.length > 0) {
+        // 有认证失败的设备，弹出 OTP 输入框
+        $alert.warning(`${authFailedDevices.length} 台设备认证失败，请输入 OTP 验证码重试`)
+        otpRequiredInfo.value = {
+          dept_id: '', // 批量备份时需要从设备信息获取
+          device_group: '',
+          failed_devices: authFailedDevices,
+        }
+        pendingBatchBackup.value = true
+        showOTPModal.value = true
+        return
+      }
+    }
+
+    // 任务完成后，1 秒后自动关闭弹窗并刷新列表
     if (status.status === 'success') {
-      tableRef.value?.reload()
+      $alert.success(
+        `备份完成：成功 ${status.result?.success ?? 0} 台，失败 ${status.result?.failed ?? 0} 台`,
+      )
+      setTimeout(() => {
+        showBatchBackupModal.value = false
+        tableRef.value?.reload()
+      }, 1000)
+    } else if (status.status === 'failed') {
+      $alert.error(`备份失败: ${status.error || '未知错误'}`)
+      setTimeout(() => {
+        showBatchBackupModal.value = false
+      }, 2000)
     }
   },
 })
@@ -563,15 +756,66 @@ const closeBatchBackupModal = () => {
       search-placeholder="搜索设备名称"
       :search-filters="searchFilters"
       @context-menu-select="handleContextMenuSelect"
+      @update:checked-row-keys="handleMainSelectionChange"
+      @recycle-bin="handleRecycleBin"
+      show-recycle-bin
       :scroll-x="2200"
     >
       <template #toolbar-left>
         <n-space>
+          <n-button
+            v-if="checkedRowKeys.length > 0"
+            type="error"
+            @click="handleBatchDelete(checkedRowKeys)"
+          >
+            批量删除
+          </n-button>
           <n-button type="primary" @click="handleManualBackup">手动备份</n-button>
           <n-button type="info" @click="handleBatchBackup">批量备份</n-button>
         </n-space>
       </template>
     </ProTable>
+
+    <!-- 回收站 Modal -->
+    <n-modal
+      v-model:show="showRecycleBin"
+      preset="card"
+      title="回收站 (已删除备份)"
+      style="width: 900px"
+    >
+      <ProTable
+        ref="recycleBinTableRef"
+        title="已删除备份"
+        :columns="columns"
+        :request="recycleBinRequest"
+        :row-key="(row: Backup) => row.id"
+        :context-menu-options="recycleBinContextMenuOptions"
+        search-placeholder="搜索设备名称"
+        :search-filters="searchFilters"
+        @context-menu-select="handleRecycleBinContextMenuSelect"
+        @update:checked-row-keys="handleRecycleSelectionChange"
+        :scroll-x="2200"
+      >
+        <template #toolbar-left>
+          <n-space>
+            <n-button
+              type="success"
+              :disabled="checkedRecycleBinRowKeys.length === 0"
+              @click="handleBatchRestore"
+            >
+              批量恢复
+            </n-button>
+            <n-button
+              type="error"
+              :disabled="checkedRecycleBinRowKeys.length === 0"
+              @click="handleBatchHardDelete"
+            >
+              批量彻底删除
+            </n-button>
+          </n-space>
+        </template>
+      </ProTable>
+    </n-modal>
 
     <!-- 查看配置内容 Modal -->
     <n-modal
@@ -700,10 +944,14 @@ const closeBatchBackupModal = () => {
                 {{ batchTaskStatus.status }}
               </n-tag>
             </p>
+            <!-- 显示进度信息 -->
+            <p v-if="batchTaskStatus.progress && typeof batchTaskStatus.progress === 'object'" style="color: #666; font-size: 12px;">
+              {{ (batchTaskStatus.progress as Record<string, unknown>).message || (batchTaskStatus.progress as Record<string, unknown>).stage || '执行中...' }}
+            </p>
           </div>
           <n-progress
             type="line"
-            :percentage="batchTaskStatus.progress"
+            :percentage="batchTaskStatus.status === 'success' ? 100 : batchTaskStatus.status === 'failed' ? 100 : 50"
             :status="
               batchTaskStatus.status === 'success'
                 ? 'success'
@@ -711,14 +959,21 @@ const closeBatchBackupModal = () => {
                   ? 'error'
                   : 'default'
             "
+            :processing="batchTaskStatus.status === 'running' || batchTaskStatus.status === 'pending'"
           />
           <template v-if="batchTaskStatus.result">
             <div>
               <p>总数: {{ batchTaskStatus.result.total }}</p>
-              <p>成功: {{ batchTaskStatus.result.success_count }}</p>
-              <p>失败: {{ batchTaskStatus.result.failed_count }}</p>
+              <p>
+                成功:
+                {{ batchTaskStatus.result.success ?? batchTaskStatus.result.success_count ?? 0 }}
+              </p>
+              <p>
+                失败:
+                {{ batchTaskStatus.result.failed ?? batchTaskStatus.result.failed_count ?? 0 }}
+              </p>
             </div>
-            <div v-if="batchTaskStatus.result.failed_devices.length > 0">
+            <div v-if="batchTaskStatus.result.failed_devices?.length">
               <p>失败详情:</p>
               <ul>
                 <li v-for="item in batchTaskStatus.result.failed_devices" :key="item.device_id">
@@ -727,6 +982,7 @@ const closeBatchBackupModal = () => {
               </ul>
             </div>
           </template>
+
           <n-alert v-if="batchTaskStatus.error" type="error" :title="batchTaskStatus.error" />
         </n-space>
         <div

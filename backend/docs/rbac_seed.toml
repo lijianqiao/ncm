@@ -1058,6 +1058,84 @@ is_hidden = true
 permission = "backup:delete"
 parent_key = "backups"
 
+[[menus]]
+key = "perm_backup_batch_delete"
+title = "备份-批量删除"
+name = "PermBackupBatchDelete"
+path = ""
+component = ""
+icon = "KeyOutline"
+sort = 2034
+type = "PERMISSION"
+is_hidden = true
+permission = "backup:batch_delete"
+parent_key = "backups"
+
+[[menus]]
+key = "perm_backup_recycle_list"
+title = "备份-回收站-列表"
+name = "PermBackupRecycleList"
+path = ""
+component = ""
+icon = "KeyOutline"
+sort = 2035
+type = "PERMISSION"
+is_hidden = true
+permission = "backup:recycle:list"
+parent_key = "backups"
+
+[[menus]]
+key = "perm_backup_restore"
+title = "备份-恢复"
+name = "PermBackupRestore"
+path = ""
+component = ""
+icon = "KeyOutline"
+sort = 2036
+type = "PERMISSION"
+is_hidden = true
+permission = "backup:restore"
+parent_key = "backups"
+
+[[menus]]
+key = "perm_backup_batch_restore"
+title = "备份-批量恢复"
+name = "PermBackupBatchRestore"
+path = ""
+component = ""
+icon = "KeyOutline"
+sort = 2037
+type = "PERMISSION"
+is_hidden = true
+permission = "backup:batch_restore"
+parent_key = "backups"
+
+[[menus]]
+key = "perm_backup_hard_delete"
+title = "备份-硬删除"
+name = "PermBackupHardDelete"
+path = ""
+component = ""
+icon = "KeyOutline"
+sort = 2038
+type = "PERMISSION"
+is_hidden = true
+permission = "backup:hard_delete"
+parent_key = "backups"
+
+[[menus]]
+key = "perm_backup_batch_hard_delete"
+title = "备份-批量硬删除"
+name = "PermBackupBatchHardDelete"
+path = ""
+component = ""
+icon = "KeyOutline"
+sort = 2039
+type = "PERMISSION"
+is_hidden = true
+permission = "backup:batch_hard_delete"
+parent_key = "backups"
+
 # ---- 模板权限点（template:*）----
 
 [[menus]]
@@ -1538,6 +1616,12 @@ permissions = [
   "backup:list",
   "backup:create",
   "backup:delete",
+  "backup:batch_delete",
+  "backup:recycle:list",
+  "backup:restore",
+  "backup:batch_restore",
+  "backup:hard_delete",
+  "backup:batch_hard_delete",
   "collect:execute",
   "collect:view",
   "discovery:scan",

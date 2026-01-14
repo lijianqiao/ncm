@@ -147,3 +147,42 @@ class BackupBatchResult(BaseModel):
     # 断点续传信息
     can_resume: bool = Field(default=False, description="是否可以断点续传")
     pending_device_ids: list[UUID] | None = Field(default=None, description="待处理设备ID列表")
+
+
+class BackupBatchDeleteRequest(BaseModel):
+    """批量删除备份请求。"""
+
+    backup_ids: list[UUID] = Field(..., min_length=1, max_length=500, description="备份ID列表")
+
+
+class BackupBatchDeleteResult(BaseModel):
+    """批量删除备份结果。"""
+
+    success_count: int = Field(..., description="成功删除数量")
+    failed_ids: list[UUID] = Field(default_factory=list, description="删除失败的备份ID列表")
+
+
+class BackupBatchRestoreRequest(BaseModel):
+    """批量恢复备份请求。"""
+
+    backup_ids: list[UUID] = Field(..., min_length=1, max_length=500, description="备份ID列表")
+
+
+class BackupBatchRestoreResult(BaseModel):
+    """批量恢复备份结果。"""
+
+    success_count: int = Field(..., description="成功恢复数量")
+    failed_ids: list[UUID] = Field(default_factory=list, description="恢复失败的备份ID列表")
+
+
+class BackupBatchHardDeleteRequest(BaseModel):
+    """批量硬删除备份请求。"""
+
+    backup_ids: list[UUID] = Field(..., min_length=1, max_length=500, description="备份ID列表")
+
+
+class BackupBatchHardDeleteResult(BaseModel):
+    """批量硬删除备份结果。"""
+
+    success_count: int = Field(..., description="成功硬删除数量")
+    failed_ids: list[UUID] = Field(default_factory=list, description="硬删除失败的备份ID列表")

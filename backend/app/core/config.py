@@ -116,6 +116,7 @@ class Settings(BaseSettings):
     SCAN_DEFAULT_PORTS: str = "22,23,80,443,161"  # Nmap 默认扫描端口
     SCAN_TIMEOUT: int = 300  # 扫描超时时间（秒）
     SCAN_RATE: int = 1000  # Masscan 扫描速率（packets/sec）
+    SCAN_SCHEDULED_SUBNETS: str = ""  # 定时扫描网段列表（逗号分隔，如 "192.168.1.0/24,10.0.0.0/24"）
     CELERY_BEAT_SCAN_HOUR: int = 3  # 定时扫描小时（0-23）
     CELERY_BEAT_SCAN_MINUTE: int = 0  # 定时扫描分钟
 

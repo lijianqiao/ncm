@@ -157,3 +157,45 @@ async def close_alert(
         resp.related_device_name = alert.related_device.name
         resp.related_device_ip = alert.related_device.ip_address
     return ResponseBase(data=resp)
+
+
+@router.post("/batch/ack", response_model=ResponseBase[dict], summary="批量确认告警")
+async def batch_ack_alerts(
+    alert_ids: list[UUID],
+    alert_service: deps.AlertServiceDep,
+    current_user: deps.CurrentUser,
+    _: deps.User = Depends(deps.require_permissions([PermissionCode.ALERT_ACK.value])),
+) -> ResponseBase[dict]:
+    """批量确认告警。
+
+    Args:
+        alert_ids: 告警 ID 列表。
+        alert_service: 告警服务依赖。
+        current_user: 当前用户。
+
+    Returns:
+        ResponseBase[dict]: 批量操作结果 {"success": 数量, "failed": 数量}。
+    """
+    result = await alert_service.batch_ack_alerts(alert_ids)
+    return ResponseBase(data=result)
+
+
+@router.post("/batch/close", response_model=ResponseBase[dict], summary="批量关闭告警")
+async def batch_close_alerts(
+    alert_ids: list[UUID],
+    alert_service: deps.AlertServiceDep,
+    current_user: deps.CurrentUser,
+    _: deps.User = Depends(deps.require_permissions([PermissionCode.ALERT_CLOSE.value])),
+) -> ResponseBase[dict]:
+    """批量关闭告警。
+
+    Args:
+        alert_ids: 告警 ID 列表。
+        alert_service: 告警服务依赖。
+        current_user: 当前用户。
+
+    Returns:
+        ResponseBase[dict]: 批量操作结果 {"success": 数量, "failed": 数量}。
+    """
+    result = await alert_service.batch_close_alerts(alert_ids)
+    return ResponseBase(data=result)

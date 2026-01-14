@@ -177,6 +177,7 @@ def backup_devices(
     hosts_data: list[dict[str, Any]],
     num_workers: int = 50,
     backup_type: str = BackupType.MANUAL.value,
+    operator_id: str | None = None,
 ) -> dict[str, Any]:
     """
     批量备份设备配置的 Celery 任务。
@@ -229,7 +230,14 @@ def backup_devices(
         summary = aggregate_results(results)
 
         # 保存备份结果到数据库
-        run_async(_save_backup_results(hosts_data, summary, backup_type=backup_type))
+        run_async(
+            _save_backup_results(
+                hosts_data,
+                summary,
+                backup_type=backup_type,
+                operator_id=operator_id,
+            )
+        )
 
         self.update_state(
             state="PROGRESS",
@@ -259,7 +267,10 @@ def backup_devices(
 
 
 async def _save_backup_results(
-    hosts_data: list[dict], summary: dict, backup_type: str = BackupType.MANUAL.value
+    hosts_data: list[dict],
+    summary: dict,
+    backup_type: str = BackupType.MANUAL.value,
+    operator_id: str | None = None,
 ) -> None:
     """保存备份结果到数据库（支持指定备份类型、md5 去重、保留策略）。"""
     async with AsyncSessionLocal() as db:
@@ -272,6 +283,8 @@ async def _save_backup_results(
             device_id = host.get("device_id")
             if not device_id:
                 continue
+
+            effective_operator_id = operator_id or host.get("operator_id")
 
             name = host.get("name", host.get("hostname"))
             result = summary.get("results", {}).get(name, {})
@@ -328,6 +341,7 @@ async def _save_backup_results(
                     md5_hash=md5_hash,
                     status=BackupStatus.SUCCESS if status == "success" else BackupStatus.FAILED,
                     error_message=error_message,
+                    operator_id=UUID(str(effective_operator_id)) if effective_operator_id else None,
                 )
 
                 backup = Backup(**backup_data.model_dump())
@@ -837,6 +851,7 @@ def async_backup_devices(
     hosts_data: list[dict[str, Any]],
     num_workers: int = 100,
     backup_type: str = BackupType.MANUAL.value,
+    operator_id: str | None = None,
 ) -> dict[str, Any]:
     """
     异步批量备份设备配置的 Celery 任务。
@@ -892,7 +907,14 @@ def async_backup_devices(
         summary = _aggregate_async_results(results, hosts_data)
 
         # 保存备份结果到数据库
-        run_async(_save_backup_results(hosts_data, summary, backup_type=backup_type))
+        run_async(
+            _save_backup_results(
+                hosts_data,
+                summary,
+                backup_type=backup_type,
+                operator_id=operator_id,
+            )
+        )
 
         self.update_state(
             state="PROGRESS",

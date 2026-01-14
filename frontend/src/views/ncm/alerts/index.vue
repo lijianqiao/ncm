@@ -16,6 +16,8 @@ import {
   getAlert,
   acknowledgeAlert,
   closeAlert,
+  batchAcknowledgeAlerts,
+  batchCloseAlerts,
   type Alert,
   type AlertSearchParams,
   type AlertType,
@@ -258,13 +260,16 @@ const handleBatchAcknowledge = () => {
     negativeText: '取消',
     onPositiveClick: async () => {
       try {
-        for (const id of selectedKeys) {
-          await acknowledgeAlert(id as string)
+        const res = await batchAcknowledgeAlerts(selectedKeys as string[])
+        const { success, failed } = res.data
+        if (failed > 0) {
+          $alert.info(`批量确认完成：成功 ${success} 条，跳过 ${failed} 条`)
+        } else {
+          $alert.success(`批量确认成功：${success} 条`)
         }
-        $alert.success('批量确认成功')
         tableRef.value?.reload()
       } catch {
-        // Error handled
+        // Error handled by global interceptor
       }
     },
   })
@@ -283,13 +288,16 @@ const handleBatchClose = () => {
     negativeText: '取消',
     onPositiveClick: async () => {
       try {
-        for (const id of selectedKeys) {
-          await closeAlert(id as string)
+        const res = await batchCloseAlerts(selectedKeys as string[])
+        const { success, failed } = res.data
+        if (failed > 0) {
+          $alert.info(`批量关闭完成：成功 ${success} 条，跳过 ${failed} 条`)
+        } else {
+          $alert.success(`批量关闭成功：${success} 条`)
         }
-        $alert.success('批量关闭成功')
         tableRef.value?.reload()
       } catch {
-        // Error handled
+        // Error handled by global interceptor
       }
     },
   })
@@ -317,12 +325,7 @@ const handleBatchClose = () => {
     </ProTable>
 
     <!-- 告警详情 Modal -->
-    <n-modal
-      v-model:show="showDetailModal"
-      preset="card"
-      title="告警详情"
-      style="width: 700px"
-    >
+    <n-modal v-model:show="showDetailModal" preset="card" title="告警详情" style="width: 700px">
       <div v-if="detailLoading" style="text-align: center; padding: 40px">加载中...</div>
       <template v-else-if="detailData">
         <n-descriptions :column="2" label-placement="left" bordered>

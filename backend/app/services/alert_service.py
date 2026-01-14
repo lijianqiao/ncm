@@ -81,3 +81,48 @@ class AlertService:
         update = AlertUpdate(status=AlertStatus.CLOSED)
         return await self.alert_crud.update(self.db, db_obj=alert, obj_in=update)
 
+    @transactional()
+    async def batch_ack_alerts(self, alert_ids: list[UUID]) -> dict[str, int]:
+        """
+        批量确认告警。
+
+        Args:
+            alert_ids: 告警 ID 列表
+
+        Returns:
+            dict: {"success": 成功数量, "failed": 失败数量}
+        """
+        success_count = 0
+        for alert_id in alert_ids:
+            try:
+                alert = await self.alert_crud.get(self.db, id=alert_id)
+                if alert and alert.status == AlertStatus.OPEN.value:
+                    update = AlertUpdate(status=AlertStatus.ACK)
+                    await self.alert_crud.update(self.db, db_obj=alert, obj_in=update)
+                    success_count += 1
+            except Exception:
+                pass
+        return {"success": success_count, "failed": len(alert_ids) - success_count}
+
+    @transactional()
+    async def batch_close_alerts(self, alert_ids: list[UUID]) -> dict[str, int]:
+        """
+        批量关闭告警。
+
+        Args:
+            alert_ids: 告警 ID 列表
+
+        Returns:
+            dict: {"success": 成功数量, "failed": 失败数量}
+        """
+        success_count = 0
+        for alert_id in alert_ids:
+            try:
+                alert = await self.alert_crud.get(self.db, id=alert_id)
+                if alert and alert.status != AlertStatus.CLOSED.value:
+                    update = AlertUpdate(status=AlertStatus.CLOSED)
+                    await self.alert_crud.update(self.db, db_obj=alert, obj_in=update)
+                    success_count += 1
+            except Exception:
+                pass
+        return {"success": success_count, "failed": len(alert_ids) - success_count}

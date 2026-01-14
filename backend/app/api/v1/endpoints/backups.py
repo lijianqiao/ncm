@@ -16,7 +16,13 @@ from app.api.deps import BackupServiceDep, CurrentUser, require_permissions
 from app.core.enums import BackupType
 from app.core.permissions import PermissionCode
 from app.schemas.backup import (
+    BackupBatchDeleteRequest,
+    BackupBatchDeleteResult,
+    BackupBatchHardDeleteRequest,
+    BackupBatchHardDeleteResult,
     BackupBatchRequest,
+    BackupBatchRestoreRequest,
+    BackupBatchRestoreResult,
     BackupBatchResult,
     BackupContentResponse,
     BackupDeviceRequest,
@@ -103,6 +109,58 @@ async def get_backups(
             content_path=backup.content_path,
         )
         backup_responses.append(resp)
+
+    return ResponseBase(
+        data=PaginatedResponse(
+            items=backup_responses,
+            total=total,
+            page=page,
+            page_size=page_size,
+        )
+    )
+
+
+@router.get(
+    "/recycle",
+    response_model=ResponseBase[PaginatedResponse[BackupResponse]],
+    dependencies=[Depends(require_permissions([PermissionCode.BACKUP_RECYCLE_LIST.value]))],
+    summary="获取回收站备份列表",
+    description="获取已软删除的备份列表。",
+)
+async def get_recycle_backups(
+    service: BackupServiceDep,
+    page: int = Query(default=1, ge=1, description="页码"),
+    page_size: int = Query(default=20, ge=1, le=500, description="每页数量"),
+    device_id: UUID | None = Query(default=None, description="设备ID筛选"),
+    backup_type: BackupType | None = Query(default=None, description="备份类型筛选"),
+) -> ResponseBase[PaginatedResponse[BackupResponse]]:
+    query = BackupListQuery(
+        page=page,
+        page_size=page_size,
+        device_id=device_id,
+        backup_type=backup_type,
+    )
+    items, total = await service.get_recycle_backups_paginated(query)
+
+    backup_responses = []
+    for backup in items:
+        backup_responses.append(
+            BackupResponse(
+                id=backup.id,
+                device_id=backup.device_id,
+                backup_type=backup.backup_type,
+                status=backup.status,
+                content_size=backup.content_size,
+                md5_hash=backup.md5_hash,
+                error_message=backup.error_message,
+                operator_id=_format_operator_display(backup.operator),
+                created_at=backup.created_at,
+                updated_at=backup.updated_at,
+                device=DeviceResponse.model_validate(backup.device) if backup.device else None,
+                content=backup.content,
+                content_path=backup.content_path,
+            )
+        )
 
     return ResponseBase(
         data=PaginatedResponse(
@@ -504,7 +562,92 @@ async def delete_backup(
         message="备份已删除",
     )
 
+
+@router.post(
+    "/batch-delete",
+    response_model=ResponseBase[BackupBatchDeleteResult],
+    dependencies=[Depends(require_permissions([PermissionCode.BACKUP_BATCH_DELETE.value]))],
+    summary="批量删除备份",
+    description="批量软删除备份记录（会尽力清理对象存储）。",
+)
+async def delete_backups_batch(
+    request: BackupBatchDeleteRequest,
+    service: BackupServiceDep,
+    current_user: CurrentUser,
+) -> ResponseBase[BackupBatchDeleteResult]:
+    result = await service.delete_backups_batch(request.backup_ids)
+
     return ResponseBase(
-        data={"id": str(backup_id), "deleted": True},
-        message="备份已删除",
+        data=result,
+        message=f"批量删除完成: 成功 {result.success_count}, 失败 {len(result.failed_ids)}",
     )
+
+
+@router.post(
+    "/batch-restore",
+    response_model=ResponseBase[BackupBatchRestoreResult],
+    dependencies=[Depends(require_permissions([PermissionCode.BACKUP_BATCH_RESTORE.value]))],
+    summary="批量恢复备份",
+    description="批量恢复回收站中的备份记录。",
+)
+async def restore_backups_batch(
+    request: BackupBatchRestoreRequest,
+    service: BackupServiceDep,
+    current_user: CurrentUser,
+) -> ResponseBase[BackupBatchRestoreResult]:
+    result = await service.restore_backups_batch(request.backup_ids)
+    return ResponseBase(
+        data=result,
+        message=f"批量恢复完成: 成功 {result.success_count}, 失败 {len(result.failed_ids)}",
+    )
+
+
+@router.post(
+    "/batch-hard-delete",
+    response_model=ResponseBase[BackupBatchHardDeleteResult],
+    dependencies=[Depends(require_permissions([PermissionCode.BACKUP_BATCH_HARD_DELETE.value]))],
+    summary="批量硬删除备份",
+    description="批量硬删除备份（物理删除，会尽力清理对象存储）。",
+)
+async def hard_delete_backups_batch(
+    request: BackupBatchHardDeleteRequest,
+    service: BackupServiceDep,
+    current_user: CurrentUser,
+) -> ResponseBase[BackupBatchHardDeleteResult]:
+    result = await service.hard_delete_backups_batch(request.backup_ids)
+    return ResponseBase(
+        data=result,
+        message=f"批量硬删除完成: 成功 {result.success_count}, 失败 {len(result.failed_ids)}",
+    )
+
+
+@router.post(
+    "/{backup_id}/restore",
+    response_model=ResponseBase[dict],
+    dependencies=[Depends(require_permissions([PermissionCode.BACKUP_RESTORE.value]))],
+    summary="恢复备份",
+    description="恢复回收站中的备份记录。",
+)
+async def restore_backup(
+    backup_id: UUID,
+    service: BackupServiceDep,
+    current_user: CurrentUser,
+) -> ResponseBase[dict]:
+    await service.restore_backup(backup_id)
+    return ResponseBase(data={"id": str(backup_id), "restored": True}, message="备份已恢复")
+
+
+@router.delete(
+    "/{backup_id}/hard",
+    response_model=ResponseBase[dict],
+    dependencies=[Depends(require_permissions([PermissionCode.BACKUP_HARD_DELETE.value]))],
+    summary="硬删除备份",
+    description="硬删除备份记录（物理删除，会尽力清理对象存储）。",
+)
+async def hard_delete_backup(
+    backup_id: UUID,
+    service: BackupServiceDep,
+    current_user: CurrentUser,
+) -> ResponseBase[dict]:
+    await service.hard_delete_backup(backup_id)
+    return ResponseBase(data={"id": str(backup_id), "hard_deleted": True}, message="备份已硬删除")

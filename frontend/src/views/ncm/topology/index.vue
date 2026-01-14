@@ -39,6 +39,7 @@ const loading = ref(false)
 const networkContainer = ref<HTMLDivElement | null>(null)
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let networkInstance: any = null
+let isUnmounted = false // 防止异步导入完成后组件已卸载
 
 const fetchTopology = async () => {
   loading.value = true
@@ -55,11 +56,14 @@ const fetchTopology = async () => {
 }
 
 const renderNetwork = async () => {
-  if (!topologyData.value || !networkContainer.value) return
+  if (!topologyData.value || !networkContainer.value || isUnmounted) return
 
   try {
     // 动态导入 vis-network
     const { Network, DataSet } = await import('vis-network/standalone')
+
+    // 异步导入完成后再次检查组件是否已卸载
+    if (isUnmounted || !networkContainer.value) return
 
     const nodes = new DataSet(
       topologyData.value.nodes.map((node) => ({
@@ -168,6 +172,7 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  isUnmounted = true // 标记组件已卸载
   if (networkInstance) {
     networkInstance.destroy()
     networkInstance = null
@@ -210,12 +215,9 @@ const {
   stop: stopPollingTaskStatus,
   reset: resetTask,
   isPolling,
-} = useTaskPolling<TopologyTaskStatus>(
-  (taskId) => getTopologyTaskStatus(taskId),
-  {
-    onComplete: () => fetchTopology(),
-  }
-)
+} = useTaskPolling<TopologyTaskStatus>((taskId) => getTopologyTaskStatus(taskId), {
+  onComplete: () => fetchTopology(),
+})
 
 const taskPolling = isPolling
 

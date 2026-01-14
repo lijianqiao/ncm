@@ -189,6 +189,21 @@ def setup_logging() -> None:
     if settings.ENVIRONMENT == "local":
         traffic_logger.addHandler(stream_handler)
 
+    # 5. Celery Worker 日志记录器
+    # 记录 Celery 任务执行日志（不包含命令执行结果，避免日志过大）
+
+    celery_logger = logging.getLogger("celery_task")
+    celery_logger.setLevel(logging.INFO)
+    celery_logger.propagate = False  # 不传播到 root，避免重复
+
+    celery_handler = get_file_handler("celery_handler", logging.INFO, "celery.log")
+    celery_handler.setFormatter(file_formatter)
+    celery_logger.addHandler(celery_handler)
+
+    # 本地环境也输出到控制台
+    if settings.ENVIRONMENT == "local":
+        celery_logger.addHandler(stream_handler)
+
     # 排除 uvicorn、sqlalchemy 的日志
 
     logging.getLogger("uvicorn.error").setLevel(logging.INFO)
@@ -200,3 +215,6 @@ logger = structlog.get_logger()
 # 公开访问日志的特定记录器
 
 access_logger = structlog.get_logger("api_traffic")
+
+# Celery 任务日志记录器
+celery_task_logger = structlog.get_logger("celery_task")

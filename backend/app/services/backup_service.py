@@ -27,7 +27,10 @@ from app.crud.crud_device import CRUDDevice
 from app.models.backup import Backup
 from app.models.device import Device
 from app.schemas.backup import (
+    BackupBatchDeleteResult,
+    BackupBatchHardDeleteResult,
     BackupBatchRequest,
+    BackupBatchRestoreResult,
     BackupBatchResult,
     BackupCreate,
     BackupListQuery,
@@ -85,6 +88,20 @@ class BackupService:
             end_date=query.end_date,
         )
 
+    async def get_recycle_backups_paginated(self, query: BackupListQuery) -> tuple[list[Backup], int]:
+        """获取回收站（已软删除）备份列表。"""
+
+        return await self.backup_crud.get_multi_paginated_deleted_filtered(
+            self.db,
+            page=query.page,
+            page_size=query.page_size,
+            device_id=query.device_id,
+            backup_type=query.backup_type.value if query.backup_type else None,
+            status=query.status.value if query.status else None,
+            start_date=query.start_date,
+            end_date=query.end_date,
+        )
+
     async def get_backup(self, backup_id: UUID) -> Backup:
         """
         根据 ID 获取备份。
@@ -99,6 +116,16 @@ class BackupService:
             NotFoundException: 备份不存在
         """
         backup = await self.backup_crud.get(self.db, id=backup_id)
+        if not backup:
+            raise NotFoundException(message="备份不存在")
+        return backup
+
+    async def _get_backup_any(self, backup_id: UUID) -> Backup:
+        """获取备份（包括已软删除）。"""
+
+        q = select(Backup).where(Backup.id == backup_id)
+        r = await self.db.execute(q)
+        backup = r.scalars().first()
         if not backup:
             raise NotFoundException(message="备份不存在")
         return backup
@@ -166,6 +193,104 @@ class BackupService:
             raise NotFoundException(message="备份不存在")
 
         logger.info(f"备份已删除: backup_id={backup_id}")
+
+    @transactional()
+    async def delete_backups_batch(self, backup_ids: list[UUID]) -> BackupBatchDeleteResult:
+        """批量删除备份（软删除）。"""
+
+        if not backup_ids:
+            return BackupBatchDeleteResult(success_count=0, failed_ids=[])
+
+        unique_ids = list(dict.fromkeys(backup_ids))
+
+        # 先尽力删除对象存储，再软删除 DB
+        q = select(Backup).where(Backup.id.in_(unique_ids)).where(Backup.is_deleted.is_(False))
+        r = await self.db.execute(q)
+        backups = list(r.scalars().all())
+
+        for b in backups:
+            if b.content_path:
+                try:
+                    await delete_object(b.content_path)
+                except Exception as e:
+                    logger.warning(f"MinIO 删除对象失败: path={b.content_path}, error={e}")
+
+        success_count, failed_ids = await self.backup_crud.batch_remove(self.db, ids=unique_ids, hard_delete=False)
+
+        logger.info(f"批量删除备份完成: success={success_count}, failed={len(failed_ids)}")
+        return BackupBatchDeleteResult(success_count=success_count, failed_ids=failed_ids)
+
+    @transactional()
+    async def restore_backup(self, backup_id: UUID) -> None:
+        """恢复已软删除备份。"""
+
+        restored = await self.backup_crud.restore(self.db, id=backup_id)
+        if not restored:
+            raise NotFoundException(message="备份不存在")
+        logger.info(f"备份已恢复: backup_id={backup_id}")
+
+    @transactional()
+    async def restore_backups_batch(self, backup_ids: list[UUID]) -> BackupBatchRestoreResult:
+        """批量恢复已软删除备份。"""
+
+        if not backup_ids:
+            return BackupBatchRestoreResult(success_count=0, failed_ids=[])
+
+        unique_ids = list(dict.fromkeys(backup_ids))
+        success_count, failed_ids = await self.backup_crud.batch_restore(self.db, ids=unique_ids)
+        logger.info(f"批量恢复备份完成: success={success_count}, failed={len(failed_ids)}")
+        return BackupBatchRestoreResult(success_count=success_count, failed_ids=failed_ids)
+
+    @transactional()
+    async def hard_delete_backup(self, backup_id: UUID) -> None:
+        """硬删除备份（物理删除，包含已软删除记录）。"""
+
+        backup = await self._get_backup_any(backup_id)
+
+        if backup.content_path:
+            try:
+                await delete_object(backup.content_path)
+            except Exception as e:
+                logger.warning(f"MinIO 删除对象失败: path={backup.content_path}, error={e}")
+
+        success_count, failed_ids = await self.backup_crud.batch_remove(
+            self.db,
+            ids=[backup_id],
+            hard_delete=True,
+        )
+        if success_count != 1:
+            raise NotFoundException(message="备份不存在")
+
+        logger.info(f"备份已硬删除: backup_id={backup_id}, failed={len(failed_ids)}")
+
+    @transactional()
+    async def hard_delete_backups_batch(self, backup_ids: list[UUID]) -> BackupBatchHardDeleteResult:
+        """批量硬删除备份（物理删除）。"""
+
+        if not backup_ids:
+            return BackupBatchHardDeleteResult(success_count=0, failed_ids=[])
+
+        unique_ids = list(dict.fromkeys(backup_ids))
+
+        q = select(Backup).where(Backup.id.in_(unique_ids))
+        r = await self.db.execute(q)
+        backups = list(r.scalars().all())
+
+        for b in backups:
+            if b.content_path:
+                try:
+                    await delete_object(b.content_path)
+                except Exception as e:
+                    logger.warning(f"MinIO 删除对象失败: path={b.content_path}, error={e}")
+
+        success_count, failed_ids = await self.backup_crud.batch_remove(
+            self.db,
+            ids=unique_ids,
+            hard_delete=True,
+        )
+
+        logger.info(f"批量硬删除备份完成: success={success_count}, failed={len(failed_ids)}")
+        return BackupBatchHardDeleteResult(success_count=success_count, failed_ids=failed_ids)
 
     # ===== 备份内容获取 =====
 
@@ -687,6 +812,7 @@ class BackupService:
                         "password": credential.password,
                         "port": device.ssh_port,
                         "device_id": str(device.id),
+                        "operator_id": str(operator_id) if operator_id else None,
                     }
                 )
             except Exception as e:
@@ -704,12 +830,14 @@ class BackupService:
                 hosts_data=hosts_data,
                 num_workers=min(100, len(hosts_data)),  # 异步版本支持更高并发
                 backup_type=request.backup_type.value,
+                operator_id=str(operator_id) if operator_id else None,
             )
         else:
             task = backup_devices.delay(  # type: ignore[attr-defined]
                 hosts_data=hosts_data,
                 num_workers=min(50, len(hosts_data)),
                 backup_type=request.backup_type.value,
+                operator_id=str(operator_id) if operator_id else None,
             )
 
         logger.info(
@@ -740,13 +868,31 @@ class BackupService:
 
         result = AsyncResult(task_id, app=celery_app)
 
+        # 将 Celery 状态转换为前端期望的小写格式
+        status_map = {
+            "PENDING": "pending",
+            "STARTED": "running",
+            "PROGRESS": "running",
+            "SUCCESS": "success",
+            "FAILURE": "failed",
+            "REVOKED": "failed",
+        }
+        mapped_status = status_map.get(result.status, result.status.lower()) or "pending"
+
         status_response = BackupTaskStatus(
             task_id=task_id,
-            status=result.status,
+            status=mapped_status,
         )
 
         if result.status == "PROGRESS":
-            status_response.progress = result.info
+            # 提取进度信息中的数值进度（如有）
+            info = result.info or {}
+            if isinstance(info, dict):
+                stage = info.get("stage", "")
+                message = info.get("message", "")
+                status_response.progress = {"stage": stage, "message": message}
+            else:
+                status_response.progress = {"message": str(info)}
         elif result.status == "SUCCESS":
             info = result.result or {}
             status_response.total_devices = info.get("total", 0)

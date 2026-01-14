@@ -88,6 +88,12 @@ class PermissionCode(str, Enum):
     BACKUP_LIST = "backup:list"
     BACKUP_CREATE = "backup:create"
     BACKUP_DELETE = "backup:delete"
+    BACKUP_BATCH_DELETE = "backup:batch_delete"
+    BACKUP_RECYCLE_LIST = "backup:recycle:list"
+    BACKUP_RESTORE = "backup:restore"
+    BACKUP_BATCH_RESTORE = "backup:batch_restore"
+    BACKUP_HARD_DELETE = "backup:hard_delete"
+    BACKUP_BATCH_HARD_DELETE = "backup:batch_hard_delete"
 
     # NCM 采集权限
     COLLECT_EXECUTE = "collect:execute"
@@ -201,6 +207,12 @@ PERMISSION_DEFS: tuple[PermissionDef, ...] = (
     PermissionDef(PermissionCode.BACKUP_LIST, "备份-列表"),
     PermissionDef(PermissionCode.BACKUP_CREATE, "备份-创建"),
     PermissionDef(PermissionCode.BACKUP_DELETE, "备份-删除"),
+    PermissionDef(PermissionCode.BACKUP_BATCH_DELETE, "备份-批量删除"),
+    PermissionDef(PermissionCode.BACKUP_RECYCLE_LIST, "备份-回收站-列表"),
+    PermissionDef(PermissionCode.BACKUP_RESTORE, "备份-恢复"),
+    PermissionDef(PermissionCode.BACKUP_BATCH_RESTORE, "备份-批量恢复"),
+    PermissionDef(PermissionCode.BACKUP_HARD_DELETE, "备份-硬删除"),
+    PermissionDef(PermissionCode.BACKUP_BATCH_HARD_DELETE, "备份-批量硬删除"),
     # NCM 采集权限
     PermissionDef(PermissionCode.COLLECT_EXECUTE, "采集-执行", "执行 ARP/MAC 表采集"),
     PermissionDef(PermissionCode.COLLECT_VIEW, "采集-查看", "查看 ARP/MAC 表缓存数据"),

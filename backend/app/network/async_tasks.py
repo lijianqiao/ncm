@@ -36,7 +36,17 @@ def _get_scrapli_kwargs(host: "Host") -> dict[str, Any]:
     Returns:
         Scrapli 连接参数字典
     """
-    platform = host.platform or "hp_comware"
+    from app.network.platform_config import get_platform_for_vendor
+
+    raw_platform = host.platform or "hp_comware"
+
+    # 如果 platform 是厂商名（如 h3c, huawei），转换为 Scrapli 平台名
+    # get_platform_for_vendor 会处理映射，如果已经是 Scrapli 平台名则直接返回
+    try:
+        platform = get_platform_for_vendor(raw_platform)
+    except ValueError:
+        # 如果无法识别，假设它已经是有效的 Scrapli 平台名
+        platform = raw_platform
 
     # 从 platform_config.py 获取平台特定的 Scrapli 配置
     base_options = get_scrapli_options(platform)
@@ -227,19 +237,21 @@ async def async_collect_config(host: "Host") -> dict[str, Any]:
         - config: 配置内容
         - platform: 设备平台
     """
-    platform = host.platform or "generic"
+    from app.network.platform_config import get_command, get_platform_for_vendor
 
-    # 根据平台选择命令
-    command_map = {
-        "cisco_iosxe": "show running-config",
-        "cisco_nxos": "show running-config",
-        "cisco_iosxr": "show running-config",
-        "huawei_vrp": "display current-configuration",
-        "hp_comware": "display current-configuration",
-        "arista_eos": "show running-config",
-        "juniper_junos": "show configuration | display set",
-    }
-    command = command_map.get(platform, "show running-config")
+    raw_platform = host.platform or "hp_comware"
+
+    # 如果 platform 是厂商名（如 h3c, huawei），转换为 Scrapli 平台名
+    try:
+        platform = get_platform_for_vendor(raw_platform)
+    except ValueError:
+        platform = raw_platform
+
+    # 使用统一的命令映射
+    try:
+        command = get_command("backup_config", platform)
+    except ValueError:
+        command = "show running-config"
 
     result = await async_send_command(host, command)
     return {

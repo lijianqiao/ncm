@@ -8,11 +8,7 @@
 
 import { request } from '@/utils/request'
 import type { ResponseBase, PaginatedResponse } from '@/types/api'
-import type {
-  AlertTypeType,
-  AlertSeverityType,
-  AlertStatusType,
-} from '@/types/enums'
+import type { AlertTypeType, AlertSeverityType, AlertStatusType } from '@/types/enums'
 
 // 重新导出枚举类型供外部使用
 export type { AlertTypeType as AlertType }
@@ -82,5 +78,23 @@ export function closeAlert(id: string) {
   return request<ResponseBase<Alert>>({
     url: `/alerts/${id}/close`,
     method: 'post',
+  })
+}
+
+/** 批量确认告警 */
+export function batchAcknowledgeAlerts(ids: string[]) {
+  return request<ResponseBase<{ success: number; failed: number }>>({
+    url: '/alerts/batch/ack',
+    method: 'post',
+    data: ids,
+  })
+}
+
+/** 批量关闭告警 */
+export function batchCloseAlerts(ids: string[]) {
+  return request<ResponseBase<{ success: number; failed: number }>>({
+    url: '/alerts/batch/close',
+    method: 'post',
+    data: ids,
   })
 }

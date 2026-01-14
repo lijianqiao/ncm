@@ -276,16 +276,18 @@ def scheduled_network_scan(self) -> dict[str, Any]:
     """
     import asyncio
 
+    from app.core.config import settings
+
     async def _scheduled_scan():
-        # TODO: 从配置或数据库获取待扫描网段列表
-        # 这里先返回空结果，实际使用时应配置网段
-        subnets: list[str] = []
+        # 从配置读取待扫描网段列表
+        subnets_str = settings.SCAN_SCHEDULED_SUBNETS.strip()
+        subnets: list[str] = [s.strip() for s in subnets_str.split(",") if s.strip()]
 
         if not subnets:
-            logger.warning("定时扫描：未配置待扫描网段")
+            logger.info("定时扫描：未配置待扫描网段 (SCAN_SCHEDULED_SUBNETS)")
             return {
                 "task_id": self.request.id,
-                "message": "未配置待扫描网段",
+                "message": "未配置待扫描网段，请设置 SCAN_SCHEDULED_SUBNETS 环境变量",
                 "scanned": False,
             }
 

@@ -64,8 +64,8 @@ class CRUDBackup(CRUDBase[Backup, BackupCreate, BackupUpdate]):
             page = 1
         if page_size < 1:
             page_size = 20
-        if page_size > 100:
-            page_size = 100
+        if page_size > 500:
+            page_size = 500
 
         # 基础查询
         base_query = select(self.model).where(self.model.device_id == device_id).where(self.model.is_deleted.is_(False))
@@ -168,8 +168,8 @@ class CRUDBackup(CRUDBase[Backup, BackupCreate, BackupUpdate]):
             page = 1
         if page_size < 1:
             page_size = 20
-        if page_size > 100:
-            page_size = 100
+        if page_size > 500:
+            page_size = 500
 
         # 基础查询
         base_query = select(self.model).where(self.model.is_deleted.is_(False))
@@ -198,6 +198,58 @@ class CRUDBackup(CRUDBase[Backup, BackupCreate, BackupUpdate]):
         total = total_result.scalar() or 0
 
         # 分页查询
+        skip = (page - 1) * page_size
+        items_query = (
+            base_query.options(selectinload(Backup.device), selectinload(Backup.operator))
+            .order_by(self.model.created_at.desc())
+            .offset(skip)
+            .limit(page_size)
+        )
+        items_result = await db.execute(items_query)
+        items = list(items_result.scalars().all())
+
+        return items, total
+
+    async def get_multi_paginated_deleted_filtered(
+        self,
+        db: AsyncSession,
+        *,
+        page: int = 1,
+        page_size: int = 20,
+        device_id: UUID | None = None,
+        backup_type: str | None = None,
+        status: str | None = None,
+        start_date: datetime | None = None,
+        end_date: datetime | None = None,
+    ) -> tuple[list[Backup], int]:
+        """获取回收站（已软删除）备份列表（分页过滤）。"""
+        if page < 1:
+            page = 1
+        if page_size < 1:
+            page_size = 20
+        if page_size > 500:
+            page_size = 500
+
+        base_query = select(self.model).where(self.model.is_deleted.is_(True))
+
+        if device_id:
+            base_query = base_query.where(self.model.device_id == device_id)
+
+        if backup_type:
+            base_query = base_query.where(self.model.backup_type == backup_type)
+
+        if status:
+            base_query = base_query.where(self.model.status == status)
+
+        if start_date:
+            base_query = base_query.where(self.model.created_at >= start_date)
+        if end_date:
+            base_query = base_query.where(self.model.created_at <= end_date)
+
+        count_query = select(func.count()).select_from(base_query.subquery())
+        total_result = await db.execute(count_query)
+        total = total_result.scalar() or 0
+
         skip = (page - 1) * page_size
         items_query = (
             base_query.options(selectinload(Backup.device), selectinload(Backup.operator))
