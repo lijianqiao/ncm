@@ -112,13 +112,13 @@ router.beforeEach(async (to, from, next) => {
 
   // 已登录用户访问登录页，跳转到首页
   if (to.name === 'Login' && hasToken) {
-    next({ path: '/dashboard' })
+    next({ path: userStore.homePath || '/dashboard' })
     return
   }
 
   // 根路径跳转到 dashboard
   if (hasToken && to.path === '/') {
-    next({ path: '/dashboard' })
+    next({ path: userStore.homePath || '/dashboard' })
     return
   }
 

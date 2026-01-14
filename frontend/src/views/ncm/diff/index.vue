@@ -10,9 +10,9 @@ import {
 } from 'naive-ui'
 import { $alert } from '@/utils/alert'
 import { getDeviceLatestDiff, type DiffResponse } from '@/api/diff'
-import { getDevices, type Device } from '@/api/devices'
 import { formatDateTime } from '@/utils/date'
 import UnifiedDiffViewer from '@/components/common/UnifiedDiffViewer.vue'
+import { useDeviceOptions } from '@/composables'
 
 defineOptions({
   name: 'DiffManagement',
@@ -20,27 +20,10 @@ defineOptions({
 
 // ==================== 设备选项 ====================
 
-const deviceOptions = ref<{ label: string; value: string }[]>([])
-const deviceLoading = ref(false)
 const selectedDeviceId = ref('')
+const { deviceOptions, loading: deviceLoading, load: loadDevices } = useDeviceOptions({ status: 'active' })
 
-const fetchDevices = async () => {
-  deviceLoading.value = true
-  try {
-    const res = await getDevices({ status: 'active', page_size: 100 })
-    deviceOptions.value = res.data.items.map((d: Device) => ({
-      label: `${d.name} (${d.ip_address})`,
-      value: d.id,
-    }))
-  } catch {
-    // Error handled
-  } finally {
-    deviceLoading.value = false
-  }
-}
-
-// 初始加载
-fetchDevices()
+loadDevices()
 
 // ==================== 差异查询 ====================
 

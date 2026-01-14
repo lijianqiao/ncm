@@ -70,6 +70,7 @@ export const BackupTypeLabels: Record<BackupType, string> = {
   [BackupType.SCHEDULED]: '定时备份',
   [BackupType.MANUAL]: '手动备份',
   [BackupType.PRE_CHANGE]: '变更前备份',
+  [BackupType.POST_CHANGE]: '变更后备份',
   [BackupType.INCREMENTAL]: '增量备份',
 }
 

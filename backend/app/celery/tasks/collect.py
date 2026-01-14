@@ -56,12 +56,8 @@ def collect_device_tables(self, device_id: str) -> dict[str, Any]:
         logger.info(f"采集完成: device_id={device_id}, success={result.get('success')}")
         return result
     except Exception as e:
-        logger.error(f"采集异常: device_id={device_id}, error={str(e)}")
-        return {
-            "device_id": device_id,
-            "success": False,
-            "error_message": str(e),
-        }
+        logger.error(f"采集异常: device_id={device_id}, error={str(e)}", exc_info=True)
+        raise
 
 
 @celery_app.task(
@@ -111,13 +107,8 @@ def batch_collect_tables(
         )
         return result
     except Exception as e:
-        logger.error(f"批量采集异常: error={str(e)}")
-        return {
-            "total_devices": len(device_ids),
-            "success_count": 0,
-            "failed_count": len(device_ids),
-            "error_message": str(e),
-        }
+        logger.error(f"批量采集异常: error={str(e)}", exc_info=True)
+        raise
 
 
 @celery_app.task(
@@ -155,10 +146,5 @@ def scheduled_collect_all(self) -> dict[str, Any]:
         )
         return result
     except Exception as e:
-        logger.error(f"定时采集异常: error={str(e)}")
-        return {
-            "total_devices": 0,
-            "success_count": 0,
-            "failed_count": 0,
-            "error_message": str(e),
-        }
+        logger.error(f"定时采集异常: error={str(e)}", exc_info=True)
+        raise

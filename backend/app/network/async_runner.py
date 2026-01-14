@@ -60,6 +60,12 @@ class AsyncRunner:
         Returns:
             AggregatedResult: Nornir 标准聚合结果
         """
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            pass
+        else:
+            raise RuntimeError("当前存在运行中的事件循环，请使用 await run_async_tasks(...) 调用异步执行入口。")
         return asyncio.run(self._run_async(task, hosts, **kwargs))
 
     async def _run_async(
@@ -92,6 +98,8 @@ class AsyncRunner:
                     logger.debug("开始执行异步任务", host=host.name, task=task_name)
                     result_data = await task(host, **kwargs)
                     return host.name, Result(host=host, result=result_data)
+                except asyncio.CancelledError:
+                    raise
                 except TimeoutError:
                     logger.warning("任务超时", host=host.name, task=task_name)
                     return host.name, Result(
@@ -100,7 +108,7 @@ class AsyncRunner:
                         failed=True,
                     )
                 except Exception as e:
-                    logger.error("任务执行失败", host=host.name, task=task_name, error=str(e))
+                    logger.error("任务执行失败", host=host.name, task=task_name, error=str(e), exc_info=True)
                     return host.name, Result(host=host, exception=e, failed=True)
 
         # 并行执行所有主机任务
@@ -190,6 +198,12 @@ def run_async_tasks_sync(
     Returns:
         AggregatedResult: 标准聚合结果
     """
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        pass
+    else:
+        raise RuntimeError("当前存在运行中的事件循环，请使用 await run_async_tasks(...) 调用异步执行入口。")
     return asyncio.run(run_async_tasks(hosts, task_fn, num_workers, **kwargs))
 
 
@@ -234,21 +248,23 @@ class AsyncRunnerWithRetry(AsyncRunner):
             last_exception: Exception | None = None
 
             for attempt in range(self.max_retries + 1):
-                async with semaphore:
-                    try:
+                try:
+                    async with semaphore:
                         result_data = await task(host, **kwargs)
-                        return host.name, Result(host=host, result=result_data)
-                    except Exception as e:
-                        last_exception = e
-                        if attempt < self.max_retries:
-                            logger.warning(
-                                "任务失败，准备重试",
-                                host=host.name,
-                                attempt=attempt + 1,
-                                max_retries=self.max_retries,
-                                error=str(e),
-                            )
-                            await asyncio.sleep(self.retry_delay)
+                    return host.name, Result(host=host, result=result_data)
+                except asyncio.CancelledError:
+                    raise
+                except Exception as e:
+                    last_exception = e
+                    if attempt < self.max_retries:
+                        logger.warning(
+                            "任务失败，准备重试",
+                            host=host.name,
+                            attempt=attempt + 1,
+                            max_retries=self.max_retries,
+                            error=str(e),
+                        )
+                        await asyncio.sleep(self.retry_delay)
 
             return host.name, Result(host=host, exception=last_exception, failed=True)
 

@@ -43,6 +43,10 @@ const service: AxiosInstance = axios.create({
   withCredentials: true,
 })
 
+interface RetryAxiosRequestConfig extends AxiosRequestConfig {
+  _retry?: boolean
+}
+
 // 请求取消管理器
 const pendingRequests = new Map<string, AbortController>()
 
@@ -200,116 +204,141 @@ service.interceptors.request.use(
   },
 )
 
+const responseSuccessInterceptor = (
+  response: AxiosResponse<ResponseBase<unknown>>,
+): ResponseBase<unknown> => {
+  // 移除已完成的请求
+  removePendingRequest(response.config)
+
+  const res = response.data as ResponseBase<unknown>
+
+  const is2xx = response.status >= 200 && response.status < 300
+  if (!is2xx) {
+    $alert.error(res.message || '请求错误')
+    throw new Error(res.message || '请求错误')
+  }
+
+  if (res.code !== 200) {
+    $alert.error(res.message || '请求错误')
+    throw new Error(res.message || '请求错误')
+  }
+
+  return res
+}
+
+const responseErrorInterceptor = async (error: unknown) => {
+  if (!axios.isAxiosError(error)) {
+    $alert.error('请求失败')
+    return Promise.reject(error)
+  }
+
+  // 移除已完成的请求
+  if (error.config) {
+    removePendingRequest(error.config)
+  }
+
+  const isCanceled =
+    axios.isCancel(error) ||
+    error?.code === 'ERR_CANCELED' ||
+    error?.name === 'CanceledError' ||
+    error?.name === 'AbortError'
+  if (isCanceled) return Promise.reject(error)
+
+  const originalRequest = error.config as RetryAxiosRequestConfig | undefined
+
+  // 网络错误等无响应情况
+  if (!error.response) {
+    $alert.error(error.message || '网络请求失败')
+    return Promise.reject(error)
+  }
+
+  const { status } = error.response
+  const responseData = error.response.data as { message?: string } | undefined
+  const msg = responseData?.message || error.message || '请求失败'
+
+  // 处理 401 未授权错误
+  if (status === 401 && originalRequest && !originalRequest._retry) {
+    // 排除登录和刷新接口本身
+    if (
+      originalRequest.url?.includes('/auth/login') ||
+      originalRequest.url?.includes('/auth/refresh')
+    ) {
+      // 刷新接口本身 401，说明 Refresh Token 已失效
+      if (originalRequest.url?.includes('/auth/refresh')) {
+        handleAuthFailure()
+      }
+      return Promise.reject(error)
+    }
+
+    // 标记已重试，防止无限循环
+    originalRequest._retry = true
+
+    // 并发控制：如果正在刷新，则排队等待
+    if (isRefreshing) {
+      return new Promise((resolve, reject) => {
+        subscribeTokenRefresh(
+          (newToken: string) => {
+            originalRequest.headers = originalRequest.headers || {}
+            ;(originalRequest.headers as Record<string, string>)['Authorization'] =
+              `Bearer ${newToken}`
+            resolve(service(originalRequest))
+          },
+          (error: Error) => {
+            reject(error)
+          },
+        )
+      })
+    }
+
+    // 开始刷新流程
+    isRefreshing = true
+
+    try {
+      const newToken = await doRefreshToken()
+
+      // 更新内存中的 Token
+      setAccessToken(newToken)
+
+      // 更新默认请求头
+      service.defaults.headers.common['Authorization'] = `Bearer ${newToken}`
+      originalRequest.headers = originalRequest.headers || {}
+      ;(originalRequest.headers as Record<string, string>)['Authorization'] = `Bearer ${newToken}`
+
+      // 通知排队的请求
+      onTokenRefreshed(newToken)
+
+      // 重放原始请求
+      return service(originalRequest)
+    } catch (refreshErr) {
+      onTokenRefreshFailed(refreshErr instanceof Error ? refreshErr : new Error('Token 刷新失败'))
+      handleAuthFailure()
+      return Promise.reject(refreshErr)
+    } finally {
+      isRefreshing = false
+    }
+  }
+
+  // 处理 403 权限不足
+  if (status === 403) {
+    $alert.warning('权限不足')
+  } else if (status >= 400) {
+    // 其他错误统一提示
+    $alert.error(msg)
+  }
+
+  return Promise.reject(error)
+}
+
 // 响应拦截器
 service.interceptors.response.use(
-  (response: AxiosResponse<ResponseBase>) => {
-    // 移除已完成的请求
-    removePendingRequest(response.config)
-
-    const res = response.data
-    // 成功响应
-    if (response.status === 200) {
-      return res as unknown as AxiosResponse
-    }
-    $alert.error(res.message || '请求错误')
-    return Promise.reject(new Error(res.message || '请求错误'))
-  },
-  async (error) => {
-    // 移除已完成的请求
-    if (error.config) {
-      removePendingRequest(error.config)
-    }
-
-    // 如果是取消的请求，静默处理
-    if (axios.isCancel(error)) {
-      return Promise.reject(error)
-    }
-
-    const originalRequest = error.config
-
-    // 网络错误等无响应情况
-    if (!error.response) {
-      $alert.error(error.message || '网络请求失败')
-      return Promise.reject(error)
-    }
-
-    const { status } = error.response
-    const msg = error.response?.data?.message || error.message || '请求失败'
-
-    // 处理 401 未授权错误
-    if (status === 401 && !originalRequest._retry) {
-      // 排除登录和刷新接口本身
-      if (
-        originalRequest.url?.includes('/auth/login') ||
-        originalRequest.url?.includes('/auth/refresh')
-      ) {
-        // 刷新接口本身 401，说明 Refresh Token 已失效
-        if (originalRequest.url?.includes('/auth/refresh')) {
-          handleAuthFailure()
-        }
-        return Promise.reject(error)
-      }
-
-      // 标记已重试，防止无限循环
-      originalRequest._retry = true
-
-      // 并发控制：如果正在刷新，则排队等待
-      if (isRefreshing) {
-        return new Promise((resolve, reject) => {
-          subscribeTokenRefresh(
-            (newToken: string) => {
-              originalRequest.headers['Authorization'] = `Bearer ${newToken}`
-              resolve(service(originalRequest))
-            },
-            (error: Error) => {
-              reject(error)
-            },
-          )
-        })
-      }
-
-      // 开始刷新流程
-      isRefreshing = true
-
-      try {
-        const newToken = await doRefreshToken()
-
-        // 更新内存中的 Token
-        setAccessToken(newToken)
-
-        // 更新默认请求头
-        service.defaults.headers.common['Authorization'] = `Bearer ${newToken}`
-        originalRequest.headers['Authorization'] = `Bearer ${newToken}`
-
-        // 通知排队的请求
-        onTokenRefreshed(newToken)
-
-        // 重放原始请求
-        return service(originalRequest)
-      } catch (refreshErr) {
-        onTokenRefreshFailed(refreshErr instanceof Error ? refreshErr : new Error('Token 刷新失败'))
-        handleAuthFailure()
-        return Promise.reject(refreshErr)
-      } finally {
-        isRefreshing = false
-      }
-    }
-
-    // 处理 403 权限不足
-    if (status === 403) {
-      $alert.warning('权限不足')
-    } else if (status >= 400) {
-      // 其他错误统一提示
-      $alert.error(msg)
-    }
-
-    return Promise.reject(error)
-  },
+  responseSuccessInterceptor as unknown as (
+    response: AxiosResponse,
+  ) => AxiosResponse | Promise<AxiosResponse>,
+  responseErrorInterceptor,
 )
 
 // 请求方法封装
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export const request = <T = any>(config: AxiosRequestConfig): Promise<T> => {
+export const request = <T = unknown>(config: AxiosRequestConfig): Promise<T> => {
   return service.request(config) as unknown as Promise<T>
 }
 

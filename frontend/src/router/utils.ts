@@ -62,6 +62,9 @@ export function generateRoutes(menus: Menu[]): RouteRecordRaw[] {
         // 组件路径不存在，显示 404
         component = () => import('@/views/error/404.vue')
       }
+    } else if (menu.type === 'CATALOG' || (menu.children && menu.children.length > 0)) {
+      // 目录/父菜单未配置组件时，使用 RouterView 承载子路由
+      component = () => import('@/layouts/RouterView.vue')
     } else if (menu.type === 'MENU') {
       // 菜单类型但没有组件路径，显示 404
       component = () => import('@/views/error/404.vue')

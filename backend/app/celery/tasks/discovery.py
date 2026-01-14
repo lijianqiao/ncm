@@ -11,7 +11,7 @@
 from typing import Any
 
 from app.celery.app import celery_app
-from app.celery.base import BaseTask
+from app.celery.base import BaseTask, run_async
 from app.core.db import AsyncSessionLocal
 from app.core.logger import logger
 from app.crud.crud_device import device as device_crud
@@ -42,7 +42,6 @@ def scan_subnet(
     Returns:
         扫描结果字典
     """
-    import asyncio
 
     async def _scan():
         async with AsyncSessionLocal() as db:
@@ -98,7 +97,7 @@ def scan_subnet(
 
             return result.model_dump()
 
-    return asyncio.run(_scan())
+    return run_async(_scan())
 
 
 @celery_app.task(
@@ -124,7 +123,6 @@ def scan_subnets_batch(
     Returns:
         批量扫描结果
     """
-    import asyncio
 
     async def _batch_scan():
         results = []
@@ -219,7 +217,7 @@ def scan_subnets_batch(
             "results": results,
         }
 
-    return asyncio.run(_batch_scan())
+    return run_async(_batch_scan())
 
 
 @celery_app.task(
@@ -235,7 +233,6 @@ def compare_cmdb(self) -> dict[str, Any]:
     Returns:
         比对结果
     """
-    import asyncio
 
     async def _compare():
         async with AsyncSessionLocal() as db:
@@ -256,7 +253,7 @@ def compare_cmdb(self) -> dict[str, Any]:
 
             return result.model_dump()
 
-    return asyncio.run(_compare())
+    return run_async(_compare())
 
 
 @celery_app.task(
@@ -274,8 +271,6 @@ def scheduled_network_scan(self) -> dict[str, Any]:
     Returns:
         扫描和比对结果
     """
-    import asyncio
-
     from app.core.config import settings
 
     async def _scheduled_scan():
@@ -333,7 +328,7 @@ def scheduled_network_scan(self) -> dict[str, Any]:
                 "compare_result": compare_result.model_dump(),
             }
 
-    return asyncio.run(_scheduled_scan())
+    return run_async(_scheduled_scan())
 
 
 @celery_app.task(
@@ -349,7 +344,6 @@ def increment_offline_days(self) -> dict[str, Any]:
     Returns:
         更新结果
     """
-    import asyncio
 
     async def _increment():
         async with AsyncSessionLocal() as db:
@@ -363,4 +357,4 @@ def increment_offline_days(self) -> dict[str, Any]:
                 "updated_count": count,
             }
 
-    return asyncio.run(_increment())
+    return run_async(_increment())

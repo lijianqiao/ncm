@@ -33,13 +33,13 @@ import {
 } from '@/api/deploy'
 import { cacheOTP } from '@/api/credentials'
 import { getTemplates, type Template } from '@/api/templates'
-import { getDevices, type Device } from '@/api/devices'
 import { getUsers, type User } from '@/api/users'
 import { formatDateTime } from '@/utils/date'
 import { formatUserDisplayName } from '@/utils/user'
 import ProTable, { type FilterConfig } from '@/components/common/ProTable.vue'
 import OtpModal from '@/components/common/OtpModal.vue'
 import type { DeviceGroupType } from '@/types/enums'
+import { useDeviceOptions } from '@/composables'
 
 /** OTP 所需分组信息 */
 interface OtpRequiredGroup {
@@ -328,8 +328,8 @@ const createModel = ref({
   approver_ids: [] as string[],
 })
 const templateOptions = ref<{ label: string; value: string }[]>([])
-const deviceOptions = ref<{ label: string; value: string }[]>([])
 const userOptions = ref<{ label: string; value: string }[]>([])
+const { deviceOptions, load: loadDeviceOptions } = useDeviceOptions({ status: 'active' })
 
 const handleCreate = async () => {
   createLoading.value = true
@@ -346,18 +346,14 @@ const handleCreate = async () => {
     approver_ids: [],
   }
   try {
-    const [templatesRes, devicesRes, usersRes] = await Promise.all([
+    const [templatesRes, , usersRes] = await Promise.all([
       getTemplates({ status: 'approved', page_size: 100 }),
-      getDevices({ status: 'active', page_size: 100 }),
+      loadDeviceOptions(),
       getUsers({ page_size: 100 }),
     ])
     templateOptions.value = templatesRes.data.items.map((t: Template) => ({
       label: t.name,
       value: t.id,
-    }))
-    deviceOptions.value = devicesRes.data.items.map((d: Device) => ({
-      label: `${d.name} (${d.ip_address})`,
-      value: d.id,
     }))
     userOptions.value = usersRes.data.items.map((u: User) => ({
       label: formatUserDisplayName(u),

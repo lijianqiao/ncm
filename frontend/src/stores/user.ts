@@ -24,6 +24,7 @@ export const useUserStore = defineStore('user', () => {
   const permissions = ref<string[]>([])
   const userMenus = ref<Menu[]>([])
   const isRoutesLoaded = ref(false)
+  const homePath = ref<string>('')
 
   /**
    * 登录成功后设置 Token
@@ -132,12 +133,29 @@ export const useUserStore = defineStore('user', () => {
       // 生成动态路由
       const routes = generateRoutes(res.data || [])
       isRoutesLoaded.value = true
+      homePath.value = getFirstMenuPath(res.data || []) || ''
 
       return { menus: res.data, routes }
     } catch (error) {
       console.error('获取用户菜单失败', error)
       return { menus: [], routes: [] }
     }
+  }
+
+  function getFirstMenuPath(menus: Menu[]): string | null {
+    const sorted = [...menus].sort((a, b) => (a.sort ?? 0) - (b.sort ?? 0))
+    for (const menu of sorted) {
+      if (menu.is_hidden) continue
+      if (menu.type === 'PERMISSION') continue
+      if (menu.type === 'MENU' && menu.path) {
+        return menu.path
+      }
+      if (menu.children && menu.children.length > 0) {
+        const child = getFirstMenuPath(menu.children)
+        if (child) return child
+      }
+    }
+    return null
   }
 
   /**
@@ -182,6 +200,7 @@ export const useUserStore = defineStore('user', () => {
     permissions,
     userMenus,
     isRoutesLoaded,
+    homePath,
     // 方法
     setToken,
     clearAuth,

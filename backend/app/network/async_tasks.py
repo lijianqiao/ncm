@@ -9,7 +9,6 @@
 所有函数都是独立的异步函数，接收 Host 对象并返回执行结果。
 """
 
-import asyncio
 from typing import TYPE_CHECKING, Any
 
 from scrapli import AsyncScrapli
@@ -95,10 +94,7 @@ async def async_send_command(host: "Host", command: str) -> dict[str, Any]:
 
     try:
         async with AsyncScrapli(**kwargs) as conn:
-            response: Response = await asyncio.wait_for(
-                conn.send_command(command),
-                timeout=settings.ASYNC_SSH_TIMEOUT,
-            )
+            response: Response = await conn.send_command(command)
             return {
                 "success": not response.failed,
                 "result": response.result,
@@ -109,7 +105,7 @@ async def async_send_command(host: "Host", command: str) -> dict[str, Any]:
         logger.warning("命令执行超时", host=device_name, command=command)
         raise
     except Exception as e:
-        logger.error("命令执行失败", host=device_name, command=command, error=str(e))
+        logger.error("命令执行失败", host=device_name, command=command, error=str(e), exc_info=True)
         raise
 
 
@@ -153,7 +149,7 @@ async def async_send_commands(host: "Host", commands: list[str]) -> dict[str, An
                 "failed_commands": failed_commands,
             }
     except Exception as e:
-        logger.error("批量命令执行失败", host=device_name, error=str(e))
+        logger.error("批量命令执行失败", host=device_name, error=str(e), exc_info=True)
         raise
 
 
@@ -192,7 +188,7 @@ async def async_send_config(host: "Host", config: str | list[str]) -> dict[str, 
                 "failed_count": len(failed_lines),
             }
     except Exception as e:
-        logger.error("配置下发失败", host=device_name, error=str(e))
+        logger.error("配置下发失败", host=device_name, error=str(e), exc_info=True)
         raise
 
 
@@ -218,7 +214,7 @@ async def async_get_prompt(host: "Host") -> dict[str, Any]:
                 "prompt": prompt,
             }
     except Exception as e:
-        logger.error("获取提示符失败", host=host.name, error=str(e))
+        logger.error("获取提示符失败", host=host.name, error=str(e), exc_info=True)
         raise
 
 
@@ -297,10 +293,5 @@ async def async_deploy_from_host_data(host: "Host") -> dict[str, Any]:
             "failed_count": result.get("failed_count", 0),
         }
     except Exception as e:
-        logger.error("异步配置下发失败", host=device_name, device_id=device_id, error=str(e))
-        return {
-            "success": False,
-            "result": None,
-            "error": str(e),
-            "device_id": device_id,
-        }
+        logger.error("异步配置下发失败", host=device_name, device_id=device_id, error=str(e), exc_info=True)
+        raise

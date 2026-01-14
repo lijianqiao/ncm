@@ -38,7 +38,7 @@ import { type DeviceGroup } from '@/api/devices'
 import { getDeptTree, type Dept } from '@/api/depts'
 import { formatDateTime } from '@/utils/date'
 import ProTable, { type FilterConfig } from '@/components/common/ProTable.vue'
-import { useTaskPolling } from '@/composables'
+import { usePersistentTaskPolling } from '@/composables'
 
 defineOptions({
   name: 'DiscoveryManagement',
@@ -337,20 +337,22 @@ const scanModel = ref({
 
 const DISCOVERY_SCAN_TASK_ID_KEY = 'ncm.discovery.scan_task_id'
 
-// 使用 useTaskPolling composable
+// 使用 usePersistentTaskPolling composable
 const {
   taskStatus: scanTaskStatus,
   isPolling: scanIsPolling,
   start: startPollingScanStatus,
-} = useTaskPolling<ScanTaskStatus>(
+  clear: clearScanTask,
+} = usePersistentTaskPolling<ScanTaskStatus>(
   (taskId) => getScanTaskStatus(taskId),
   {
+    storageKey: DISCOVERY_SCAN_TASK_ID_KEY,
     onComplete: () => {
-      localStorage.removeItem(DISCOVERY_SCAN_TASK_ID_KEY)
+      clearScanTask()
       tableRef.value?.reload()
     },
     onError: () => {
-      localStorage.removeItem(DISCOVERY_SCAN_TASK_ID_KEY)
+      clearScanTask()
       tableRef.value?.reload()
     },
   }
@@ -417,7 +419,6 @@ const submitScan = async () => {
     })
     if (res.data.task_id) {
       $alert.success('扫描任务已提交')
-      localStorage.setItem(DISCOVERY_SCAN_TASK_ID_KEY, res.data.task_id)
       startPollingScanStatus(res.data.task_id)
       showScanModal.value = false
     } else {
@@ -433,13 +434,6 @@ const submitScan = async () => {
 const closeScanModal = () => {
   showScanModal.value = false
 }
-
-onMounted(() => {
-  const taskId = localStorage.getItem(DISCOVERY_SCAN_TASK_ID_KEY)
-  if (taskId) {
-    startPollingScanStatus(taskId)
-  }
-})
 
 // ==================== 影子资产 & 离线设备 ====================
 

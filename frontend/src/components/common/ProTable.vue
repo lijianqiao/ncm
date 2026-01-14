@@ -81,6 +81,7 @@ const emit = defineEmits<{
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   (e: 'context-menu-select', key: string | number, row: any): void
   (e: 'recycle-bin'): void
+  (e: 'request-error', error: unknown): void
 }>()
 
 // State
@@ -144,10 +145,37 @@ watch(
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const filters = ref<Record<string, any>>({})
 
-// Helper for deep comparison
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const isDeepEqual = (obj1: any, obj2: any) => {
-  return JSON.stringify(obj1) === JSON.stringify(obj2)
+const normalizeComparable = (value: unknown) => {
+  if (Array.isArray(value)) return [...value].sort()
+  return value
+}
+
+const isComparableEqual = (a: unknown, b: unknown) => {
+  const na = normalizeComparable(a)
+  const nb = normalizeComparable(b)
+
+  if (Array.isArray(na) && Array.isArray(nb)) {
+    if (na.length !== nb.length) return false
+    for (let i = 0; i < na.length; i++) {
+      if (na[i] !== nb[i]) return false
+    }
+    return true
+  }
+
+  return na === nb
+}
+
+const isFilterObjectEqual = (a: Record<string, unknown>, b: Record<string, unknown>) => {
+  const aKeys = Object.keys(a).sort()
+  const bKeys = Object.keys(b).sort()
+  if (aKeys.length !== bKeys.length) return false
+  for (let i = 0; i < aKeys.length; i++) {
+    const key = aKeys[i]
+    if (!key) return false
+    if (key !== bKeys[i]) return false
+    if (!isComparableEqual(a[key], b[key])) return false
+  }
+  return true
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -180,7 +208,7 @@ const handleFiltersChange = (newFilters: Record<string, any>, sourceColumn: any)
   })
 
   // Prevent redundant search if filters haven't changed
-  if (isDeepEqual(filters.value, formattedFilters)) {
+  if (isFilterObjectEqual(filters.value, formattedFilters)) {
     return
   }
 
@@ -253,8 +281,8 @@ const handleSearch = async () => {
 
     data.value = res.data
     pagination.itemCount = res.total
-  } catch (error) {
-    console.error('ProTable Request Error:', error)
+  } catch (error: unknown) {
+    emit('request-error', error)
   } finally {
     tableLoading.value = false
   }
@@ -309,6 +337,13 @@ const handleCheck = (keys: Array<string | number>) => {
 const handleExport = () => {
   if (!data.value || data.value.length === 0) return
 
+  const escapeCsvValue = (value: unknown) => {
+    if (value === null || value === undefined) return '""'
+    const str = String(value)
+    const escaped = str.replace(/"/g, '""')
+    return `"${escaped}"`
+  }
+
   const headers = props.columns
     .filter((col) => col.type !== 'selection' && col.type !== 'expand' && col.key !== 'actions')
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -320,12 +355,11 @@ const handleExport = () => {
     .map((col: any) => col.key)
 
   const csvContent = [
-    headers.join(','),
+    headers.map(escapeCsvValue).join(','),
     ...data.value.map((row) =>
       keys
         .map((key) => {
-          const val = row[key]
-          return val === null || val === undefined ? '' : `"${val}"`
+          return escapeCsvValue(row[key])
         })
         .join(','),
     ),

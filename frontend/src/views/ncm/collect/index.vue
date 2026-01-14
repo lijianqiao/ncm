@@ -5,7 +5,6 @@ import {
   NModal,
   NFormItem,
   NInput,
-  NInputOtp,
   NSelect,
   NSpace,
   NCard,
@@ -35,9 +34,10 @@ import {
   type LocateResponse,
   type DeviceCollectResult,
 } from '@/api/collect'
-import { getDevices, type Device } from '@/api/devices'
+import { type Device } from '@/api/devices'
 import { formatDateTime } from '@/utils/date'
-import { useTaskPolling } from '@/composables'
+import { useDeviceOptions, useOtpFlow, useTaskPolling } from '@/composables'
+import OtpModal from '@/components/common/OtpModal.vue'
 
 defineOptions({
   name: 'CollectManagement',
@@ -45,29 +45,14 @@ defineOptions({
 
 // ==================== 设备选项 ====================
 
-const deviceOptions = ref<{ label: string; value: string }[]>([])
-const deviceLoading = ref(false)
-const devicesById = ref<Record<string, Device>>({})
-
-const fetchDevices = async () => {
-  deviceLoading.value = true
-  try {
-    const res = await getDevices({ status: 'active', page_size: 100 })
-    const nextMap: Record<string, Device> = {}
-    res.data.items.forEach((d: Device) => {
-      nextMap[d.id] = d
-    })
-    devicesById.value = nextMap
-    deviceOptions.value = res.data.items.map((d: Device) => ({
-      label: `${d.name} (${d.ip_address})`,
-      value: d.id,
-    }))
-  } catch {
-    // Error handled
-  } finally {
-    deviceLoading.value = false
-  }
-}
+const {
+  deviceOptions,
+  loading: deviceLoading,
+  load: loadDevices,
+  getDevice,
+} = useDeviceOptions({
+  status: 'active',
+})
 
 // ==================== 手动采集 ====================
 
@@ -80,7 +65,7 @@ const collectResult = ref<DeviceCollectResult | null>(null)
 
 const getSelectedDevice = (deviceId: string): Device | null => {
   if (!deviceId) return null
-  return devicesById.value[deviceId] || null
+  return getDevice(deviceId)
 }
 
 const isOtpManualDevice = (device: Device | null): boolean => {
@@ -89,10 +74,32 @@ const isOtpManualDevice = (device: Device | null): boolean => {
 }
 
 const handleManualCollect = async () => {
-  await fetchDevices()
+  await loadDevices()
   collectModel.value.device_id = ''
   collectResult.value = null
   showCollectModal.value = true
+}
+
+const otpFlow = useOtpFlow({ length: 6 })
+const showOTPModal = otpFlow.show
+const otpLoading = otpFlow.loading
+const otpInfoItems = otpFlow.infoItems
+const submitOTP = otpFlow.confirm
+const closeOTP = otpFlow.close
+
+const runManualCollect = async (deviceId: string, otpCode?: string) => {
+  collectLoading.value = true
+  try {
+    const res = await collectDevice(deviceId, otpCode ? { otp_code: otpCode } : undefined)
+    collectResult.value = res.data
+    if (res.data.success) {
+      $alert.success('采集完成')
+    } else {
+      $alert.error(res.data.error_message || res.message || '采集失败')
+    }
+  } finally {
+    collectLoading.value = false
+  }
 }
 
 const submitManualCollect = async () => {
@@ -103,110 +110,25 @@ const submitManualCollect = async () => {
 
   const device = getSelectedDevice(collectModel.value.device_id)
   if (isOtpManualDevice(device)) {
-    // 直接弹 OTP，不先请求后端（减少一次请求）
-    pendingCollectDeviceId.value = collectModel.value.device_id
-    pendingBatchCollect.value = false
-    otpRequiredInfo.value = {
-      dept_id: device?.dept_id || '',
-      device_group: String(device?.device_group || 'access'),
-      failed_devices: [],
-    }
-    otpChars.value = createEmptyOtpChars()
-    showOTPModal.value = true
+    otpFlow.open(
+      {
+        dept_id: device?.dept_id || '',
+        device_group: String(device?.device_group || 'access'),
+        failed_devices: [],
+      },
+      async (otpCode) => {
+        await runManualCollect(collectModel.value.device_id, otpCode)
+      },
+    )
     return
   }
 
-  collectLoading.value = true
   try {
-    const res = await collectDevice(collectModel.value.device_id)
-    collectResult.value = res.data
-    if (res.data.success) {
-      $alert.success('采集完成')
-    } else {
-      $alert.error(res.data.error_message || res.message || '采集失败')
-    }
+    await runManualCollect(collectModel.value.device_id)
   } catch (error: unknown) {
-    // 检查是否需要 OTP 输入 (428 状态码)
-    const err = error as { response?: { status?: number; data?: { details?: OTPRequiredDetails } } }
-    if (err?.response?.status === 428 && err?.response?.data?.details) {
-      const details = err.response.data.details
-      otpRequiredInfo.value = {
-        dept_id: details.dept_id,
-        device_group: details.device_group,
-        failed_devices: details.failed_devices || [],
-      }
-      pendingCollectDeviceId.value = collectModel.value.device_id
-      otpChars.value = createEmptyOtpChars()
-      showOTPModal.value = true
-    }
-  } finally {
-    collectLoading.value = false
-  }
-}
-
-// ==================== OTP 输入处理 ====================
-
-interface OTPRequiredDetails {
-  dept_id: string
-  device_group: string
-  failed_devices: string[]
-}
-
-const showOTPModal = ref(false)
-
-const createEmptyOtpChars = (): string[] => Array.from({ length: 6 }, () => '')
-const otpChars = ref<string[]>(createEmptyOtpChars())
-const otpLoading = ref(false)
-const otpRequiredInfo = ref<OTPRequiredDetails | null>(null)
-const pendingCollectDeviceId = ref<string>('')
-const pendingBatchCollect = ref(false)
-
-const deviceGroupLabels: Record<string, string> = {
-  core: '核心层',
-  distribution: '汇聚层',
-  access: '接入层',
-}
-
-const submitOTP = async () => {
-  const otpCode = otpChars.value.join('').trim()
-  if (!/^\d{6}$/.test(otpCode)) {
-    $alert.warning('请输入有效的 OTP 验证码（6位数字）')
-    return
-  }
-
-  otpLoading.value = true
-  try {
-    // 关闭 OTP 对话框
-    showOTPModal.value = false
-
-    // 重试采集
-    if (pendingBatchCollect.value) {
-      // 将 OTP 写入批量模型，submitBatchCollectInternal 会透传 otp_code
-      batchCollectModel.value.otp_chars = [...otpChars.value]
-      // 批量采集重试
-      await submitBatchCollectInternal()
-    } else if (pendingCollectDeviceId.value) {
-      // 单设备采集重试
-      collectLoading.value = true
-      try {
-        const res = await collectDevice(pendingCollectDeviceId.value, { otp_code: otpCode })
-        collectResult.value = res.data
-        if (res.data.success) {
-          $alert.success('采集完成')
-        } else {
-          $alert.error(res.data.error_message || res.message || '采集失败')
-        }
-      } finally {
-        collectLoading.value = false
-      }
-    }
-  } catch {
-    // Error handled by request interceptor
-  } finally {
-    otpLoading.value = false
-    pendingCollectDeviceId.value = ''
-    pendingBatchCollect.value = false
-    otpRequiredInfo.value = null
+    otpFlow.tryHandleOtpRequired(error, async (otpCode) => {
+      await runManualCollect(collectModel.value.device_id, otpCode)
+    })
   }
 }
 
@@ -217,7 +139,6 @@ const batchCollectModel = ref({
   device_ids: [] as string[],
   collect_arp: true,
   collect_mac: true,
-  otp_chars: createEmptyOtpChars(),
 })
 
 // 使用 useTaskPolling composable
@@ -232,12 +153,11 @@ const {
 const hasAutoPromptedOtpRetry = ref(false)
 
 const handleBatchCollect = async () => {
-  await fetchDevices()
+  await loadDevices()
   batchCollectModel.value = {
     device_ids: [],
     collect_arp: true,
     collect_mac: true,
-    otp_chars: createEmptyOtpChars(),
   }
   hasAutoPromptedOtpRetry.value = false
   resetBatchTask()
@@ -256,24 +176,22 @@ const submitBatchCollect = async () => {
     .filter((d): d is Device => Boolean(d))
   const otpManualDevices = selectedDevices.filter((d) => String(d.auth_type) === 'otp_manual')
 
-  const batchOtpCode = batchCollectModel.value.otp_chars.join('').trim()
-  const hasBatchOtpInput = batchOtpCode.length > 0
-
-  if (otpManualDevices.length > 0 && !hasBatchOtpInput) {
+  if (otpManualDevices.length > 0) {
     const groups = new Set(
       otpManualDevices.map((d) => `${d.dept_id || 'null'}::${String(d.device_group || 'null')}`),
     )
     if (groups.size === 1) {
       const first = otpManualDevices[0]!
-      pendingBatchCollect.value = true
-      pendingCollectDeviceId.value = ''
-      otpRequiredInfo.value = {
-        dept_id: first.dept_id || '',
-        device_group: String(first.device_group || 'access'),
-        failed_devices: [],
-      }
-      otpChars.value = createEmptyOtpChars()
-      showOTPModal.value = true
+      otpFlow.open(
+        {
+          dept_id: first.dept_id || '',
+          device_group: String(first.device_group || 'access'),
+          failed_devices: [],
+        },
+        async (otpCode) => {
+          await submitBatchCollectInternal(otpCode)
+        },
+      )
       return
     }
     $alert.warning('所选设备包含多个部门/分组的 OTP 手动认证设备，建议按部门+分组分批采集')
@@ -282,11 +200,9 @@ const submitBatchCollect = async () => {
   await submitBatchCollectInternal()
 }
 
-const submitBatchCollectInternal = async () => {
+const submitBatchCollectInternal = async (otpCode?: string) => {
   try {
-    const batchOtpCode = batchCollectModel.value.otp_chars.join('').trim()
-    const hasBatchOtpInput = batchOtpCode.length > 0
-    if (hasBatchOtpInput && !/^\d{6}$/.test(batchOtpCode)) {
+    if (otpCode && !/^\d{6}$/.test(otpCode)) {
       $alert.warning('OTP 验证码需为 6 位数字')
       return
     }
@@ -294,24 +210,14 @@ const submitBatchCollectInternal = async () => {
       device_ids: batchCollectModel.value.device_ids,
       collect_arp: batchCollectModel.value.collect_arp,
       collect_mac: batchCollectModel.value.collect_mac,
-      otp_code: hasBatchOtpInput ? batchOtpCode : undefined,
+      otp_code: otpCode || undefined,
     })
     $alert.success('批量采集任务已提交')
     startPollingTaskStatus(res.data.task_id)
   } catch (error: unknown) {
-    // 检查是否需要 OTP 输入 (428 状态码)
-    const err = error as { response?: { status?: number; data?: { details?: OTPRequiredDetails } } }
-    if (err?.response?.status === 428 && err?.response?.data?.details) {
-      const details = err.response.data.details
-      otpRequiredInfo.value = {
-        dept_id: details.dept_id,
-        device_group: details.device_group,
-        failed_devices: details.failed_devices || [],
-      }
-      pendingBatchCollect.value = true
-      otpChars.value = createEmptyOtpChars()
-      showOTPModal.value = true
-    }
+    otpFlow.tryHandleOtpRequired(error, async (nextOtp) => {
+      await submitBatchCollectInternal(nextOtp)
+    })
   }
 }
 
@@ -331,11 +237,17 @@ const retryOtpExpiredDevices = () => {
     return
   }
   batchCollectModel.value.device_ids = ids
-  pendingBatchCollect.value = true
-  pendingCollectDeviceId.value = ''
-  otpRequiredInfo.value = null
-  otpChars.value = createEmptyOtpChars()
-  showOTPModal.value = true
+  const first = getSelectedDevice(ids[0] || '')
+  otpFlow.open(
+    {
+      dept_id: first?.dept_id || '',
+      device_group: String(first?.device_group || 'access'),
+      failed_devices: [],
+    },
+    async (otpCode) => {
+      await submitBatchCollectInternal(otpCode)
+    },
+  )
 }
 
 const closeBatchCollectModal = () => {
@@ -417,7 +329,8 @@ const filterMacEntries = computed(() => {
   })
 })
 
-const compareText = (a: unknown, b: unknown): number => normalizeText(a).localeCompare(normalizeText(b))
+const compareText = (a: unknown, b: unknown): number =>
+  normalizeText(a).localeCompare(normalizeText(b))
 const compareDateTime = (a: unknown, b: unknown): number => {
   const ta = Date.parse(String(a ?? ''))
   const tb = Date.parse(String(b ?? ''))
@@ -455,13 +368,15 @@ const arpColumns = computed<DataTableColumns<ARPEntry>>(() => {
       title: 'VLAN',
       key: 'vlan_id',
       render: (row: ARPEntry) => row.vlan_id || row.vlan || '-',
-      sorter: (r1: ARPEntry, r2: ARPEntry) => compareVlan(r1.vlan_id || r1.vlan, r2.vlan_id || r2.vlan),
+      sorter: (r1: ARPEntry, r2: ARPEntry) =>
+        compareVlan(r1.vlan_id || r1.vlan, r2.vlan_id || r2.vlan),
     },
     {
       title: '类型',
       key: 'entry_type',
       render: (row: ARPEntry) => row.entry_type || row.type || '-',
-      sorter: (r1: ARPEntry, r2: ARPEntry) => compareText(r1.entry_type || r1.type, r2.entry_type || r2.type),
+      sorter: (r1: ARPEntry, r2: ARPEntry) =>
+        compareText(r1.entry_type || r1.type, r2.entry_type || r2.type),
     },
     {
       title: '最后更新时间',
@@ -483,7 +398,8 @@ const macColumns = computed<DataTableColumns<MACEntry>>(() => {
       title: 'VLAN',
       key: 'vlan_id',
       render: (row: MACEntry) => row.vlan_id || row.vlan || '-',
-      sorter: (r1: MACEntry, r2: MACEntry) => compareVlan(r1.vlan_id || r1.vlan, r2.vlan_id || r2.vlan),
+      sorter: (r1: MACEntry, r2: MACEntry) =>
+        compareVlan(r1.vlan_id || r1.vlan, r2.vlan_id || r2.vlan),
     },
     {
       title: '接口',
@@ -495,7 +411,8 @@ const macColumns = computed<DataTableColumns<MACEntry>>(() => {
       title: '类型',
       key: 'entry_type',
       render: (row: MACEntry) => row.entry_type || row.type || '-',
-      sorter: (r1: MACEntry, r2: MACEntry) => compareText(r1.entry_type || r1.type, r2.entry_type || r2.type),
+      sorter: (r1: MACEntry, r2: MACEntry) =>
+        compareText(r1.entry_type || r1.type, r2.entry_type || r2.type),
     },
     {
       title: '状态',
@@ -514,7 +431,7 @@ const macColumns = computed<DataTableColumns<MACEntry>>(() => {
 
 const ensureTableDevicesLoaded = async () => {
   if (deviceOptions.value.length === 0) {
-    await fetchDevices()
+    await loadDevices()
   }
 }
 
@@ -602,15 +519,9 @@ const submitLocate = async () => {
           placeholder="选择设备查看表数据"
           filterable
           style="width: 360px"
-          @focus="fetchDevices"
+          @focus="() => loadDevices()"
         />
-        <n-button
-          type="primary"
-          :loading="tableLoading"
-          @click="fetchTables"
-        >
-          查询
-        </n-button>
+        <n-button type="primary" :loading="tableLoading" @click="fetchTables"> 查询 </n-button>
       </n-space>
 
       <n-tabs v-model:value="activeTableTab" type="line" animated>
@@ -619,7 +530,9 @@ const submitLocate = async () => {
             <n-space justify="space-between" align="center">
               <div>
                 <div>设备: {{ arpTableData?.device_name || '-' }}</div>
-                <div v-if="arpTableData?.cached_at">缓存时间: {{ formatDateTime(arpTableData.cached_at) }}</div>
+                <div v-if="arpTableData?.cached_at">
+                  缓存时间: {{ formatDateTime(arpTableData.cached_at) }}
+                </div>
                 <div v-else>缓存时间: -</div>
                 <div>条目数: {{ arpTableData?.total ?? 0 }}</div>
               </div>
@@ -647,7 +560,9 @@ const submitLocate = async () => {
             <n-space justify="space-between" align="center">
               <div>
                 <div>设备: {{ macTableData?.device_name || '-' }}</div>
-                <div v-if="macTableData?.cached_at">缓存时间: {{ formatDateTime(macTableData.cached_at) }}</div>
+                <div v-if="macTableData?.cached_at">
+                  缓存时间: {{ formatDateTime(macTableData.cached_at) }}
+                </div>
                 <div v-else>缓存时间: -</div>
                 <div>条目数: {{ macTableData?.total ?? 0 }}</div>
               </div>
@@ -695,7 +610,9 @@ const submitLocate = async () => {
             <p>设备: {{ collectResult.device_name }}</p>
             <p>ARP 条目: {{ collectResult.arp_count }}</p>
             <p>MAC 条目: {{ collectResult.mac_count }}</p>
-            <p v-if="collectResult.duration_ms !== null">耗时: {{ collectResult.duration_ms }} ms</p>
+            <p v-if="collectResult.duration_ms !== null">
+              耗时: {{ collectResult.duration_ms }} ms
+            </p>
             <p v-if="!collectResult.success">原因: {{ collectResult.error_message || '-' }}</p>
           </n-alert>
         </template>
@@ -729,11 +646,6 @@ const submitLocate = async () => {
             <n-checkbox v-model:checked="batchCollectModel.collect_arp">采集 ARP</n-checkbox>
             <n-checkbox v-model:checked="batchCollectModel.collect_mac">采集 MAC</n-checkbox>
           </n-space>
-          <n-form-item label="OTP 验证码（可选）">
-            <div class="otp-center">
-              <n-input-otp v-model:value="batchCollectModel.otp_chars" :length="6" />
-            </div>
-          </n-form-item>
         </n-space>
         <div style="margin-top: 20px; text-align: right">
           <n-space>
@@ -783,8 +695,6 @@ const submitLocate = async () => {
       </template>
     </n-modal>
 
-
-
     <!-- IP/MAC 定位 Modal -->
     <n-modal
       v-model:show="showLocateModal"
@@ -807,53 +717,21 @@ const submitLocate = async () => {
             <p>设备: {{ locateResult.device_name || locateResult.device_id || '未知' }}</p>
             <p>接口: {{ locateResult.interface || '-' }}</p>
             <p>VLAN: {{ locateResult.vlan || '-' }}</p>
-            <p v-if="locateResult.located_at">定位时间: {{ formatDateTime(locateResult.located_at) }}</p>
+            <p v-if="locateResult.located_at">
+              定位时间: {{ formatDateTime(locateResult.located_at) }}
+            </p>
           </n-alert>
         </template>
       </n-space>
     </n-modal>
 
-    <!-- OTP 输入 Modal -->
-    <n-modal
+    <OtpModal
       v-model:show="showOTPModal"
-      preset="card"
-      title="需要 OTP 验证码"
-      style="width: 450px"
-      :closable="!otpLoading"
-      :mask-closable="!otpLoading"
-    >
-      <n-space vertical style="width: 100%">
-        <n-alert type="warning" title="设备需要 OTP 认证">
-          <template v-if="otpRequiredInfo">
-            <p>
-              设备分组
-              <strong>{{ deviceGroupLabels[otpRequiredInfo.device_group] || otpRequiredInfo.device_group }}</strong>
-              配置为手动输入 OTP 认证方式。
-            </p>
-          </template>
-          <p>请输入当前有效的 OTP 验证码以继续操作。</p>
-        </n-alert>
-        <n-form-item label="OTP 验证码" required>
-          <div class="otp-center">
-            <n-input-otp v-model:value="otpChars" :length="6" :disabled="otpLoading" @finish="submitOTP" />
-          </div>
-        </n-form-item>
-        <template v-if="otpRequiredInfo && otpRequiredInfo.failed_devices.length > 0">
-          <n-alert type="info" title="断点续传">
-            上次操作中以下设备未完成，输入 OTP 后将继续处理：
-            <ul style="margin: 8px 0 0 16px; padding: 0">
-              <li v-for="device in otpRequiredInfo.failed_devices" :key="device">{{ device }}</li>
-            </ul>
-          </n-alert>
-        </template>
-      </n-space>
-      <template #footer>
-        <n-space justify="end">
-          <n-button :disabled="otpLoading" @click="showOTPModal = false">取消</n-button>
-          <n-button type="primary" :loading="otpLoading" @click="submitOTP">确认并继续</n-button>
-        </n-space>
-      </template>
-    </n-modal>
+      :loading="otpLoading"
+      :info-items="otpInfoItems"
+      @update:show="(v) => (!v ? closeOTP() : undefined)"
+      @confirm="submitOTP"
+    />
   </div>
 </template>
 
