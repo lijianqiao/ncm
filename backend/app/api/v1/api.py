@@ -12,19 +12,19 @@ from pathlib import Path
 from types import ModuleType
 
 from fastapi import APIRouter
-from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
 from app.api.deps import SessionDep
 from app.api.v1 import endpoints
 from app.core import cache as cache_module
 from app.core.logger import logger
+from app.schemas.common import ResponseBase
 
 api_router = APIRouter()
 
 
-@api_router.get("/health")
-async def health_check(db: SessionDep):
+@api_router.get("/health", response_model=ResponseBase[dict])
+async def health_check(db: SessionDep) -> ResponseBase[dict]:
     """
     健康检查接口 (Database & Cache Check).
     """
@@ -51,8 +51,9 @@ async def health_check(db: SessionDep):
         health_status["cache"] = "disconnected"
         health_status["status"] = "degraded"
 
-    status_code = 200 if health_status["status"] == "ok" else 503
-    return JSONResponse(status_code=status_code, content=health_status)
+    # 统一返回 ResponseBase；保持 HTTP 200，但通过 code/message 传递状态
+    code = 200 if health_status["status"] == "ok" else 503
+    return ResponseBase(code=code, message="ok" if code == 200 else "degraded", data=health_status)
 
 
 def auto_include_routers() -> None:

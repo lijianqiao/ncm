@@ -30,6 +30,7 @@ def scan_subnet(
     subnet: str,
     scan_type: str = "auto",
     ports: str | None = None,
+    dept_id: str | None = None,
 ) -> dict[str, Any]:
     """
     扫描单个网段 Celery 任务。
@@ -44,6 +45,14 @@ def scan_subnet(
     """
 
     celery_task_id = self.request.id
+    dept_uuid = None
+    if dept_id:
+        try:
+            from uuid import UUID
+
+            dept_uuid = UUID(str(dept_id))
+        except Exception:
+            dept_uuid = None
 
     async def _scan():
         async with AsyncSessionLocal() as db:
@@ -65,7 +74,7 @@ def scan_subnet(
             if resolved == "masscan":
                 result = await scan_service.masscan_scan(subnet, ports=ports)
             elif resolved == "nmap":
-                result = await scan_service.nmap_scan(subnet, ports=ports)
+                result = await scan_service.nmap_ping_scan(subnet)
             else:
                 from datetime import datetime
 
@@ -93,7 +102,15 @@ def scan_subnet(
             # 处理扫描结果
             result.task_id = celery_task_id
             if result.hosts:
-                processed = await scan_service.process_scan_result(db, scan_result=result, scan_task_id=celery_task_id)
+                safe_update_state(
+                    self,
+                    celery_task_id,
+                    state="PROGRESS",
+                    meta={"progress": 80, "stage": "enriching", "subnet": subnet, "hosts_found": result.hosts_found},
+                )
+                processed = await scan_service.process_scan_result(
+                    db, scan_result=result, scan_task_id=celery_task_id, dept_id=dept_uuid
+                )
                 logger.info(
                     "扫描结果处理完成",
                     subnet=subnet,
@@ -125,6 +142,7 @@ def scan_subnets_batch(
     subnets: list[str],
     scan_type: str = "auto",
     ports: str | None = None,
+    dept_id: str | None = None,
 ) -> dict[str, Any]:
     """
     批量扫描多个网段 Celery 任务。
@@ -139,6 +157,14 @@ def scan_subnets_batch(
     """
 
     celery_task_id = self.request.id
+    dept_uuid = None
+    if dept_id:
+        try:
+            from uuid import UUID
+
+            dept_uuid = UUID(str(dept_id))
+        except Exception:
+            dept_uuid = None
 
     async def _batch_scan():
         results = []
@@ -173,7 +199,7 @@ def scan_subnets_batch(
                     if resolved == "masscan":
                         result = await scan_service.masscan_scan(subnet, ports=ports)
                     elif resolved == "nmap":
-                        result = await scan_service.nmap_scan(subnet, ports=ports)
+                        result = await scan_service.nmap_ping_scan(subnet)
                     else:
                         from datetime import datetime
 
@@ -207,7 +233,22 @@ def scan_subnets_batch(
                     # 处理结果
                     if result.hosts:
                         result.task_id = celery_task_id
-                        await scan_service.process_scan_result(db, scan_result=result, scan_task_id=celery_task_id)
+                        safe_update_state(
+                            self,
+                            celery_task_id,
+                            state="PROGRESS",
+                            meta={
+                                "progress": min(base_progress + 15, 95),
+                                "stage": "enriching",
+                                "subnet": subnet,
+                                "current": idx,
+                                "total": total,
+                                "hosts_found": result.hosts_found,
+                            },
+                        )
+                        await scan_service.process_scan_result(
+                            db, scan_result=result, scan_task_id=celery_task_id, dept_id=dept_uuid
+                        )
                         total_hosts += result.hosts_found
 
                     results.append(
@@ -324,7 +365,26 @@ def scheduled_network_scan(self) -> dict[str, Any]:
 
             for subnet in subnets:
                 try:
-                    result = await scan_service.nmap_scan(subnet)
+                    resolved = scan_service.resolve_scan_type("auto")
+                    if resolved == "masscan":
+                        result = await scan_service.masscan_scan(subnet)
+                    elif resolved == "nmap":
+                        result = await scan_service.nmap_ping_scan(subnet)
+                    else:
+                        from datetime import datetime
+
+                        from app.schemas.discovery import ScanResult as ScanResultSchema
+
+                        result = ScanResultSchema(
+                            subnet=subnet,
+                            scan_type="auto",
+                            hosts_found=0,
+                            hosts=[],
+                            started_at=datetime.now(),
+                            completed_at=datetime.now(),
+                            duration_seconds=0,
+                            error="未检测到可用扫描器：请安装 nmap 或 masscan，并确保在 PATH 中",
+                        )
                     if result.hosts:
                         result.task_id = celery_task_id
                         await scan_service.process_scan_result(db, scan_result=result, scan_task_id=celery_task_id)

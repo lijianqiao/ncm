@@ -95,6 +95,9 @@ SCAN_SCHEDULED_SUBNETS=192.168.1.0/24,10.0.0.0/24
 ### 3. 数据库初始化
 
 ```bash
+# 生成数据库迁移文件
+uv run alembic revision --autogenerate -m "Initial migration"
+
 # 应用迁移
 uv run alembic upgrade head
 

@@ -24,6 +24,7 @@ class ScanRequest(BaseModel):
     scan_type: str = Field(default="auto", description="扫描类型 (auto/nmap/masscan)")
     ports: str | None = Field(default=None, description="扫描端口 (如 22,23,80,443)")
     async_mode: bool = Field(default=True, description="是否异步执行")
+    dept_id: UUID | None = Field(default=None, description="所属部门ID（用于 SNMP 凭据匹配）")
 
     @field_validator("scan_type")
     @classmethod
@@ -155,6 +156,12 @@ class DiscoveryBase(BaseModel):
     device_type: str | None = Field(default=None, description="设备类型")
     hostname: str | None = Field(default=None, description="主机名")
     os_info: str | None = Field(default=None, description="操作系统信息")
+    serial_number: str | None = Field(default=None, description="序列号")
+    dept_id: UUID | None = Field(default=None, description="部门ID")
+    snmp_sysname: str | None = Field(default=None, description="SNMP sysName")
+    snmp_sysdescr: str | None = Field(default=None, description="SNMP sysDescr")
+    snmp_ok: bool | None = Field(default=None, description="SNMP 是否成功")
+    snmp_error: str | None = Field(default=None, description="SNMP 错误信息")
 
     @field_validator("ip_address")
     @classmethod

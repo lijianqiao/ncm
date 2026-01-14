@@ -156,7 +156,7 @@ async function doRefreshToken(): Promise<string> {
   )
 
   // 后端返回新的 access_token
-  const newAccessToken = response.data?.access_token
+  const newAccessToken = response.data?.data?.access_token || response.data?.access_token
   if (!newAccessToken) {
     throw new Error('刷新 Token 返回数据异常')
   }
@@ -204,11 +204,14 @@ service.interceptors.request.use(
   },
 )
 
-const responseSuccessInterceptor = (
-  response: AxiosResponse<ResponseBase<unknown>>,
-): ResponseBase<unknown> => {
+const responseSuccessInterceptor = (response: AxiosResponse): unknown => {
   // 移除已完成的请求
   removePendingRequest(response.config)
+
+  const url = response.config?.url || ''
+  if (url.includes('/auth/login')) {
+    return response.data
+  }
 
   const res = response.data as ResponseBase<unknown>
 

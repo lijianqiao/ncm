@@ -198,6 +198,7 @@ class CRUDDept(CRUDBase[Department, DeptCreate, DeptUpdate]):
         Returns:
             是否存在
         """
+
         conditions = [
             Department.code == code,
             Department.is_deleted == False,  # noqa: E712
@@ -262,3 +263,4 @@ class CRUDDept(CRUDBase[Department, DeptCreate, DeptUpdate]):
 
 
 dept_crud = CRUDDept(Department)
+dept = dept_crud

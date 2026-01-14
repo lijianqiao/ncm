@@ -60,13 +60,13 @@ async def login_access_token(
     return TokenAccess(access_token=token.access_token, token_type=token.token_type)
 
 
-@router.post("/refresh", response_model=TokenAccess, summary="刷新令牌")
+@router.post("/refresh", response_model=ResponseBase[TokenAccess], summary="刷新令牌")
 async def refresh_token(
     response: Response,
     request: Request,
     refresh_token: deps.RefreshCookieDep,
     auth_service: deps.AuthServiceDep,
-) -> TokenAccess:
+) -> ResponseBase[TokenAccess]:
     """
     使用 Refresh Token 换取新的 Access Token。
 
@@ -91,7 +91,7 @@ async def refresh_token(
     csrf_token = generate_csrf_token()
     set_csrf_cookie(response, csrf_token)
 
-    return TokenAccess(access_token=token.access_token, token_type=token.token_type)
+    return ResponseBase(data=TokenAccess(access_token=token.access_token, token_type=token.token_type))
 
 
 @router.post("/test-token", response_model=ResponseBase[UserResponse], summary="测试令牌有效性")

@@ -20,10 +20,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.decorator import transactional
+from app.core.encryption import decrypt_snmp_secret
 from app.core.enums import DeviceGroup, DeviceStatus, DeviceVendor, DiscoveryStatus
 from app.core.logger import logger
 from app.crud.crud_device import CRUDDevice
 from app.crud.crud_discovery import CRUDDiscovery
+from app.crud.crud_snmp_credential import dept_snmp_credential as dept_snmp_credential_crud
 from app.models.device import Device
 from app.models.discovery import Discovery
 from app.schemas.discovery import (
@@ -33,6 +35,7 @@ from app.schemas.discovery import (
     ScanHost,
     ScanResult,
 )
+from app.services.snmp_service import SnmpService, SnmpV2cCredential
 
 
 class ScanService:
@@ -100,8 +103,77 @@ class ScanService:
 
         return result
 
+    async def nmap_ping_scan(self, subnet: str) -> ScanResult:
+        started_at = datetime.now()
+        result = ScanResult(
+            subnet=subnet,
+            scan_type="nmap",
+            started_at=started_at,
+        )
+
+        if not self.is_nmap_available():
+            result.error = "Nmap 未安装或不在 PATH 中，请安装 Nmap 并将 nmap 加入 PATH，或选择 masscan"
+            result.completed_at = datetime.now()
+            result.duration_seconds = int((result.completed_at - started_at).total_seconds())
+            return result
+
+        try:
+            hosts = await asyncio.get_event_loop().run_in_executor(None, self._run_nmap_ping_scan, subnet)
+            result.hosts = hosts
+            result.hosts_found = len(hosts)
+            result.completed_at = datetime.now()
+            result.duration_seconds = int((result.completed_at - started_at).total_seconds())
+        except Exception as e:
+            logger.error(f"Nmap 存活探测失败: {subnet}", error=str(e))
+            result.error = f"Nmap 存活探测失败: {e}"
+            result.completed_at = datetime.now()
+
+        return result
+
     def is_nmap_available(self) -> bool:
         return shutil.which("nmap") is not None
+
+    def _run_nmap_ping_scan(self, subnet: str) -> list[ScanHost]:
+        cmd = [
+            "nmap",
+            "-sn",
+            "-n",
+            "--max-retries",
+            "1",
+            "--host-timeout",
+            "5s",
+            subnet,
+            "-oG",
+            "-",
+        ]
+
+        try:
+            process = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=min(int(settings.SCAN_TIMEOUT), 90),
+            )
+        except subprocess.TimeoutExpired as e:
+            raise RuntimeError("Timeout from nmap process") from e
+        except FileNotFoundError as e:
+            raise RuntimeError("Nmap 未安装，请先安装 nmap") from e
+
+        hosts: list[ScanHost] = []
+        for line in (process.stdout or "").splitlines():
+            line = line.strip()
+            if not line.startswith("Host:"):
+                continue
+            if "Status: Up" not in line:
+                continue
+
+            parts = line.split()
+            if len(parts) < 2:
+                continue
+            ip = parts[1]
+            hosts.append(ScanHost(ip_address=ip, status="up"))
+
+        return hosts
 
     def _run_nmap_scan(self, subnet: str, ports: str, arguments: str) -> dict[str, Any]:
         """
@@ -367,6 +439,7 @@ class ScanService:
         db: AsyncSession,
         scan_result: ScanResult,
         scan_task_id: str | None = None,
+        dept_id: UUID | None = None,
     ) -> int:
         """
         处理扫描结果，更新 Discovery 表。
@@ -379,21 +452,107 @@ class ScanService:
         Returns:
             处理的主机数量
         """
+        snmp_results: dict[str, dict[str, Any]] = {}
+        if dept_id:
+            try:
+                snmp_cred = await dept_snmp_credential_crud.get_by_dept_id(db, dept_id=dept_id)
+                if snmp_cred and snmp_cred.snmp_version == "v2c" and snmp_cred.community_encrypted:
+                    community = decrypt_snmp_secret(snmp_cred.community_encrypted)
+                    snmp_service = SnmpService()
+                    cred = SnmpV2cCredential(community=community, port=snmp_cred.port)
+                    sem = asyncio.Semaphore(settings.SNMP_MAX_CONCURRENCY)
+
+                    async def _enrich(ip: str, open_ports: dict[int, str] | None):
+                        if open_ports is not None and 161 not in open_ports:
+                            return ip, None
+                        async with sem:
+                            r = await snmp_service.enrich_basic(ip, cred)
+                            return ip, r
+
+                    tasks = [_enrich(h.ip_address, h.open_ports) for h in scan_result.hosts]
+                    results = await asyncio.gather(*tasks, return_exceptions=True)
+                    for item in results:
+                        try:
+                            ip, r = item  # type: ignore[misc]
+                        except Exception:
+                            # 跳过异常项
+                            continue
+                        if r is None:
+                            continue
+                        snmp_results[ip] = {
+                            "snmp_sysname": r.sys_name,
+                            "snmp_sysdescr": r.sys_descr,
+                            "serial_number": r.serial_number,
+                            "bridge_mac": r.bridge_mac,
+                            "interface_mac": r.interface_mac,
+                            "interface_name": r.interface_name,
+                            "snmp_ok": r.ok,
+                            "snmp_error": r.error,
+                        }
+            except Exception as e:
+                logger.warning("SNMP 补全失败（已忽略，不影响扫描入库）", error=str(e))
+
         data_list: list[DiscoveryCreate] = []
 
         for host in scan_result.hosts:
             try:
+                sys_descr = snmp_results.get(host.ip_address, {}).get("snmp_sysdescr") if snmp_results else None
+                sys_name = snmp_results.get(host.ip_address, {}).get("snmp_sysname") if snmp_results else None
+                inferred_vendor = None
+                if isinstance(sys_descr, str) and sys_descr:
+                    s = sys_descr.lower()
+                    if "cisco" in s:
+                        inferred_vendor = "cisco"
+                    elif "huawei" in s:
+                        inferred_vendor = "huawei"
+                    elif "h3c" in s:
+                        inferred_vendor = "h3c"
+                    elif "juniper" in s:
+                        inferred_vendor = "juniper"
+                    elif "arista" in s:
+                        inferred_vendor = "arista"
+                    elif "nokia" in s or "alcatel" in s:
+                        inferred_vendor = "nokia"
+                    elif "ruijie" in s:
+                        inferred_vendor = "ruijie"
+                    elif "mikrotik" in s:
+                        inferred_vendor = "mikrotik"
+                    elif "dell" in s:
+                        inferred_vendor = "dell"
+                    elif "hewlett-packard" in s or "hp " in s:
+                        inferred_vendor = "hp"
+                    elif "aruba" in s:
+                        inferred_vendor = "aruba"
+
                 data_list.append(
                     DiscoveryCreate(
                         ip_address=host.ip_address,
-                        mac_address=host.mac_address,
-                        vendor=host.vendor,
-                        hostname=host.hostname,
+                        mac_address=host.mac_address
+                        or (
+                            snmp_results.get(host.ip_address, {}).get("interface_mac")
+                            or snmp_results.get(host.ip_address, {}).get("bridge_mac")
+                            if snmp_results
+                            else None
+                        ),
+                        vendor=host.vendor or inferred_vendor,
+                        hostname=(sys_name if isinstance(sys_name, str) and sys_name else None) or host.hostname,
                         os_info=host.os_info,
+                        serial_number=snmp_results.get(host.ip_address, {}).get("serial_number")
+                        if snmp_results
+                        else None,
                         open_ports=host.open_ports,
                         ssh_banner=getattr(host, "ssh_banner", None),
                         scan_source=scan_result.scan_type,
                         scan_task_id=scan_task_id,
+                        dept_id=dept_id,
+                        snmp_sysname=snmp_results.get(host.ip_address, {}).get("snmp_sysname")
+                        if snmp_results
+                        else None,
+                        snmp_sysdescr=snmp_results.get(host.ip_address, {}).get("snmp_sysdescr")
+                        if snmp_results
+                        else None,
+                        snmp_ok=snmp_results.get(host.ip_address, {}).get("snmp_ok") if snmp_results else None,
+                        snmp_error=snmp_results.get(host.ip_address, {}).get("snmp_error") if snmp_results else None,
                     )
                 )
             except Exception as e:
@@ -568,6 +727,7 @@ class ScanService:
             创建的 Device 或 None
         """
         from app.core.encryption import encrypt_password
+        from app.core.enums import AuthType
         from app.schemas.device import DeviceCreate
 
         # 获取发现记录
@@ -582,9 +742,13 @@ class ScanService:
             await self.discovery_crud.set_matched_device(db, id=discovery_id, device_id=existing.id)
             return existing
 
+        inferred_name = (discovery.snmp_sysname or discovery.hostname or "").strip() or name
+        inferred_vendor = (vendor or "").strip() or (discovery.vendor or "").strip() or "other"
+        inferred_dept_id = dept_id or getattr(discovery, "dept_id", None)
+
         # 创建设备（对齐 DeviceService.create_device 的映射逻辑：password -> password_encrypted）
         try:
-            vendor_enum = DeviceVendor(vendor)
+            vendor_enum = DeviceVendor(inferred_vendor)
         except Exception:
             vendor_enum = DeviceVendor.OTHER
 
@@ -593,15 +757,38 @@ class ScanService:
         except Exception:
             group_enum = DeviceGroup.ACCESS
 
+        auth_type = AuthType.OTP_MANUAL
+        if username and password:
+            auth_type = AuthType.STATIC
+
+        os_version = discovery.os_info
+        if not os_version and discovery.snmp_sysdescr:
+            lines = [s.strip() for s in discovery.snmp_sysdescr.splitlines() if s.strip()]
+            if inferred_vendor.lower() == "h3c":
+                if lines:
+                    os_version = lines[0]
+            elif inferred_vendor.lower() == "huawei":
+                hit = next((l for l in lines if "version" in l.lower()), None)
+                os_version = hit or (lines[0] if lines else None)
+            else:
+                os_version = lines[0] if lines else None
+
+        stock_in_at = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+
         device_data = DeviceCreate(
-            name=name,
+            name=inferred_name,
             ip_address=discovery.ip_address,
             vendor=vendor_enum,
             device_group=group_enum,
-            dept_id=dept_id,
-            username=username,
-            password=password,
+            dept_id=inferred_dept_id,
+            auth_type=auth_type,
+            username=username if auth_type == AuthType.STATIC else None,
+            password=password if auth_type == AuthType.STATIC else None,
             ssh_port=22,
+            serial_number=getattr(discovery, "serial_number", None),
+            os_version=os_version,
+            stock_in_at=stock_in_at,
+            status=DeviceStatus.IN_USE,
         )
 
         create_data = device_data.model_dump(exclude={"password"}, exclude_unset=True)

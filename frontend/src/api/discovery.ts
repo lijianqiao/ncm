@@ -24,8 +24,14 @@ export interface DiscoveryRecord {
   device_type: string | null
   hostname: string | null
   os_info: string | null
+  serial_number?: string | null
   open_ports: Record<string, string> | null
   ssh_banner: string | null
+  dept_id?: string | null
+  snmp_sysname?: string | null
+  snmp_sysdescr?: string | null
+  snmp_ok?: boolean | null
+  snmp_error?: string | null
   first_seen_at: string
   last_seen_at: string
   offline_days: number
@@ -55,6 +61,7 @@ export interface ScanRequest {
   scan_type?: 'auto' | 'nmap' | 'masscan'
   ports?: string
   async_mode?: boolean
+  dept_id?: string
 }
 
 /** 扫描结果 */

@@ -24,6 +24,7 @@ from .discovery import Discovery
 from .inventory_audit import InventoryAudit
 from .log import LoginLog, OperationLog
 from .rbac import Menu, Role, RoleMenu, UserRole
+from .snmp_credential import DeptSnmpCredential
 from .task import Task
 from .task_approval import TaskApprovalStep
 from .template import Template
@@ -53,6 +54,7 @@ __all__ = [
     "DeviceStatus",
     # 凭据管理
     "DeviceGroupCredential",
+    "DeptSnmpCredential",
     # 配置备份
     "Backup",
     "BackupType",

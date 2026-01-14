@@ -7,6 +7,7 @@
 """
 
 import asyncio
+import os
 import threading
 from collections.abc import Coroutine
 from typing import Any, TypeVar
@@ -42,7 +43,10 @@ def init_celery_async_runtime() -> None:
 
         def _thread_main() -> None:
             global _ASYNC_LOOP
-            loop = asyncio.new_event_loop()
+            if os.name == "nt":
+                loop = asyncio.ProactorEventLoop()
+            else:
+                loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             _ASYNC_LOOP = loop
             _ASYNC_THREAD_STARTED.set()

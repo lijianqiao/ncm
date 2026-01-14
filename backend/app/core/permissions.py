@@ -83,6 +83,11 @@ class PermissionCode(str, Enum):
     CREDENTIAL_UPDATE = "credential:update"
     CREDENTIAL_DELETE = "credential:delete"
     CREDENTIAL_USE = "credential:use"
+    # NCM 部门 SNMP 凭据权限
+    SNMP_CRED_LIST = "snmp_cred:list"
+    SNMP_CRED_CREATE = "snmp_cred:create"
+    SNMP_CRED_UPDATE = "snmp_cred:update"
+    SNMP_CRED_DELETE = "snmp_cred:delete"
 
     # NCM 备份权限
     BACKUP_LIST = "backup:list"
@@ -203,6 +208,11 @@ PERMISSION_DEFS: tuple[PermissionDef, ...] = (
     PermissionDef(PermissionCode.CREDENTIAL_UPDATE, "凭据-更新"),
     PermissionDef(PermissionCode.CREDENTIAL_DELETE, "凭据-删除"),
     PermissionDef(PermissionCode.CREDENTIAL_USE, "凭据-使用", "缓存和使用 OTP 验证码"),
+    # SNMP 凭据（部门维度）
+    PermissionDef(PermissionCode.SNMP_CRED_LIST, "SNMP 凭据-列表"),
+    PermissionDef(PermissionCode.SNMP_CRED_CREATE, "SNMP 凭据-创建"),
+    PermissionDef(PermissionCode.SNMP_CRED_UPDATE, "SNMP 凭据-更新"),
+    PermissionDef(PermissionCode.SNMP_CRED_DELETE, "SNMP 凭据-删除"),
     # NCM 备份权限
     PermissionDef(PermissionCode.BACKUP_LIST, "备份-列表"),
     PermissionDef(PermissionCode.BACKUP_CREATE, "备份-创建"),

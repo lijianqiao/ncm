@@ -43,8 +43,8 @@ class TaskTriggerRequest(BaseModel):
 # ==================== 任务查询 ====================
 
 
-@router.get("/{task_id}", response_model=TaskResponse)
-async def get_task_status(task_id: str, _: SuperuserDep) -> TaskResponse:
+@router.get("/{task_id}", response_model=ResponseBase[TaskResponse])
+async def get_task_status(task_id: str, _: SuperuserDep) -> ResponseBase[TaskResponse]:
     """查询 Celery 任务的执行状态和结果。
 
     仅限超级管理员访问。能够返回 PENDING, STARTED, SUCCESS, FAILURE 等状态，并在任务完成时返回结果或错误。
@@ -71,7 +71,7 @@ async def get_task_status(task_id: str, _: SuperuserDep) -> TaskResponse:
         # 进度信息
         response.result = result.info
 
-    return response
+    return ResponseBase(data=response)
 
 
 class RevokeResponse(BaseModel):
@@ -100,8 +100,8 @@ async def revoke_task(task_id: str, _: SuperuserDep) -> ResponseBase[RevokeRespo
 # ==================== 测试任务 ====================
 
 
-@router.post("/test/ping", response_model=TaskResponse)
-async def trigger_ping(_: SuperuserDep) -> TaskResponse:
+@router.post("/test/ping", response_model=ResponseBase[TaskResponse])
+async def trigger_ping(_: SuperuserDep) -> ResponseBase[TaskResponse]:
     """触发 Ping 测试异步任务。
 
     用于回归测试或验证 Celery 分片和 Worker 是否正常运行。
@@ -116,11 +116,11 @@ async def trigger_ping(_: SuperuserDep) -> TaskResponse:
     from app.celery.tasks.example import ping
 
     result = ping.delay()  # type: ignore[attr-defined]
-    return TaskResponse(task_id=result.id, status="PENDING")
+    return ResponseBase(data=TaskResponse(task_id=result.id, status="PENDING"))
 
 
-@router.post("/test/add", response_model=TaskResponse)
-async def trigger_add(_: SuperuserDep, x: int = 1, y: int = 2) -> TaskResponse:
+@router.post("/test/add", response_model=ResponseBase[TaskResponse])
+async def trigger_add(_: SuperuserDep, x: int = 1, y: int = 2) -> ResponseBase[TaskResponse]:
     """触发一个简单的加法异步测试任务。
 
     仅限超级管理员访问。
@@ -136,11 +136,11 @@ async def trigger_add(_: SuperuserDep, x: int = 1, y: int = 2) -> TaskResponse:
     from app.celery.tasks.example import add
 
     result = add.delay(x, y)  # type: ignore[attr-defined]
-    return TaskResponse(task_id=result.id, status="PENDING")
+    return ResponseBase(data=TaskResponse(task_id=result.id, status="PENDING"))
 
 
-@router.post("/test/long-running", response_model=TaskResponse)
-async def trigger_long_running(_: SuperuserDep, duration: int = 10) -> TaskResponse:
+@router.post("/test/long-running", response_model=ResponseBase[TaskResponse])
+async def trigger_long_running(_: SuperuserDep, duration: int = 10) -> ResponseBase[TaskResponse]:
     """触发一个耗时模拟任务，用于测试进度反馈和超时处理。
 
     仅限超级管理员访问。设置较长的 duration 可以测试撤销任务接口。
@@ -161,7 +161,7 @@ async def trigger_long_running(_: SuperuserDep, duration: int = 10) -> TaskRespo
     from app.celery.tasks.example import long_running
 
     result = long_running.delay(duration)  # type: ignore[attr-defined]
-    return TaskResponse(task_id=result.id, status="PENDING")
+    return ResponseBase(data=TaskResponse(task_id=result.id, status="PENDING"))
 
 
 # ==================== Worker 状态 ====================

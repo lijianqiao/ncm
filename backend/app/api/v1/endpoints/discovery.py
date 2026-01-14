@@ -73,12 +73,14 @@ async def trigger_scan(
                 subnet=request.subnets[0],
                 scan_type=request.scan_type,
                 ports=request.ports,
+                dept_id=request.dept_id,
             )
         else:
             task = cast(Any, scan_subnets_batch).delay(
                 subnets=request.subnets,
                 scan_type=request.scan_type,
                 ports=request.ports,
+                dept_id=request.dept_id,
             )
         return ResponseBase(
             data=ScanTaskResponse(
@@ -196,16 +198,24 @@ async def list_discoveries(
     # 转换为响应格式
     responses = []
     for item in items:
+        snmp_sysname = getattr(item, "snmp_sysname", None)
+        hostname = snmp_sysname or item.hostname
         response = DiscoveryResponse(
             id=item.id,
             ip_address=item.ip_address,
             mac_address=item.mac_address,
             vendor=item.vendor,
             device_type=item.device_type,
-            hostname=item.hostname,
+            hostname=hostname,
             os_info=item.os_info,
+            serial_number=getattr(item, "serial_number", None),
             open_ports=item.open_ports,
             ssh_banner=item.ssh_banner,
+            dept_id=getattr(item, "dept_id", None),
+            snmp_sysname=snmp_sysname,
+            snmp_sysdescr=getattr(item, "snmp_sysdescr", None),
+            snmp_ok=getattr(item, "snmp_ok", None),
+            snmp_error=getattr(item, "snmp_error", None),
             first_seen_at=item.first_seen_at,
             last_seen_at=item.last_seen_at,
             offline_days=item.offline_days,
@@ -262,10 +272,16 @@ async def get_discovery(
         mac_address=item.mac_address,
         vendor=item.vendor,
         device_type=item.device_type,
-        hostname=item.hostname,
+        hostname=(getattr(item, "snmp_sysname", None) or item.hostname),
         os_info=item.os_info,
+        serial_number=getattr(item, "serial_number", None),
         open_ports=item.open_ports,
         ssh_banner=item.ssh_banner,
+        dept_id=getattr(item, "dept_id", None),
+        snmp_sysname=getattr(item, "snmp_sysname", None),
+        snmp_sysdescr=getattr(item, "snmp_sysdescr", None),
+        snmp_ok=getattr(item, "snmp_ok", None),
+        snmp_error=getattr(item, "snmp_error", None),
         first_seen_at=item.first_seen_at,
         last_seen_at=item.last_seen_at,
         offline_days=item.offline_days,
@@ -404,8 +420,14 @@ async def list_shadow_assets(
             device_type=item.device_type,
             hostname=item.hostname,
             os_info=item.os_info,
+            serial_number=getattr(item, "serial_number", None),
             open_ports=item.open_ports,
             ssh_banner=item.ssh_banner,
+            dept_id=getattr(item, "dept_id", None),
+            snmp_sysname=getattr(item, "snmp_sysname", None),
+            snmp_sysdescr=getattr(item, "snmp_sysdescr", None),
+            snmp_ok=getattr(item, "snmp_ok", None),
+            snmp_error=getattr(item, "snmp_error", None),
             first_seen_at=item.first_seen_at,
             last_seen_at=item.last_seen_at,
             offline_days=item.offline_days,

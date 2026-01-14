@@ -52,6 +52,7 @@ class Settings(BaseSettings):
     # 生成方法: python -c "import os; print(os.urandom(32).hex())"
     NCM_CREDENTIAL_KEY: str = "changethis_credential_key_32b!!"  # 静态密码加密密钥（32字节）
     NCM_OTP_SEED_KEY: str = "changethis_otp_seed_key_32bytes!"  # OTP 种子加密密钥（独立密钥）
+    NCM_SNMP_KEY: str = "changethis_snmp_key_32bytes______"  # SNMP 凭据加密密钥（独立密钥，32字节）
 
     # CORS (跨域资源共享)
     BACKEND_CORS_ORIGINS: list[str] = ["*"]
@@ -119,6 +120,18 @@ class Settings(BaseSettings):
     SCAN_SCHEDULED_SUBNETS: str = ""  # 定时扫描网段列表（逗号分隔，如 "192.168.1.0/24,10.0.0.0/24"）
     CELERY_BEAT_SCAN_HOUR: int = 3  # 定时扫描小时（0-23）
     CELERY_BEAT_SCAN_MINUTE: int = 0  # 定时扫描分钟
+
+    # SNMP 配置（资产发现补全）
+    SNMP_TIMEOUT_SECONDS: int = 3  # 单次 SNMP 请求超时（秒）
+    SNMP_TIMEOUT_MS: int | None = None  # 兼容毫秒超时配置（优先级高于 SNMP_TIMEOUT_SECONDS）
+    SNMP_RETRIES: int = 2  # SNMP 重试次数
+    SNMP_MAX_CONCURRENCY: int = 50  # SNMP 并发数（资产补全）
+
+    @model_validator(mode="after")
+    def _normalize_snmp_timeout(self):
+        if self.SNMP_TIMEOUT_MS is not None and self.SNMP_TIMEOUT_MS > 0:
+            self.SNMP_TIMEOUT_SECONDS = max(1, int(self.SNMP_TIMEOUT_MS / 1000))
+        return self
 
     # 拓扑配置
     TOPOLOGY_CACHE_TTL: int = 1800  # 拓扑缓存过期时间（秒），默认 30 分钟
@@ -239,10 +252,14 @@ class Settings(BaseSettings):
         ncm_default_keys = [
             "changethis_credential_key_32b!!",
             "changethis_otp_seed_key_32bytes!",
+            "changethis_snmp_key_32bytes______",
         ]
 
         def _check_key_length(key: str, name: str) -> None:
             """验证密钥长度（支持 32 字节 UTF-8 或 64 字符 Hex）。"""
+            key = key.strip()
+            if (key.startswith('"') and key.endswith('"')) or (key.startswith("'") and key.endswith("'")):
+                key = key[1:-1].strip()
             # Hex 格式：64 字符 = 32 字节
             if len(key) == 64:
                 try:
@@ -259,6 +276,7 @@ class Settings(BaseSettings):
 
         _check_key_length(self.NCM_CREDENTIAL_KEY, "NCM_CREDENTIAL_KEY")
         _check_key_length(self.NCM_OTP_SEED_KEY, "NCM_OTP_SEED_KEY")
+        _check_key_length(self.NCM_SNMP_KEY, "NCM_SNMP_KEY")
 
         if self.NCM_CREDENTIAL_KEY in ncm_default_keys:
             msg = "[安全警告]: NCM_CREDENTIAL_KEY 使用了默认值，请在 .env 中修改。"
@@ -269,6 +287,13 @@ class Settings(BaseSettings):
 
         if self.NCM_OTP_SEED_KEY in ncm_default_keys:
             msg = "[安全警告]: NCM_OTP_SEED_KEY 使用了默认值，请在 .env 中修改。"
+            if self.ENVIRONMENT == "production":
+                raise ValueError(f"[BLOCK] {msg} 生产环境严禁使用默认密钥！")
+            else:
+                logging.getLogger(__name__).warning(msg)
+
+        if self.NCM_SNMP_KEY in ncm_default_keys:
+            msg = "[安全警告]: NCM_SNMP_KEY 使用了默认值，请在 .env 中修改。"
             if self.ENVIRONMENT == "production":
                 raise ValueError(f"[BLOCK] {msg} 生产环境严禁使用默认密钥！")
             else:

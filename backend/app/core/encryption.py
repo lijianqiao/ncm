@@ -55,6 +55,10 @@ def _normalize_key(key: str) -> bytes:
     Raises:
         EncryptionError: 密钥格式无效
     """
+    key = key.strip()
+    if (key.startswith('"') and key.endswith('"')) or (key.startswith("'") and key.endswith("'")):
+        key = key[1:-1].strip()
+
     # 尝试 hex 解码
     if len(key) == 64:
         try:
@@ -217,6 +221,14 @@ def decrypt_otp_seed(ciphertext: str) -> str:
         明文 OTP 种子
     """
     return decrypt_credential(ciphertext, settings.NCM_OTP_SEED_KEY)
+
+
+def encrypt_snmp_secret(plaintext: str) -> str:
+    return encrypt_credential(plaintext, settings.NCM_SNMP_KEY)
+
+
+def decrypt_snmp_secret(ciphertext: str) -> str:
+    return decrypt_credential(ciphertext, settings.NCM_SNMP_KEY)
 
 
 # ===== 工具函数 =====

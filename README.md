@@ -93,6 +93,9 @@ uv sync
 # 配置环境变量
 cp .env.example .env
 
+# 生成数据库迁移文件
+uv run alembic revision --autogenerate -m "Initial migration"
+
 # 数据库迁移
 uv run alembic upgrade head
 

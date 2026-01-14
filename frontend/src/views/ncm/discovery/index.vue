@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, h, computed } from 'vue'
+import { ref, h, computed, onMounted } from 'vue'
 import {
   NButton,
   NModal,
@@ -110,6 +110,56 @@ const fetchDeptTree = async () => {
   }
 }
 
+onMounted(() => {
+  fetchDeptTree()
+})
+
+const deptNameMap = computed<Record<string, string>>(() => {
+  const map: Record<string, string> = {}
+  const walk = (items: TreeSelectOption[], prefix = '') => {
+    for (const it of items) {
+      const label = prefix ? `${prefix} / ${it.label}` : it.label
+      map[it.key] = label
+      if (it.children && it.children.length) walk(it.children, label)
+    }
+  }
+  walk(deptTreeOptions.value || [])
+  return map
+})
+
+const getDeviceTypeFromSnmpSysdescr = (
+  vendor: string | null | undefined,
+  sysDescr: string | null | undefined,
+) => {
+  if (!sysDescr) return null
+  const lines = sysDescr
+    .split(/\r?\n/)
+    .map((s) => s.trim())
+    .filter(Boolean)
+  if (lines.length === 0) return null
+
+  const v = (vendor || '').toLowerCase()
+
+  if (v === 'h3c') {
+    if (lines.length >= 2) return lines[1]
+    return lines[0]
+  }
+  if (v === 'huawei') {
+    return lines[0]
+  }
+  if (v === 'cisco') {
+    const hit = lines.find((l) => /cisco/i.test(l))
+    return hit || lines[0]
+  }
+
+  const h3cLine = lines.find((l) => /^h3c\b/i.test(l))
+  if (h3cLine) return h3cLine
+  const huaweiModel = lines.find((l) => /^s\d{3,4}-/i.test(l))
+  if (huaweiModel) return huaweiModel
+
+  return lines[0]
+}
+
 // ==================== 表格列定义 ====================
 
 const columns: DataTableColumns<DiscoveryRecord> = [
@@ -146,16 +196,59 @@ const columns: DataTableColumns<DiscoveryRecord> = [
     sorter: 'default',
     resizable: true,
     ellipsis: { tooltip: true },
-    render: (row) => row.hostname || '-',
+    render: (row) => row.hostname || row.snmp_sysname || '-',
   },
   {
-    title: '系统识别',
-    key: 'os_info',
-    width: 220,
-    sorter: 'default',
+    title: '所属部门',
+    key: 'dept_id',
+    width: 180,
+    ellipsis: { tooltip: true },
+    render: (row) => {
+      const id = row.dept_id
+      if (!id) return '-'
+      return deptNameMap.value[id] || id
+    },
+  },
+  {
+    title: '设备类型',
+    key: 'device_type',
+    width: 200,
     resizable: true,
     ellipsis: { tooltip: true },
-    render: (row) => row.os_info || '-',
+    render: (row) =>
+      getDeviceTypeFromSnmpSysdescr(row.vendor, row.snmp_sysdescr) || row.device_type || '-',
+  },
+  {
+    title: '序列号',
+    key: 'serial_number',
+    width: 180,
+    resizable: true,
+    ellipsis: { tooltip: true },
+    render: (row) => row.serial_number || '-',
+  },
+  {
+    title: 'SNMP',
+    key: 'snmp_ok',
+    width: 90,
+    render: (row) => {
+      if (row.snmp_ok === true)
+        return h(
+          NTag,
+          { type: 'success', bordered: false, size: 'small' },
+          { default: () => '成功' },
+        )
+      if (row.snmp_ok === false)
+        return h(NTag, { type: 'error', bordered: false, size: 'small' }, { default: () => '失败' })
+      return '-'
+    },
+  },
+  {
+    title: 'SNMP 错误',
+    key: 'snmp_error',
+    width: 240,
+    resizable: true,
+    ellipsis: { tooltip: true },
+    render: (row) => (row.snmp_ok === false ? row.snmp_error || '-' : '-'),
   },
   {
     title: '开放端口',
@@ -203,7 +296,15 @@ const columns: DataTableColumns<DiscoveryRecord> = [
     render: (row) => row.matched_device_name || '-',
   },
   {
-    title: '首次发现',
+    title: '扫描方式',
+    key: 'scan_source',
+    width: 90,
+    sorter: 'default',
+    resizable: true,
+    render: (row) => row.scan_source || '-',
+  },
+  {
+    title: '首次扫描',
     key: 'first_seen_at',
     width: 160,
     sorter: 'default',
@@ -211,20 +312,12 @@ const columns: DataTableColumns<DiscoveryRecord> = [
     render: (row) => formatDateTime(row.first_seen_at),
   },
   {
-    title: '最后发现',
+    title: '最后一次扫描',
     key: 'last_seen_at',
     width: 160,
     sorter: 'default',
     resizable: true,
     render: (row) => formatDateTime(row.last_seen_at),
-  },
-  {
-    title: '来源',
-    key: 'scan_source',
-    width: 90,
-    sorter: 'default',
-    resizable: true,
-    render: (row) => row.scan_source || '-',
   },
   { title: '离线天数', key: 'offline_days', width: 90, sorter: 'default', resizable: true },
 ]
@@ -248,13 +341,40 @@ const loadData = async (params: DiscoverySearchParams) => {
 // ==================== 右键菜单 ====================
 
 const contextMenuOptions: DropdownOption[] = [
+  { label: '查看 SNMP 详情', key: 'snmp' },
   { label: '纳管设备', key: 'adopt' },
   { label: '删除', key: 'delete' },
 ]
 
 const handleContextMenuSelect = (key: string | number, row: DiscoveryRecord) => {
+  if (key === 'snmp') handleShowSnmp(row)
   if (key === 'adopt') handleAdopt(row)
   if (key === 'delete') handleDelete(row)
+}
+
+const handleShowSnmp = (row: DiscoveryRecord) => {
+  const items: Array<{ label: string; value: string }> = [
+    { label: 'IP', value: row.ip_address },
+    { label: 'SNMP', value: row.snmp_ok === true ? '成功' : row.snmp_ok === false ? '失败' : '-' },
+    { label: 'sysName', value: row.snmp_sysname || '-' },
+    { label: 'sysDescr', value: row.snmp_sysdescr || '-' },
+    { label: '错误', value: row.snmp_ok === false ? row.snmp_error || '-' : '-' },
+  ]
+  dialog.info({
+    title: 'SNMP 详情',
+    content: () =>
+      h(
+        'div',
+        { style: { lineHeight: '22px' } },
+        items.map((it) =>
+          h('div', { key: it.label }, [
+            h('span', { style: { color: 'var(--n-text-color-3)' } }, `${it.label}: `),
+            it.value,
+          ]),
+        ),
+      ),
+    positiveText: '关闭',
+  })
 }
 
 // ==================== 删除 ====================
@@ -299,7 +419,7 @@ const handleAdopt = (row: DiscoveryRecord) => {
   adoptModel.value = {
     discovery_id: row.id,
     ip_address: row.ip_address,
-    name: row.hostname || row.ip_address,
+    name: row.hostname || row.snmp_sysname || row.ip_address,
     vendor: row.vendor || '',
     device_group: '',
     dept_id: '',
@@ -340,6 +460,7 @@ const scanModel = ref({
   scan_type: 'auto' as 'auto' | 'nmap' | 'masscan',
   ports: '22,23,80,443',
   async_mode: true,
+  dept_id: '',
 })
 
 const DISCOVERY_SCAN_TASK_ID_KEY = 'ncm.discovery.scan_task_id'
@@ -352,6 +473,8 @@ const {
   clear: clearScanTask,
 } = usePersistentTaskPolling<ScanTaskStatus>((taskId) => getScanTaskStatus(taskId), {
   storageKey: DISCOVERY_SCAN_TASK_ID_KEY,
+  interval: 5000,
+  maxAttempts: 240,
   onComplete: () => {
     clearScanTask()
     tableRef.value?.reload()
@@ -399,7 +522,9 @@ const handleTriggerScan = () => {
     scan_type: 'auto',
     ports: '22,23,80,443',
     async_mode: true,
+    dept_id: '',
   }
+  fetchDeptTree()
   // 只重置表单，不打断已有扫描轮询
   showScanModal.value = true
 }
@@ -423,6 +548,7 @@ const submitScan = async () => {
       scan_type: scanModel.value.scan_type,
       ports: scanModel.value.ports || undefined,
       async_mode: scanModel.value.async_mode,
+      dept_id: scanModel.value.dept_id || undefined,
     })
     if (res.data.task_id) {
       $alert.success('扫描任务已提交')
@@ -517,7 +643,7 @@ const handleCompareCMDB = () => {
       search-placeholder="搜索IP/MAC/主机名"
       :search-filters="searchFilters"
       @context-menu-select="handleContextMenuSelect"
-      :scroll-x="1400"
+      :scroll-x="2000"
     >
       <template #toolbar-left>
         <n-space>
@@ -549,6 +675,16 @@ const handleCompareCMDB = () => {
             type="textarea"
             placeholder="例如: 192.168.1.0/24, 10.0.0.0/24"
             :rows="3"
+          />
+        </n-form-item>
+        <n-form-item label="所属部门（用于 SNMP 凭据匹配）">
+          <n-tree-select
+            v-model:value="scanModel.dept_id"
+            :options="deptTreeOptions"
+            placeholder="可选"
+            clearable
+            key-field="key"
+            label-field="label"
           />
         </n-form-item>
         <n-form-item label="扫描类型">

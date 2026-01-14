@@ -12,7 +12,7 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING, Optional
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.dialects.postgresql import JSON
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -20,6 +20,7 @@ from app.core.enums import DiscoveryStatus
 from app.models.base import AuditableModel
 
 if TYPE_CHECKING:
+    from app.models.dept import Department
     from app.models.device import Device
 
 
@@ -37,22 +38,17 @@ class Discovery(AuditableModel):
     device_type: Mapped[str | None] = mapped_column(String(50), nullable=True, comment="设备类型推测")
     hostname: Mapped[str | None] = mapped_column(String(200), nullable=True, comment="主机名")
     os_info: Mapped[str | None] = mapped_column(String(200), nullable=True, comment="操作系统信息")
+    serial_number: Mapped[str | None] = mapped_column(String(200), nullable=True, comment="序列号")
 
     # 端口信息
-    open_ports: Mapped[dict | None] = mapped_column(
-        JSON, nullable=True, comment="开放端口列表(JSON: {port: service})"
-    )
+    open_ports: Mapped[dict | None] = mapped_column(JSON, nullable=True, comment="开放端口列表(JSON: {port: service})")
 
     # SSH Banner 信息
     ssh_banner: Mapped[str | None] = mapped_column(Text, nullable=True, comment="SSH Banner")
 
     # 发现时间
-    first_seen_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, comment="首次发现时间"
-    )
-    last_seen_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, comment="最后发现时间"
-    )
+    first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, comment="首次发现时间")
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, comment="最后发现时间")
     offline_days: Mapped[int] = mapped_column(Integer, default=0, nullable=False, comment="离线天数")
 
     # 状态
@@ -71,8 +67,21 @@ class Discovery(AuditableModel):
     scan_source: Mapped[str | None] = mapped_column(String(50), nullable=True, comment="扫描来源(nmap/masscan)")
     scan_task_id: Mapped[str | None] = mapped_column(String(100), nullable=True, comment="扫描任务ID")
 
+    dept_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("sys_dept.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+        comment="部门ID（用于匹配 SNMP 凭据）",
+    )
+
+    snmp_sysname: Mapped[str | None] = mapped_column(String(200), nullable=True, comment="SNMP sysName")
+    snmp_sysdescr: Mapped[str | None] = mapped_column(Text, nullable=True, comment="SNMP sysDescr")
+    snmp_ok: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, comment="SNMP 是否成功")
+    snmp_error: Mapped[str | None] = mapped_column(Text, nullable=True, comment="SNMP 错误信息")
+
     # 关联关系
     matched_device: Mapped[Optional["Device"]] = relationship("Device", lazy="selectin")
+    dept: Mapped[Optional["Department"]] = relationship("Department", lazy="selectin")
 
     def __repr__(self) -> str:
         return f"<Discovery(ip={self.ip_address}, status={self.status})>"
