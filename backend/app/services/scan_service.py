@@ -768,7 +768,7 @@ class ScanService:
                 if lines:
                     os_version = lines[0]
             elif inferred_vendor.lower() == "huawei":
-                hit = next((l for l in lines if "version" in l.lower()), None)
+                hit = next((line for line in lines if "version" in line.lower()), None)
                 os_version = hit or (lines[0] if lines else None)
             else:
                 os_version = lines[0] if lines else None

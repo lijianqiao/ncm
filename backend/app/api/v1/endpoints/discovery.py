@@ -320,8 +320,8 @@ async def delete_discovery(
     Returns:
         ResponseBase[DeleteResponse]: 确认删除的消息。
     """
-    result = await discovery_crud.remove(db, id=discovery_id)
-    if not result:
+    success_count, _ = await discovery_crud.batch_remove(db, ids=[discovery_id])
+    if success_count == 0:
         raise NotFoundException(message="发现记录不存在")
 
     await db.commit()

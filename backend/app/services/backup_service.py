@@ -28,7 +28,6 @@ from app.models.backup import Backup
 from app.models.device import Device
 from app.schemas.backup import (
     BackupBatchDeleteResult,
-    BackupBatchHardDeleteResult,
     BackupBatchRequest,
     BackupBatchRestoreResult,
     BackupBatchResult,
@@ -36,13 +35,13 @@ from app.schemas.backup import (
     BackupListQuery,
     BackupTaskStatus,
 )
-from app.schemas.credential import DeviceCredential
+from app.services.base import DeviceCredentialMixin
 
 # 配置存储阈值：小于 64KB 存 DB，否则存 MinIO
 CONTENT_SIZE_THRESHOLD = 64 * 1024  # 64KB
 
 
-class BackupService:
+class BackupService(DeviceCredentialMixin):
     """
     配置备份服务类。
 
@@ -167,19 +166,24 @@ class BackupService:
         return await self.backup_crud.get_latest_by_device(self.db, device_id=device_id)
 
     @transactional()
-    async def delete_backup(self, backup_id: UUID) -> None:
+    async def delete_backup(self, backup_id: UUID, hard_delete: bool = False) -> None:
         """
-        删除备份（软删除）。
+        删除备份（支持软删除和硬删除）。
 
         Args:
             backup_id: 备份ID
+            hard_delete: 是否硬删除（物理删除），默认软删除
 
         Raises:
             NotFoundException: 备份不存在
         """
-        backup = await self.backup_crud.get(self.db, id=backup_id)
-        if not backup:
-            raise NotFoundException(message="备份不存在")
+        # 硬删除时需要查询包括已软删除的记录
+        if hard_delete:
+            backup = await self._get_backup_any(backup_id)
+        else:
+            backup = await self.backup_crud.get(self.db, id=backup_id)
+            if not backup:
+                raise NotFoundException(message="备份不存在")
 
         # 先删对象存储（尽力而为），再删 DB 记录
         if backup.content_path:
@@ -188,26 +192,42 @@ class BackupService:
             except Exception as e:
                 logger.warning(f"MinIO 删除对象失败: path={backup.content_path}, error={e}")
 
-        backup = await self.backup_crud.remove(self.db, id=backup_id)
-        if not backup:
+        success_count, _ = await self.backup_crud.batch_remove(self.db, ids=[backup_id], hard_delete=hard_delete)
+        if success_count != 1:
             raise NotFoundException(message="备份不存在")
 
-        logger.info(f"备份已删除: backup_id={backup_id}")
+        delete_type = "硬删除" if hard_delete else "软删除"
+        logger.info(f"备份已{delete_type}: backup_id={backup_id}")
 
     @transactional()
-    async def delete_backups_batch(self, backup_ids: list[UUID]) -> BackupBatchDeleteResult:
-        """批量删除备份（软删除）。"""
+    async def delete_backups_batch(self, backup_ids: list[UUID], hard_delete: bool = False) -> BackupBatchDeleteResult:
+        """
+        批量删除备份（支持软删除和硬删除）。
 
+        Args:
+            backup_ids: 备份ID列表
+            hard_delete: 是否硬删除（物理删除），默认软删除
+
+        Returns:
+            BackupBatchDeleteResult: 批量删除结果
+        """
         if not backup_ids:
             return BackupBatchDeleteResult(success_count=0, failed_ids=[])
 
         unique_ids = list(dict.fromkeys(backup_ids))
 
-        # 先尽力删除对象存储，再软删除 DB
-        q = select(Backup).where(Backup.id.in_(unique_ids)).where(Backup.is_deleted.is_(False))
+        # 查询备份记录以删除对象存储
+        if hard_delete:
+            # 硬删除：包含已软删除的记录
+            q = select(Backup).where(Backup.id.in_(unique_ids))
+        else:
+            # 软删除：仅查询未删除的记录
+            q = select(Backup).where(Backup.id.in_(unique_ids)).where(Backup.is_deleted.is_(False))
+
         r = await self.db.execute(q)
         backups = list(r.scalars().all())
 
+        # 先尽力删除对象存储
         for b in backups:
             if b.content_path:
                 try:
@@ -215,82 +235,32 @@ class BackupService:
                 except Exception as e:
                     logger.warning(f"MinIO 删除对象失败: path={b.content_path}, error={e}")
 
-        success_count, failed_ids = await self.backup_crud.batch_remove(self.db, ids=unique_ids, hard_delete=False)
+        success_count, failed_ids = await self.backup_crud.batch_remove(
+            self.db, ids=unique_ids, hard_delete=hard_delete
+        )
 
-        logger.info(f"批量删除备份完成: success={success_count}, failed={len(failed_ids)}")
+        delete_type = "硬删除" if hard_delete else "软删除"
+        logger.info(f"批量{delete_type}备份完成: success={success_count}, failed={len(failed_ids)}")
         return BackupBatchDeleteResult(success_count=success_count, failed_ids=failed_ids)
 
     @transactional()
     async def restore_backup(self, backup_id: UUID) -> None:
         """恢复已软删除备份。"""
 
-        restored = await self.backup_crud.restore(self.db, id=backup_id)
-        if not restored:
+        success_count, _ = await self.backup_crud.batch_restore(self.db, ids=[backup_id])
+        if success_count == 0:
             raise NotFoundException(message="备份不存在")
         logger.info(f"备份已恢复: backup_id={backup_id}")
 
     @transactional()
     async def restore_backups_batch(self, backup_ids: list[UUID]) -> BackupBatchRestoreResult:
         """批量恢复已软删除备份。"""
-
         if not backup_ids:
             return BackupBatchRestoreResult(success_count=0, failed_ids=[])
 
-        unique_ids = list(dict.fromkeys(backup_ids))
-        success_count, failed_ids = await self.backup_crud.batch_restore(self.db, ids=unique_ids)
+        success_count, failed_ids = await self.backup_crud.batch_restore(self.db, ids=backup_ids)
         logger.info(f"批量恢复备份完成: success={success_count}, failed={len(failed_ids)}")
         return BackupBatchRestoreResult(success_count=success_count, failed_ids=failed_ids)
-
-    @transactional()
-    async def hard_delete_backup(self, backup_id: UUID) -> None:
-        """硬删除备份（物理删除，包含已软删除记录）。"""
-
-        backup = await self._get_backup_any(backup_id)
-
-        if backup.content_path:
-            try:
-                await delete_object(backup.content_path)
-            except Exception as e:
-                logger.warning(f"MinIO 删除对象失败: path={backup.content_path}, error={e}")
-
-        success_count, failed_ids = await self.backup_crud.batch_remove(
-            self.db,
-            ids=[backup_id],
-            hard_delete=True,
-        )
-        if success_count != 1:
-            raise NotFoundException(message="备份不存在")
-
-        logger.info(f"备份已硬删除: backup_id={backup_id}, failed={len(failed_ids)}")
-
-    @transactional()
-    async def hard_delete_backups_batch(self, backup_ids: list[UUID]) -> BackupBatchHardDeleteResult:
-        """批量硬删除备份（物理删除）。"""
-
-        if not backup_ids:
-            return BackupBatchHardDeleteResult(success_count=0, failed_ids=[])
-
-        unique_ids = list(dict.fromkeys(backup_ids))
-
-        q = select(Backup).where(Backup.id.in_(unique_ids))
-        r = await self.db.execute(q)
-        backups = list(r.scalars().all())
-
-        for b in backups:
-            if b.content_path:
-                try:
-                    await delete_object(b.content_path)
-                except Exception as e:
-                    logger.warning(f"MinIO 删除对象失败: path={b.content_path}, error={e}")
-
-        success_count, failed_ids = await self.backup_crud.batch_remove(
-            self.db,
-            ids=unique_ids,
-            hard_delete=True,
-        )
-
-        logger.info(f"批量硬删除备份完成: success={success_count}, failed={len(failed_ids)}")
-        return BackupBatchHardDeleteResult(success_count=success_count, failed_ids=failed_ids)
 
     # ===== 备份内容获取 =====
 
@@ -342,76 +312,6 @@ class BackupService:
             return await get_text(content_path)
         except Exception as e:
             raise BadRequestException(message=f"从 MinIO 获取备份内容失败: {e}") from e
-
-    # ===== 设备凭据获取 =====
-
-    async def _get_device_credential(
-        self,
-        device: Device,
-        failed_devices: list[str] | None = None,
-    ) -> DeviceCredential:
-        """
-        获取设备连接凭据。
-
-        根据设备认证类型，从不同来源获取凭据：
-        - static: 解密设备本身的密码
-        - otp_seed: 从 DeviceGroupCredential 获取种子生成 TOTP
-        - otp_manual: 从 Redis 缓存获取用户输入的 OTP
-
-        Args:
-            device: 设备对象
-            failed_devices: 失败设备列表（断点续传用）
-
-        Returns:
-            DeviceCredential: 设备凭据
-
-        Raises:
-            OTPRequiredException: 需要用户输入 OTP（仅 otp_manual 模式）
-            DeviceCredentialNotFoundException: 凭据配置缺失
-        """
-        auth_type = AuthType(device.auth_type)
-
-        if auth_type == AuthType.STATIC:
-            # 静态密码：从设备记录解密
-            if not device.username or not device.password_encrypted:
-                raise BadRequestException(message=f"设备 {device.name} 缺少用户名或密码配置")
-            return await otp_service.get_credential_for_static_device(
-                username=device.username,
-                encrypted_password=device.password_encrypted,
-            )
-
-        elif auth_type == AuthType.OTP_SEED:
-            # OTP 种子：从 DeviceGroupCredential 获取
-            if not device.dept_id:
-                raise BadRequestException(message=f"设备 {device.name} 缺少部门关联")
-
-            credential = await self.credential_crud.get_by_dept_and_group(self.db, device.dept_id, device.device_group)
-            if not credential or not credential.otp_seed_encrypted:
-                raise BadRequestException(message=f"设备 {device.name} 的凭据未配置 OTP 种子")
-
-            return await otp_service.get_credential_for_otp_seed_device(
-                username=credential.username,
-                encrypted_seed=credential.otp_seed_encrypted,
-            )
-
-        elif auth_type == AuthType.OTP_MANUAL:
-            # 手动 OTP：从 Redis 缓存获取
-            if not device.dept_id:
-                raise BadRequestException(message=f"设备 {device.name} 缺少部门关联")
-
-            credential = await self.credential_crud.get_by_dept_and_group(self.db, device.dept_id, device.device_group)
-            if not credential:
-                raise BadRequestException(message=f"设备 {device.name} 的凭据未配置")
-
-            return await otp_service.get_credential_for_otp_manual_device(
-                username=credential.username,
-                dept_id=device.dept_id,
-                device_group=device.device_group,
-                failed_devices=failed_devices,
-            )
-
-        else:
-            raise BadRequestException(message=f"不支持的认证类型: {auth_type}")
 
     # ===== 单设备备份 =====
 

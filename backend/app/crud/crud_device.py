@@ -104,12 +104,7 @@ class CRUDDevice(CRUDBase[Device, DeviceCreate, DeviceUpdate]):
             (items, total): 设备列表和总数
         """
         # 参数验证
-        if page < 1:
-            page = 1
-        if page_size < 1:
-            page_size = 20
-        if page_size > 100:
-            page_size = 100
+        page, page_size = self._validate_pagination(page, page_size)
 
         # 基础查询
         base_query = select(self.model).where(self.model.is_deleted.is_(False))
@@ -240,12 +235,7 @@ class CRUDDevice(CRUDBase[Device, DeviceCreate, DeviceUpdate]):
         Returns:
             (items, total): 设备列表和总数
         """
-        if page < 1:
-            page = 1
-        if page_size < 1:
-            page_size = 20
-        if page_size > 100:
-            page_size = 100
+        page, page_size = self._validate_pagination(page, page_size)
 
         # 查询已删除的设备
         base_query = select(self.model).where(self.model.is_deleted.is_(True))

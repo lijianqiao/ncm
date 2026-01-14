@@ -11,7 +11,6 @@ from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import security
-from app.core.cache import invalidate_user_permissions_cache
 from app.core.config import settings
 from app.core.decorator import transactional
 from app.core.exceptions import BadRequestException, NotFoundException
@@ -20,9 +19,10 @@ from app.crud.crud_user import CRUDUser
 from app.models.rbac import Role
 from app.models.user import User
 from app.schemas.user import UserCreate, UserMeUpdate, UserUpdate
+from app.services.base import PermissionCacheMixin
 
 
-class UserService:
+class UserService(PermissionCacheMixin):
     """
     用户服务类。
     通过构造函数注入 CRUDUser 实例，实现解耦。
@@ -35,12 +35,6 @@ class UserService:
 
         # transactional() 将在 commit 后执行这些任务（用于缓存失效等）
         self._post_commit_tasks: list = []
-
-    def _invalidate_permissions_cache_after_commit(self, user_ids: list[UUID]) -> None:
-        async def _task() -> None:
-            await invalidate_user_permissions_cache(user_ids)
-
-        self._post_commit_tasks.append(_task)
 
     @transactional()
     async def create_user(self, obj_in: UserCreate) -> User:
@@ -98,7 +92,10 @@ class UserService:
         """
         获取用户列表 (分页)。
         """
-        return await self.user_crud.get_multi(self.db, skip=skip, limit=limit)
+        # 使用分页查询替代 get_multi
+        page = (skip // limit) + 1 if limit > 0 else 1
+        users, _ = await self.user_crud.get_multi_paginated(self.db, page=page, page_size=limit)
+        return users
 
     async def get_users_paginated(
         self,
@@ -255,7 +252,11 @@ class UserService:
         """
         恢复已删除用户。
         """
-        user = await self.user_crud.restore(self.db, id=id)
+        success_count, _ = await self.user_crud.batch_restore(self.db, ids=[id])
+        if success_count == 0:
+            raise NotFoundException(message="用户不存在")
+        # 重新获取用户对象返回
+        user = await self.user_crud.get(self.db, id=id)
         if not user:
             raise NotFoundException(message="用户不存在")
         return user
@@ -263,19 +264,4 @@ class UserService:
     @transactional()
     async def batch_restore_users(self, ids: list[UUID]) -> tuple[int, list[UUID]]:
         """批量恢复用户。"""
-
-        success_count = 0
-        failed_ids: list[UUID] = []
-
-        unique_ids = list(dict.fromkeys(ids))
-        if not unique_ids:
-            return success_count, failed_ids
-
-        for user_id in unique_ids:
-            user = await self.user_crud.restore(self.db, id=user_id)
-            if not user:
-                failed_ids.append(user_id)
-                continue
-            success_count += 1
-
-        return success_count, failed_ids
+        return await self.user_crud.batch_restore(self.db, ids=ids)

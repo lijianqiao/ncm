@@ -181,8 +181,6 @@ class BackupBatchHardDeleteRequest(BaseModel):
     backup_ids: list[UUID] = Field(..., min_length=1, max_length=500, description="备份ID列表")
 
 
-class BackupBatchHardDeleteResult(BaseModel):
-    """批量硬删除备份结果。"""
-
-    success_count: int = Field(..., description="成功硬删除数量")
-    failed_ids: list[UUID] = Field(default_factory=list, description="硬删除失败的备份ID列表")
+# 向后兼容：BackupBatchHardDeleteResult 与 BackupBatchDeleteResult 结构相同
+# 保留此别名以兼容现有前端代码
+BackupBatchHardDeleteResult = BackupBatchDeleteResult

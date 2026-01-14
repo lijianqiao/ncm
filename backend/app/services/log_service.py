@@ -32,7 +32,10 @@ class LogService:
         """
         获取登录日志列表。
         """
-        return await self.login_log_crud.get_multi(self.db, skip=skip, limit=limit)
+        # 使用分页查询替代 get_multi
+        page = (skip // limit) + 1 if limit > 0 else 1
+        logs, _ = await self.login_log_crud.get_multi_paginated(self.db, page=page, page_size=limit)
+        return logs
 
     async def get_login_logs_paginated(
         self, page: int = 1, page_size: int = 20, *, keyword: str | None = None
@@ -46,7 +49,10 @@ class LogService:
         """
         获取操作日志列表。
         """
-        return await self.operation_log_crud.get_multi(self.db, skip=skip, limit=limit)
+        # 使用分页查询替代 get_multi
+        page = (skip // limit) + 1 if limit > 0 else 1
+        logs, _ = await self.operation_log_crud.get_multi_paginated(self.db, page=page, page_size=limit)
+        return logs
 
     async def get_operation_logs_paginated(
         self, page: int = 1, page_size: int = 20, *, keyword: str | None = None

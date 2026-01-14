@@ -103,19 +103,6 @@ class CRUDBase[ModelType: Base, CreateSchemaType: BaseModel, UpdateSchemaType: B
         result = await db.execute(query)
         return result.scalar() or 0
 
-    async def get_multi(self, db: AsyncSession, *, skip: int = 0, limit: int = 100) -> list[ModelType]:
-        """
-        获取多条记录 (分页)。
-        """
-        query = select(self.model)
-
-        if issubclass(self.model, SoftDeleteMixin):
-            query = query.where(self.model.is_deleted.is_(False))
-
-        query = query.offset(skip).limit(limit)
-        result = await db.execute(query)
-        return list(result.scalars().all())
-
     async def get_multi_paginated(
         self, db: AsyncSession, *, page: int = 1, page_size: int = 20
     ) -> tuple[list[ModelType], int]:
@@ -129,17 +116,19 @@ class CRUDBase[ModelType: Base, CreateSchemaType: BaseModel, UpdateSchemaType: B
         Returns:
             (items, total): 数据列表和总数
         """
-        # 参数验证
-        if page < 1:
-            page = 1
-        if page_size < 1:
-            page_size = 20
-        if page_size > 100:
-            page_size = 100  # 限制最大每页数量
+        page, page_size = self._validate_pagination(page, page_size)
 
         total = await self.count(db)
         skip = (page - 1) * page_size
-        items = await self.get_multi(db, skip=skip, limit=page_size)
+
+        # 内联查询逻辑（原 get_multi）
+        query = select(self.model)
+        if issubclass(self.model, SoftDeleteMixin):
+            query = query.where(self.model.is_deleted.is_(False))
+        query = query.offset(skip).limit(page_size)
+        result = await db.execute(query)
+        items = list(result.scalars().all())
+
         return items, total
 
     async def create(self, db: AsyncSession, *, obj_in: CreateSchemaType) -> ModelType:
@@ -169,22 +158,6 @@ class CRUDBase[ModelType: Base, CreateSchemaType: BaseModel, UpdateSchemaType: B
         await db.flush()
         await db.refresh(db_obj)
         return db_obj
-
-    async def remove(self, db: AsyncSession, *, id: UUID) -> ModelType | None:
-        """
-        删除记录 (优先软删除，否则硬删除)。
-        """
-        obj = await self.get(db, id=id)
-        if obj:
-            if isinstance(obj, SoftDeleteMixin):
-                obj.is_deleted = True
-                db.add(obj)
-                await db.flush()
-                await db.refresh(obj)
-            else:
-                await db.delete(obj)
-                await db.flush()
-        return obj
 
     async def batch_remove(
         self, db: AsyncSession, *, ids: list[UUID], hard_delete: bool = False
@@ -259,27 +232,6 @@ class CRUDBase[ModelType: Base, CreateSchemaType: BaseModel, UpdateSchemaType: B
         await db.flush()
         return success_count, failed_ids
 
-    async def restore(self, db: AsyncSession, *, id: UUID) -> ModelType | None:
-        """
-        恢复已软删除的记录。
-        """
-        # 1. 查找记录 (包括已删除的)
-        query = select(self.model).where(self.model.id == id)  # pyright: ignore[reportAttributeAccessIssue]
-        result = await db.execute(query)
-        obj = result.scalars().first()
-
-        if not obj:
-            return None
-
-        # 2. 如果是软删除对象且已删除，则恢复
-        if isinstance(obj, SoftDeleteMixin) and obj.is_deleted:
-            obj.is_deleted = False
-            db.add(obj)
-            await db.flush()
-            await db.refresh(obj)
-
-        return obj
-
     async def batch_restore(self, db: AsyncSession, *, ids: list[UUID]) -> tuple[int, list[UUID]]:
         """
         批量恢复软删除的记录。
@@ -334,3 +286,75 @@ class CRUDBase[ModelType: Base, CreateSchemaType: BaseModel, UpdateSchemaType: B
 
         await db.flush()
         return success_count, failed_ids
+
+    async def _count_deleted(self, db: AsyncSession) -> int:
+        """
+        统计已软删除的记录数（内部方法）。
+
+        Returns:
+            已删除记录总数，非软删除模型返回 0
+        """
+        if not issubclass(self.model, SoftDeleteMixin):
+            return 0
+
+        result = await db.execute(
+            select(func.count()).select_from(self.model).where(self.model.is_deleted.is_(True))
+        )
+        return result.scalar() or 0
+
+    async def get_multi_by_ids(self, db: AsyncSession, *, ids: list[UUID]) -> list[ModelType]:
+        """
+        通过 ID 列表批量获取记录。
+
+        Args:
+            db: 数据库会话
+            ids: 记录 ID 列表
+
+        Returns:
+            记录列表
+        """
+        if not ids:
+            return []
+
+        query = select(self.model).where(
+            self.model.id.in_(ids)  # pyright: ignore[reportAttributeAccessIssue]
+        )
+
+        if issubclass(self.model, SoftDeleteMixin):
+            query = query.where(self.model.is_deleted.is_(False))
+
+        result = await db.execute(query)
+        return list(result.scalars().all())
+
+    async def get_multi_deleted_paginated(
+        self, db: AsyncSession, *, page: int = 1, page_size: int = 20
+    ) -> tuple[list[ModelType], int]:
+        """
+        获取已删除记录的分页列表（回收站）。
+
+        Args:
+            db: 数据库会话
+            page: 页码
+            page_size: 每页数量
+
+        Returns:
+            (items, total): 已删除记录列表和总数
+        """
+        if not issubclass(self.model, SoftDeleteMixin):
+            return [], 0
+
+        page, page_size = self._validate_pagination(page, page_size)
+
+        # 统计总数
+        total = await self._count_deleted(db)
+
+        # 分页查询
+        skip = (page - 1) * page_size
+        query = (
+            select(self.model)
+            .where(self.model.is_deleted.is_(True))
+            .offset(skip)
+            .limit(page_size)
+        )
+        result = await db.execute(query)
+        return list(result.scalars().all()), total

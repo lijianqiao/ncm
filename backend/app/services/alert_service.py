@@ -81,6 +81,32 @@ class AlertService:
         update = AlertUpdate(status=AlertStatus.CLOSED)
         return await self.alert_crud.update(self.db, db_obj=alert, obj_in=update)
 
+    async def _batch_update_status(
+        self, alert_ids: list[UUID], target_status: AlertStatus, valid_from_statuses: set[str]
+    ) -> dict[str, int]:
+        """
+        批量更新告警状态的通用方法。
+
+        Args:
+            alert_ids: 告警 ID 列表
+            target_status: 目标状态
+            valid_from_statuses: 允许转换的源状态集合
+
+        Returns:
+            dict: {"success": 成功数量, "failed": 失败数量}
+        """
+        success_count = 0
+        for alert_id in alert_ids:
+            try:
+                alert = await self.alert_crud.get(self.db, id=alert_id)
+                if alert and alert.status in valid_from_statuses:
+                    update = AlertUpdate(status=target_status)
+                    await self.alert_crud.update(self.db, db_obj=alert, obj_in=update)
+                    success_count += 1
+            except Exception:
+                pass
+        return {"success": success_count, "failed": len(alert_ids) - success_count}
+
     @transactional()
     async def batch_ack_alerts(self, alert_ids: list[UUID]) -> dict[str, int]:
         """
@@ -92,17 +118,9 @@ class AlertService:
         Returns:
             dict: {"success": 成功数量, "failed": 失败数量}
         """
-        success_count = 0
-        for alert_id in alert_ids:
-            try:
-                alert = await self.alert_crud.get(self.db, id=alert_id)
-                if alert and alert.status == AlertStatus.OPEN.value:
-                    update = AlertUpdate(status=AlertStatus.ACK)
-                    await self.alert_crud.update(self.db, db_obj=alert, obj_in=update)
-                    success_count += 1
-            except Exception:
-                pass
-        return {"success": success_count, "failed": len(alert_ids) - success_count}
+        return await self._batch_update_status(
+            alert_ids, AlertStatus.ACK, {AlertStatus.OPEN.value}
+        )
 
     @transactional()
     async def batch_close_alerts(self, alert_ids: list[UUID]) -> dict[str, int]:
@@ -115,14 +133,7 @@ class AlertService:
         Returns:
             dict: {"success": 成功数量, "failed": 失败数量}
         """
-        success_count = 0
-        for alert_id in alert_ids:
-            try:
-                alert = await self.alert_crud.get(self.db, id=alert_id)
-                if alert and alert.status != AlertStatus.CLOSED.value:
-                    update = AlertUpdate(status=AlertStatus.CLOSED)
-                    await self.alert_crud.update(self.db, db_obj=alert, obj_in=update)
-                    success_count += 1
-            except Exception:
-                pass
-        return {"success": success_count, "failed": len(alert_ids) - success_count}
+        # 允许从 OPEN 或 ACK 状态关闭
+        return await self._batch_update_status(
+            alert_ids, AlertStatus.CLOSED, {AlertStatus.OPEN.value, AlertStatus.ACK.value}
+        )

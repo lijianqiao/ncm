@@ -258,10 +258,13 @@ class DeptService:
         if await self.dept_crud.has_users(self.db, dept_id=dept_id):
             raise BadRequestException(message="该部门下有用户，无法删除")
 
-        deleted = await self.dept_crud.remove(self.db, id=dept_id)
-        if not deleted:
+        success_count, _ = await self.dept_crud.batch_remove(self.db, ids=[dept_id])
+        if success_count == 0:
             raise NotFoundException(message="部门删除失败")
-        return self._to_dept_response(deleted, children=[])
+
+        # 刷新对象以获取最新状态（包括 is_deleted=True 和 updated_at）
+        await self.db.refresh(dept)
+        return self._to_dept_response(dept, children=[])
 
     @transactional()
     async def batch_delete_depts(self, *, ids: list[UUID], hard_delete: bool = False) -> tuple[int, list[UUID]]:
@@ -291,9 +294,12 @@ class DeptService:
         Raises:
             NotFoundException: 部门不存在时
         """
-        dept = await self.dept_crud.restore(self.db, id=dept_id)
-        if not dept:
+        success_count, _ = await self.dept_crud.batch_restore(self.db, ids=[dept_id])
+        if success_count == 0:
             raise NotFoundException(message="部门不存在或未被删除")
+        dept = await self.dept_crud.get(self.db, id=dept_id)
+        if not dept:
+            raise NotFoundException(message="部门不存在")
         return self._to_dept_response(dept, children=[])
 
     @transactional()

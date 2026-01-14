@@ -11,7 +11,6 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.cache import invalidate_user_permissions_cache
 from app.core.decorator import transactional
 from app.core.enums import MenuType
 from app.core.exceptions import DomainValidationException, NotFoundException
@@ -20,9 +19,10 @@ from app.crud.crud_menu import CRUDMenu
 from app.models.rbac import Menu
 from app.models.user import User
 from app.schemas.menu import MenuCreate, MenuResponse, MenuUpdate
+from app.services.base import PermissionCacheMixin
 
 
-class MenuService:
+class MenuService(PermissionCacheMixin):
     """
     菜单服务类。
     """
@@ -33,12 +33,6 @@ class MenuService:
 
         # transactional() 将在 commit 后执行这些任务（用于缓存失效等）
         self._post_commit_tasks: list = []
-
-    def _invalidate_permissions_cache_after_commit(self, user_ids: list[UUID]) -> None:
-        async def _task() -> None:
-            await invalidate_user_permissions_cache(user_ids)
-
-        self._post_commit_tasks.append(_task)
 
     @staticmethod
     def _to_menu_response(menu: Menu, *, children: list[MenuResponse] | None = None) -> MenuResponse:
@@ -112,7 +106,9 @@ class MenuService:
             return
 
     async def get_menus(self) -> list[Menu]:
-        return await self.menu_crud.get_multi(self.db, limit=1000)
+        # 使用分页查询替代 get_multi
+        menus, _ = await self.menu_crud.get_multi_paginated(self.db, page=1, page_size=100)
+        return menus
 
     async def get_menu_options_tree(self) -> list[MenuResponse]:
         """获取可分配菜单 options 树（用于角色创建/编辑时选择菜单）。"""
@@ -328,30 +324,30 @@ class MenuService:
 
         affected_user_ids = await self.menu_crud.get_affected_user_ids(self.db, menu_id=id)
 
-        deleted_menu = await self.menu_crud.remove(self.db, id=id)
-        if not deleted_menu:
+        success_count, _ = await self.menu_crud.batch_remove(self.db, ids=[id])
+        if success_count == 0:
             raise NotFoundException(message="菜单删除失败")
 
         self._invalidate_permissions_cache_after_commit(affected_user_ids)
 
-        # 手动构建响应，避免访问 deleted_menu.children 触发 implicit IO (MissingGreenlet)
+        # 手动构建响应，避免访问 menu.children 触发 implicit IO (MissingGreenlet)
         # 且删除后的对象 children 应为空
         return MenuResponse(
-            id=deleted_menu.id,
-            title=deleted_menu.title,
-            name=deleted_menu.name,
-            sort=deleted_menu.sort,
-            type=deleted_menu.type,
-            parent_id=deleted_menu.parent_id,
-            path=deleted_menu.path,
-            component=deleted_menu.component,
-            icon=deleted_menu.icon,
-            is_hidden=deleted_menu.is_hidden,
-            permission=deleted_menu.permission,
-            is_deleted=deleted_menu.is_deleted,
-            is_active=deleted_menu.is_active,
-            created_at=deleted_menu.created_at,
-            updated_at=deleted_menu.updated_at,
+            id=menu.id,
+            title=menu.title,
+            name=menu.name,
+            sort=menu.sort,
+            type=menu.type,
+            parent_id=menu.parent_id,
+            path=menu.path,
+            component=menu.component,
+            icon=menu.icon,
+            is_hidden=menu.is_hidden,
+            permission=menu.permission,
+            is_deleted=True,
+            is_active=menu.is_active,
+            created_at=menu.created_at,
+            updated_at=menu.updated_at,
             children=[],
         )
 
@@ -371,7 +367,11 @@ class MenuService:
         恢复已删除菜单。
         """
         affected_user_ids = await self.menu_crud.get_affected_user_ids(self.db, menu_id=id)
-        menu = await self.menu_crud.restore(self.db, id=id)
+        success_count, _ = await self.menu_crud.batch_restore(self.db, ids=[id])
+        if success_count == 0:
+            raise NotFoundException(message="菜单不存在")
+
+        menu = await self.menu_crud.get(self.db, id=id)
         if not menu:
             raise NotFoundException(message="菜单不存在")
 
@@ -381,22 +381,7 @@ class MenuService:
     @transactional()
     async def batch_restore_menus(self, ids: list[UUID]) -> tuple[int, list[UUID]]:
         """批量恢复菜单。"""
-
-        success_count = 0
-        failed_ids: list[UUID] = []
-
-        unique_ids = list(dict.fromkeys(ids))
-        if not unique_ids:
-            return success_count, failed_ids
-
-        affected_user_ids = await self.menu_crud.get_affected_user_ids_by_menu_ids(self.db, menu_ids=unique_ids)
-
-        for menu_id in unique_ids:
-            menu = await self.menu_crud.restore(self.db, id=menu_id)
-            if not menu:
-                failed_ids.append(menu_id)
-                continue
-            success_count += 1
-
+        affected_user_ids = await self.menu_crud.get_affected_user_ids_by_menu_ids(self.db, menu_ids=ids)
+        result = await self.menu_crud.batch_restore(self.db, ids=ids)
         self._invalidate_permissions_cache_after_commit(affected_user_ids)
-        return success_count, failed_ids
+        return result

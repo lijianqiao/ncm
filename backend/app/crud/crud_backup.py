@@ -60,12 +60,7 @@ class CRUDBackup(CRUDBase[Backup, BackupCreate, BackupUpdate]):
         Returns:
             (items, total): 备份列表和总数
         """
-        if page < 1:
-            page = 1
-        if page_size < 1:
-            page_size = 20
-        if page_size > 500:
-            page_size = 500
+        page, page_size = self._validate_pagination(page, page_size, max_size=500, default_size=20)
 
         # 基础查询
         base_query = select(self.model).where(self.model.device_id == device_id).where(self.model.is_deleted.is_(False))
@@ -164,12 +159,7 @@ class CRUDBackup(CRUDBase[Backup, BackupCreate, BackupUpdate]):
         Returns:
             (items, total): 备份列表和总数
         """
-        if page < 1:
-            page = 1
-        if page_size < 1:
-            page_size = 20
-        if page_size > 500:
-            page_size = 500
+        page, page_size = self._validate_pagination(page, page_size, max_size=500, default_size=20)
 
         # 基础查询
         base_query = select(self.model).where(self.model.is_deleted.is_(False))
@@ -223,12 +213,7 @@ class CRUDBackup(CRUDBase[Backup, BackupCreate, BackupUpdate]):
         end_date: datetime | None = None,
     ) -> tuple[list[Backup], int]:
         """获取回收站（已软删除）备份列表（分页过滤）。"""
-        if page < 1:
-            page = 1
-        if page_size < 1:
-            page_size = 20
-        if page_size > 500:
-            page_size = 500
+        page, page_size = self._validate_pagination(page, page_size, max_size=500, default_size=20)
 
         base_query = select(self.model).where(self.model.is_deleted.is_(True))
 

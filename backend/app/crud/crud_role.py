@@ -50,12 +50,7 @@ class CRUDRole(CRUDBase[Role, RoleCreate, RoleUpdate]):
         keyword: str | None = None,
         is_active: bool | None = None,
     ) -> tuple[list[Role], int]:
-        if page < 1:
-            page = 1
-        if page_size < 1:
-            page_size = 20
-        if page_size > 100:
-            page_size = 100
+        page, page_size = self._validate_pagination(page, page_size)
 
         count_stmt = select(func.count(Role.id)).where(Role.is_deleted.is_(False))
         if is_active is not None:
@@ -138,13 +133,6 @@ class CRUDRole(CRUDBase[Role, RoleCreate, RoleUpdate]):
 
         return await super().update(db, db_obj=db_obj, obj_in=update_data)
 
-    async def count_deleted(self, db: AsyncSession) -> int:
-        """
-        统计已删除角色数。
-        """
-        result = await db.execute(select(func.count(Role.id)).where(Role.is_deleted.is_(True)))
-        return result.scalar_one()
-
     async def get_multi_deleted_paginated(
         self,
         db: AsyncSession,
@@ -157,12 +145,7 @@ class CRUDRole(CRUDBase[Role, RoleCreate, RoleUpdate]):
         """
         获取已删除角色列表 (分页)。
         """
-        if page < 1:
-            page = 1
-        if page_size < 1:
-            page_size = 20
-        if page_size > 100:
-            page_size = 100
+        page, page_size = self._validate_pagination(page, page_size)
 
         count_stmt = select(func.count(Role.id)).where(Role.is_deleted.is_(True))
         if is_active is not None:

@@ -47,12 +47,7 @@ class CRUDAlert(CRUDBase[Alert, AlertCreate, AlertUpdate]):
         end_time: datetime | None = None,
     ) -> tuple[list[Alert], int]:
         """分页查询告警列表，支持筛选。"""
-        if page < 1:
-            page = 1
-        if page_size < 1:
-            page_size = 20
-        if page_size > 100:
-            page_size = 100
+        page, page_size = self._validate_pagination(page, page_size)
 
         conditions: list[ColumnElement[bool]] = [self.model.is_deleted.is_(False)]
 

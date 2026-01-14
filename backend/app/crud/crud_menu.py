@@ -157,12 +157,7 @@ class CRUDMenu(CRUDBase[Menu, MenuCreate, MenuUpdate]):
         is_hidden: bool | None = None,
         type: MenuType | None = None,
     ) -> tuple[list[Menu], int]:
-        if page < 1:
-            page = 1
-        if page_size < 1:
-            page_size = 20
-        if page_size > 100:
-            page_size = 100
+        page, page_size = self._validate_pagination(page, page_size)
 
         count_stmt = select(func.count(Menu.id)).where(Menu.is_deleted.is_(False))
         if is_active is not None:
@@ -191,13 +186,6 @@ class CRUDMenu(CRUDBase[Menu, MenuCreate, MenuUpdate]):
         result = await db.execute(stmt)
         return list(result.scalars().all()), total
 
-    async def count_deleted(self, db: AsyncSession) -> int:
-        """
-        统计已删除菜单数。
-        """
-        result = await db.execute(select(func.count(Menu.id)).where(Menu.is_deleted.is_(True)))
-        return result.scalar_one()
-
     async def get_multi_deleted_paginated(
         self,
         db: AsyncSession,
@@ -212,12 +200,7 @@ class CRUDMenu(CRUDBase[Menu, MenuCreate, MenuUpdate]):
         """
         获取已删除菜单列表 (分页)。
         """
-        if page < 1:
-            page = 1
-        if page_size < 1:
-            page_size = 20
-        if page_size > 100:
-            page_size = 100
+        page, page_size = self._validate_pagination(page, page_size)
 
         count_stmt = select(func.count(Menu.id)).where(Menu.is_deleted.is_(True))
         if is_active is not None:

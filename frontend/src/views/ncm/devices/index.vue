@@ -64,6 +64,7 @@ defineOptions({
 const dialog = useDialog()
 const tableRef = ref()
 const recycleBinTableRef = ref()
+const checkedRowKeys = ref<Array<string | number>>([])
 
 // ==================== 常量定义（使用统一枚举） ====================
 
@@ -519,16 +520,26 @@ const handleBatchRestore = async () => {
       search-placeholder="搜索设备名称/IP/序列号"
       :search-filters="searchFilters"
       @add="handleCreate"
-      @batch-delete="handleBatchDelete"
       @context-menu-select="handleContextMenuSelect"
       @recycle-bin="handleRecycleBin"
       show-add
       show-recycle-bin
-      show-batch-delete
+      v-model:checked-row-keys="checkedRowKeys"
       :scroll-x="1800"
     >
       <template #toolbar-left>
-        <n-button type="info" @click="handleBatchTransition"> 批量状态流转 </n-button>
+        <n-space>
+          <n-button
+            type="error"
+            :disabled="checkedRowKeys.length === 0"
+            @click="handleBatchDelete(checkedRowKeys)"
+          >
+            批量删除
+          </n-button>
+          <n-button type="info" :disabled="checkedRowKeys.length === 0" @click="handleBatchTransition">
+            批量状态流转
+          </n-button>
+        </n-space>
       </template>
     </ProTable>
 

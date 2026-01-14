@@ -69,12 +69,7 @@ class CRUDUser(CRUDBase[User, UserCreate, UserUpdate]):
         is_superuser: bool | None = None,
         is_active: bool | None = None,
     ) -> tuple[list[User], int]:
-        if page < 1:
-            page = 1
-        if page_size < 1:
-            page_size = 20
-        if page_size > 100:
-            page_size = 100
+        page, page_size = self._validate_pagination(page, page_size)
 
         count_stmt = select(func.count(User.id)).where(User.is_deleted.is_(False))
         if is_superuser is not None:
@@ -122,12 +117,7 @@ class CRUDUser(CRUDBase[User, UserCreate, UserUpdate]):
         Returns:
             用户列表和总数
         """
-        if page < 1:
-            page = 1
-        if page_size < 1:
-            page_size = 20
-        if page_size > 100:
-            page_size = 100
+        page, page_size = self._validate_pagination(page, page_size)
 
         # 构建基础查询
         count_stmt = select(func.count(User.id)).where(User.is_deleted.is_(False))
@@ -225,13 +215,6 @@ class CRUDUser(CRUDBase[User, UserCreate, UserUpdate]):
         )
         return result.scalar_one()
 
-    async def count_deleted(self, db: AsyncSession) -> int:
-        """
-        统计已删除用户数。
-        """
-        result = await db.execute(select(func.count(User.id)).where(User.is_deleted.is_(True)))
-        return result.scalar_one()
-
     async def get_multi_deleted_paginated(
         self,
         db: AsyncSession,
@@ -245,12 +228,7 @@ class CRUDUser(CRUDBase[User, UserCreate, UserUpdate]):
         """
         获取已删除用户列表 (分页)。
         """
-        if page < 1:
-            page = 1
-        if page_size < 1:
-            page_size = 20
-        if page_size > 100:
-            page_size = 100
+        page, page_size = self._validate_pagination(page, page_size)
 
         count_stmt = select(func.count(User.id)).where(User.is_deleted.is_(True))
         if is_superuser is not None:

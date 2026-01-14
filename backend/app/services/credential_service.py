@@ -187,9 +187,14 @@ class CredentialService:
         Raises:
             NotFoundException: 凭据不存在
         """
-        credential = await self.credential_crud.remove(self.db, id=credential_id)
+        credential = await self.credential_crud.get(self.db, id=credential_id)
         if not credential:
             raise NotFoundException(message="凭据不存在")
+        success_count, _ = await self.credential_crud.batch_remove(self.db, ids=[credential_id])
+        if success_count == 0:
+            raise NotFoundException(message="凭据不存在")
+        # 刷新对象以获取最新状态（包括 is_deleted=True 和 updated_at）
+        await self.db.refresh(credential)
         return credential
 
     async def cache_otp(self, request: OTPCacheRequest) -> OTPCacheResponse:

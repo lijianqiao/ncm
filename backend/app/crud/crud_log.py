@@ -57,12 +57,7 @@ class CRUDLoginLog(CRUDBase[LoginLog, LoginLogCreate, LoginLogCreate]):
         page_size: int = 20,
         keyword: str | None = None,
     ) -> tuple[list[LoginLog], int]:
-        if page < 1:
-            page = 1
-        if page_size < 1:
-            page_size = 20
-        if page_size > 100:
-            page_size = 100
+        page, page_size = self._validate_pagination(page, page_size)
 
         count_stmt = select(func.count(LoginLog.id))
         count_stmt = self._apply_keyword_filter(count_stmt, keyword=keyword)
@@ -236,12 +231,7 @@ class CRUDOperationLog(CRUDBase[OperationLog, OperationLogCreate, OperationLogCr
         page_size: int = 20,
         keyword: str | None = None,
     ) -> tuple[list[OperationLog], int]:
-        if page < 1:
-            page = 1
-        if page_size < 1:
-            page_size = 20
-        if page_size > 100:
-            page_size = 100
+        page, page_size = self._validate_pagination(page, page_size)
 
         count_stmt = select(func.count(OperationLog.id))
         count_stmt = self._apply_keyword_filter(count_stmt, keyword=keyword)

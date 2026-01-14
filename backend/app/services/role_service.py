@@ -10,16 +10,16 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.cache import invalidate_user_permissions_cache
 from app.core.decorator import transactional
 from app.core.exceptions import BadRequestException, NotFoundException
 from app.crud.crud_menu import CRUDMenu
 from app.crud.crud_role import CRUDRole
 from app.models.rbac import Role
 from app.schemas.role import RoleCreate, RoleResponse, RoleUpdate
+from app.services.base import PermissionCacheMixin
 
 
-class RoleService:
+class RoleService(PermissionCacheMixin):
     """
     角色服务类。
     """
@@ -32,14 +32,11 @@ class RoleService:
         # transactional() 将在 commit 后执行这些任务（用于缓存失效等）
         self._post_commit_tasks: list = []
 
-    def _invalidate_permissions_cache_after_commit(self, user_ids: list[UUID]) -> None:
-        async def _task() -> None:
-            await invalidate_user_permissions_cache(user_ids)
-
-        self._post_commit_tasks.append(_task)
-
     async def get_roles(self, skip: int = 0, limit: int = 100) -> list[Role]:
-        return await self.role_crud.get_multi(self.db, skip=skip, limit=limit)
+        # 使用分页查询替代 get_multi
+        page = (skip // limit) + 1 if limit > 0 else 1
+        roles, _ = await self.role_crud.get_multi_paginated(self.db, page=page, page_size=limit)
+        return roles
 
     async def get_role_menu_ids(self, role_id: UUID) -> list[UUID]:
         """获取角色已分配的菜单ID列表（仅未删除菜单）。"""
@@ -143,22 +140,22 @@ class RoleService:
 
         affected_user_ids = await self.role_crud.get_user_ids_by_role(self.db, role_id=id)
 
-        deleted_role = await self.role_crud.remove(self.db, id=id)
-        if not deleted_role:
+        success_count, _ = await self.role_crud.batch_remove(self.db, ids=[id])
+        if success_count == 0:
             raise NotFoundException(message="角色删除失败")
 
         self._invalidate_permissions_cache_after_commit(affected_user_ids)
 
         return RoleResponse(
-            id=deleted_role.id,
-            name=deleted_role.name,
-            code=deleted_role.code,
-            description=deleted_role.description,
-            sort=deleted_role.sort,
-            is_active=deleted_role.is_active,
-            is_deleted=deleted_role.is_deleted,
-            created_at=deleted_role.created_at,
-            updated_at=deleted_role.updated_at,
+            id=role.id,
+            name=role.name,
+            code=role.code,
+            description=role.description,
+            sort=role.sort,
+            is_active=role.is_active,
+            is_deleted=True,
+            created_at=role.created_at,
+            updated_at=role.updated_at,
         )
 
     @transactional()
@@ -177,7 +174,11 @@ class RoleService:
         恢复已删除角色。
         """
         affected_user_ids = await self.role_crud.get_user_ids_by_role(self.db, role_id=id)
-        role = await self.role_crud.restore(self.db, id=id)
+        success_count, _ = await self.role_crud.batch_restore(self.db, ids=[id])
+        if success_count == 0:
+            raise NotFoundException(message="角色不存在")
+
+        role = await self.role_crud.get(self.db, id=id)
         if not role:
             raise NotFoundException(message="角色不存在")
 
@@ -187,22 +188,7 @@ class RoleService:
     @transactional()
     async def batch_restore_roles(self, ids: list[UUID]) -> tuple[int, list[UUID]]:
         """批量恢复角色。"""
-
-        success_count = 0
-        failed_ids: list[UUID] = []
-
-        unique_ids = list(dict.fromkeys(ids))
-        if not unique_ids:
-            return success_count, failed_ids
-
-        affected_user_ids = await self.role_crud.get_user_ids_by_roles(self.db, role_ids=unique_ids)
-
-        for role_id in unique_ids:
-            role = await self.role_crud.restore(self.db, id=role_id)
-            if not role:
-                failed_ids.append(role_id)
-                continue
-            success_count += 1
-
+        affected_user_ids = await self.role_crud.get_user_ids_by_roles(self.db, role_ids=ids)
+        result = await self.role_crud.batch_restore(self.db, ids=ids)
         self._invalidate_permissions_cache_after_commit(affected_user_ids)
-        return success_count, failed_ids
+        return result

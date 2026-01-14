@@ -13,26 +13,25 @@ from jinja2 import Template as Jinja2Template
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.command_policy import normalize_rendered_config, validate_commands
-from app.core.enums import AuthType
 from app.core.exceptions import BadRequestException, NotFoundException, OTPRequiredException
 from app.core.logger import logger
-from app.core.otp_service import otp_service
-from app.crud.crud_credential import credential as credential_crud
+from app.crud.crud_credential import CRUDCredential
 from app.crud.crud_device import CRUDDevice
-from app.models.device import Device
 from app.network.connection_test import execute_commands_on_device
 from app.network.platform_config import get_ntc_platform, get_platform_for_vendor
 from app.network.preset_templates import PRESET_CATEGORY_CONFIG, get_preset, list_presets
 from app.network.textfsm_parser import parse_command_output
 from app.schemas.preset import PresetDetail, PresetExecuteResult, PresetInfo
+from app.services.base import DeviceCredentialMixin
 
 
-class PresetService:
+class PresetService(DeviceCredentialMixin):
     """预设模板服务。"""
 
-    def __init__(self, db: AsyncSession, device_crud: CRUDDevice):
+    def __init__(self, db: AsyncSession, device_crud: CRUDDevice, credential_crud: CRUDCredential):
         self.db = db
         self.device_crud = device_crud
+        self.credential_crud = credential_crud
 
     async def list_presets(self) -> list[PresetInfo]:
         """列出所有预设模板。"""
@@ -127,8 +126,8 @@ class PresetService:
 
             result = await execute_commands_on_device(
                 host=device.ip_address,
-                username=cred["username"],
-                password=cred["password"],
+                username=cred.username,
+                password=cred.password,
                 commands=commands,
                 platform=platform,
                 port=device.ssh_port or 22,
@@ -237,47 +236,3 @@ class PresetService:
 
         # 兜底：不给解析，直接让上层走解析失败提示
         return ""
-
-    async def _get_device_credential(self, device: Device) -> dict[str, str]:
-        """获取设备凭据。"""
-        auth_type = AuthType(device.auth_type)
-
-        if auth_type == AuthType.STATIC:
-            # 静态密码
-            from app.core.encryption import decrypt_password
-
-            password = decrypt_password(device.password_encrypted) if device.password_encrypted else ""
-            return {"username": device.username or "", "password": password}
-
-        elif auth_type == AuthType.OTP_SEED:
-            # OTP 种子
-            if not device.dept_id or not device.device_group:
-                raise BadRequestException("OTP 认证需要部门和设备分组")
-            credential = await credential_crud.get_by_dept_and_group(self.db, device.dept_id, device.device_group)
-            if not credential:
-                raise BadRequestException("未找到对应的凭据配置")
-
-            cred = await otp_service.get_credential_for_otp_seed_device(
-                credential.username, credential.otp_seed_encrypted or ""
-            )
-            return {"username": cred.username, "password": cred.password}
-
-        elif auth_type == AuthType.OTP_MANUAL:
-            # 手动 OTP - 从缓存获取
-            if not device.dept_id or not device.device_group:
-                raise BadRequestException("OTP 认证需要部门和设备分组")
-            credential = await credential_crud.get_by_dept_and_group(self.db, device.dept_id, device.device_group)
-            if not credential:
-                raise BadRequestException("未找到对应的凭据配置")
-
-            try:
-                cred = await otp_service.get_credential_for_otp_manual_device(
-                    credential.username, device.dept_id, device.device_group
-                )
-                return {"username": cred.username, "password": cred.password}
-            except OTPRequiredException:
-                raise
-            except Exception as e:
-                raise BadRequestException(f"获取 OTP 凭据失败: {e}") from e
-
-        raise BadRequestException(f"不支持的认证类型: {auth_type}")

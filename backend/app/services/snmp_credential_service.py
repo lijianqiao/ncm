@@ -89,8 +89,11 @@ class SnmpCredentialService:
         return await self._to_response(obj)
 
     async def delete(self, *, snmp_cred_id: UUID) -> None:
-        obj = await self.snmp_cred_crud.remove(self.db, id=snmp_cred_id)
+        obj = await self.snmp_cred_crud.get(self.db, id=snmp_cred_id)
         if not obj:
+            raise NotFoundException(message="SNMP 凭据不存在")
+        success_count, _ = await self.snmp_cred_crud.batch_remove(self.db, ids=[snmp_cred_id])
+        if success_count == 0:
             raise NotFoundException(message="SNMP 凭据不存在")
 
     async def to_response(self, obj) -> DeptSnmpCredentialResponse:

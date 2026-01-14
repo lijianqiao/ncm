@@ -184,6 +184,30 @@ async def batch_create_devices(
     )
 
 
+@router.delete("/batch", response_model=ResponseBase[DeviceBatchResult], summary="批量删除设备")
+async def batch_delete_devices(
+    obj_in: DeviceBatchDeleteRequest,
+    device_service: deps.DeviceServiceDep,
+    current_user: deps.CurrentUser,
+    _: deps.User = Depends(deps.require_permissions([PermissionCode.DEVICE_DELETE.value])),
+) -> Any:
+    """批量将选中的设备移入回收站。
+
+    Args:
+        obj_in (DeviceBatchDeleteRequest): 包含目标设备 ID 列表。
+        device_service (DeviceService): 设备服务依赖。
+        current_user (User): 当前登录用户。
+
+    Returns:
+        ResponseBase[DeviceBatchResult]: 批量删除操作的结果报告。
+    """
+    result = await device_service.batch_delete_devices(obj_in.ids)
+    return ResponseBase(
+        data=result,
+        message=f"批量删除完成：成功 {result.success_count}，失败 {result.failed_count}",
+    )
+
+
 @router.put("/{device_id}", response_model=ResponseBase[DeviceResponse], summary="更新设备")
 async def update_device(
     device_id: UUID,
@@ -228,30 +252,6 @@ async def delete_device(
     """
     device = await device_service.delete_device(device_id)
     return ResponseBase(data=DeviceResponse.model_validate(device), message="设备已移至回收站")
-
-
-@router.delete("/batch", response_model=ResponseBase[DeviceBatchResult], summary="批量删除设备")
-async def batch_delete_devices(
-    obj_in: DeviceBatchDeleteRequest,
-    device_service: deps.DeviceServiceDep,
-    current_user: deps.CurrentUser,
-    _: deps.User = Depends(deps.require_permissions([PermissionCode.DEVICE_DELETE.value])),
-) -> Any:
-    """批量将选中的设备移入回收站。
-
-    Args:
-        obj_in (DeviceBatchDeleteRequest): 包含目标设备 ID 列表。
-        device_service (DeviceService): 设备服务依赖。
-        current_user (User): 当前登录用户。
-
-    Returns:
-        ResponseBase[DeviceBatchResult]: 批量删除操作的结果报告。
-    """
-    result = await device_service.batch_delete_devices(obj_in.ids)
-    return ResponseBase(
-        data=result,
-        message=f"批量删除完成：成功 {result.success_count}，失败 {result.failed_count}",
-    )
 
 
 @router.post("/batch/restore", response_model=ResponseBase[DeviceBatchResult], summary="批量恢复设备")

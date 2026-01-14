@@ -21,12 +21,6 @@ from app.schemas.dept import DeptCreate, DeptUpdate
 class CRUDDept(CRUDBase[Department, DeptCreate, DeptUpdate]):
     """部门 CRUD 操作类。"""
 
-    async def count_deleted(self, db: AsyncSession) -> int:
-        """统计已删除部门数。"""
-
-        result = await db.execute(select(func.count(Department.id)).where(Department.is_deleted.is_(True)))
-        return result.scalar_one()
-
     async def get_multi_deleted_paginated(
         self,
         db: AsyncSession,
@@ -38,12 +32,7 @@ class CRUDDept(CRUDBase[Department, DeptCreate, DeptUpdate]):
     ) -> tuple[list[Department], int]:
         """获取已删除部门列表 (回收站 - 分页)。"""
 
-        if page < 1:
-            page = 1
-        if page_size < 1:
-            page_size = 20
-        if page_size > 100:
-            page_size = 100
+        page, page_size = self._validate_pagination(page, page_size)
 
         conditions: list[ColumnElement[bool]] = [Department.is_deleted.is_(True)]
 

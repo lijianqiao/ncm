@@ -54,10 +54,15 @@ class TemplateService:
 
     @transactional()
     async def delete_template(self, template_id: UUID):
-        deleted = await self.template_crud.remove(self.db, id=template_id)
-        if not deleted:
+        template = await self.template_crud.get(self.db, id=template_id)
+        if not template:
             raise NotFoundException("模板不存在")
-        return deleted
+        success_count, _ = await self.template_crud.batch_remove(self.db, ids=[template_id])
+        if success_count == 0:
+            raise NotFoundException("模板不存在")
+        # 刷新对象以获取最新状态（包括 is_deleted=True 和 updated_at）
+        await self.db.refresh(template)
+        return template
 
     @transactional()
     async def create_template(self, data: TemplateCreate, creator_id: UUID):

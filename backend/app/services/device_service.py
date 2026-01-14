@@ -184,9 +184,14 @@ class DeviceService:
         Raises:
             NotFoundException: 设备不存在
         """
-        device = await self.device_crud.remove(self.db, id=device_id)
+        device = await self.device_crud.get(self.db, id=device_id)
         if not device:
             raise NotFoundException(message="设备不存在")
+        success_count, _ = await self.device_crud.batch_remove(self.db, ids=[device_id])
+        if success_count == 0:
+            raise NotFoundException(message="设备不存在")
+        # 刷新对象以获取最新状态（包括 is_deleted=True）
+        await self.db.refresh(device)
         return device
 
     @transactional()
@@ -397,7 +402,11 @@ class DeviceService:
             NotFoundException: 设备不存在
             BadRequestException: 设备未被删除或IP 地址冲突
         """
-        device = await self.device_crud.restore(self.db, id=device_id)
+        success_count, _ = await self.device_crud.batch_restore(self.db, ids=[device_id])
+        if success_count == 0:
+            raise NotFoundException(message="设备不存在")
+
+        device = await self.device_crud.get(self.db, id=device_id)
         if not device:
             raise NotFoundException(message="设备不存在")
 

@@ -599,8 +599,9 @@ CollectServiceDep = Annotated[CollectService, Depends(get_collect_service)]
 def get_preset_service(
     db: SessionDep,
     device_crud: Annotated[CRUDDevice, Depends(get_device_crud)],
+    credential_crud: Annotated[CRUDCredential, Depends(get_credential_crud)],
 ) -> PresetService:
-    return PresetService(db, device_crud)
+    return PresetService(db, device_crud, credential_crud)
 
 
 PresetServiceDep = Annotated[PresetService, Depends(get_preset_service)]

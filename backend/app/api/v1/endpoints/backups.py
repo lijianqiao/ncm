@@ -19,7 +19,6 @@ from app.schemas.backup import (
     BackupBatchDeleteRequest,
     BackupBatchDeleteResult,
     BackupBatchHardDeleteRequest,
-    BackupBatchHardDeleteResult,
     BackupBatchRequest,
     BackupBatchRestoreRequest,
     BackupBatchRestoreResult,
@@ -604,7 +603,7 @@ async def restore_backups_batch(
 
 @router.post(
     "/batch-hard-delete",
-    response_model=ResponseBase[BackupBatchHardDeleteResult],
+    response_model=ResponseBase[BackupBatchDeleteResult],
     dependencies=[Depends(require_permissions([PermissionCode.BACKUP_BATCH_HARD_DELETE.value]))],
     summary="批量硬删除备份",
     description="批量硬删除备份（物理删除，会尽力清理对象存储）。",
@@ -613,8 +612,8 @@ async def hard_delete_backups_batch(
     request: BackupBatchHardDeleteRequest,
     service: BackupServiceDep,
     current_user: CurrentUser,
-) -> ResponseBase[BackupBatchHardDeleteResult]:
-    result = await service.hard_delete_backups_batch(request.backup_ids)
+) -> ResponseBase[BackupBatchDeleteResult]:
+    result = await service.delete_backups_batch(request.backup_ids, hard_delete=True)
     return ResponseBase(
         data=result,
         message=f"批量硬删除完成: 成功 {result.success_count}, 失败 {len(result.failed_ids)}",
@@ -649,5 +648,5 @@ async def hard_delete_backup(
     service: BackupServiceDep,
     current_user: CurrentUser,
 ) -> ResponseBase[dict]:
-    await service.hard_delete_backup(backup_id)
+    await service.delete_backup(backup_id, hard_delete=True)
     return ResponseBase(data={"id": str(backup_id), "hard_deleted": True}, message="备份已硬删除")
