@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, reactive, onMounted, nextTick } from 'vue'
+import { ref, reactive, onMounted, onUnmounted, nextTick, computed, watch } from 'vue'
 import {
   NDataTable,
   NCard,
@@ -9,6 +9,9 @@ import {
   NSelect,
   NIcon,
   NDropdown,
+  NPopover,
+  NCheckbox,
+  NDivider,
   type DataTableColumns,
   type PaginationProps,
   type DropdownOption,
@@ -19,6 +22,11 @@ import {
   AddOutline as AddIcon,
   TrashOutline as TrashIcon,
   DownloadOutline as DownloadIcon,
+  SettingsOutline as SettingsIcon,
+  ExpandOutline as ExpandIcon,
+  ContractOutline as ContractIcon,
+  ReorderFourOutline as DensityIcon,
+  ReloadOutline as ResetIcon,
 } from '@vicons/ionicons5'
 
 // Export this for use in other components
@@ -31,6 +39,17 @@ export interface FilterConfig {
   multiple?: boolean
   width?: number
 }
+
+// 列配置接口
+export interface ColumnConfig {
+  key: string
+  title: string
+  visible: boolean
+  order: number
+}
+
+// 密度类型
+export type TableDensity = 'compact' | 'default' | 'loose'
 
 // Define props with defaults
 const props = withDefaults(
@@ -50,12 +69,17 @@ const props = withDefaults(
     showAdd?: boolean
     showRecycleBin?: boolean
     showBatchDelete?: boolean
-    // 虚拟滚动配置（适用于大数据量场景）
-    // 虚拟滚动配置（适用于大数据量场景）
     virtualScroll?: boolean
     maxHeight?: number
-    // 是否禁用分页（用于树形表格）
     disablePagination?: boolean
+    // 新增功能 props
+    resizable?: boolean
+    columnConfigurable?: boolean
+    densityOptions?: boolean
+    fullscreenEnabled?: boolean
+    storageKey?: string
+    /** 是否启用多列排序，默认 false */
+    multipleSort?: boolean
   }>(),
   {
     scrollX: 1000,
@@ -70,6 +94,11 @@ const props = withDefaults(
     showBatchDelete: false,
     virtualScroll: false,
     maxHeight: 600,
+    resizable: true,
+    columnConfigurable: true,
+    densityOptions: true,
+    fullscreenEnabled: true,
+    multipleSort: false,
   },
 )
 
@@ -91,13 +120,12 @@ const data = ref<any[]>([])
 const checkedRowKeys = ref<Array<string | number>>([])
 const keyword = ref('')
 
-// External Filters State (NSelects)
+// External Filters State
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const filterState = ref<Record<string, any>>({})
 
 const handleFilterStateChange = () => {
-  // If we want auto-search on select change, uncomment next line:
-  // handleSearchClick()
+  // Auto-search on filter change (optional)
 }
 
 const pagination = reactive<PaginationProps>({
@@ -118,30 +146,179 @@ const pagination = reactive<PaginationProps>({
   },
 })
 
-// 排序状态（远程排序）
+// 排序状态
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const sorterState = ref<any>(null)
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const controlledColumns = ref<any[]>([])
 
-// Initialize columns
+// ==================== 列配置功能 ====================
+const columnConfig = ref<ColumnConfig[]>([])
+const showColumnConfig = ref(false)
+
+// 初始化列配置
+const initColumnConfig = () => {
+  // 尝试从 localStorage 加载
+  if (props.storageKey) {
+    const saved = localStorage.getItem(`pro-table-columns-${props.storageKey}`)
+    if (saved) {
+      try {
+        columnConfig.value = JSON.parse(saved)
+        return
+      } catch {
+        // 解析失败，使用默认配置
+      }
+    }
+  }
+  
+  // 默认配置：所有列可见
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  columnConfig.value = props.columns
+    .filter((col) => (col as any).key && col.type !== 'selection')
+    .map((col, index) => ({
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      key: (col as any).key as string,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      title: ((col as any).title as string) || (col as any).key,
+      visible: true,
+      order: index,
+    }))
+}
+
+// 保存列配置到 localStorage
+const saveColumnConfig = () => {
+  if (props.storageKey) {
+    localStorage.setItem(
+      `pro-table-columns-${props.storageKey}`,
+      JSON.stringify(columnConfig.value)
+    )
+  }
+}
+
+// 切换列可见性
+const toggleColumnVisibility = (key: string) => {
+  const config = columnConfig.value.find((c) => c.key === key)
+  if (config) {
+    config.visible = !config.visible
+    saveColumnConfig()
+    updateDisplayColumns()
+  }
+}
+
+// 重置列配置
+const resetColumnConfig = () => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  columnConfig.value = props.columns
+    .filter((col) => (col as any).key && col.type !== 'selection')
+    .map((col, index) => ({
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      key: (col as any).key as string,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      title: ((col as any).title as string) || (col as any).key,
+      visible: true,
+      order: index,
+    }))
+  saveColumnConfig()
+  updateDisplayColumns()
+}
+
+// 根据配置更新显示的列
+const updateDisplayColumns = () => {
+  const visibleKeys = new Set(
+    columnConfig.value.filter((c) => c.visible).map((c) => c.key)
+  )
+  
+  // 保留 selection 列和可见的列，并自动添加 resizable 属性
+  controlledColumns.value = props.columns
+    .filter((col) => {
+      if (col.type === 'selection') return true
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      return visibleKeys.has((col as any).key)
+    })
+    .map((col) => {
+      // 如果启用了 resizable，自动为所有非 selection 列添加 resizable: true
+      if (props.resizable && col.type !== 'selection') {
+        return { ...col, resizable: true }
+      }
+      return col
+    })
+}
+
+// ==================== 密度切换功能 ====================
+const tableDensity = ref<TableDensity>('default')
+
+const densityMenuOptions: DropdownOption[] = [
+  { label: '紧凑', key: 'compact' },
+  { label: '默认', key: 'default' },
+  { label: '宽松', key: 'loose' },
+]
+
+const handleDensityChange = (key: string | number) => {
+  tableDensity.value = key as TableDensity
+  // 保存到 localStorage
+  if (props.storageKey) {
+    localStorage.setItem(`pro-table-density-${props.storageKey}`, key as string)
+  }
+}
+
+const loadDensityConfig = () => {
+  if (props.storageKey) {
+    const saved = localStorage.getItem(`pro-table-density-${props.storageKey}`)
+    if (saved && ['compact', 'default', 'loose'].includes(saved)) {
+      tableDensity.value = saved as TableDensity
+    }
+  }
+}
+
+// 密度对应的 size
+const tableSize = computed(() => {
+  const sizeMap: Record<TableDensity, 'small' | 'medium' | 'large'> = {
+    compact: 'small',
+    default: 'medium',
+    loose: 'large',
+  }
+  return sizeMap[tableDensity.value]
+})
+
+// ==================== 全屏功能 ====================
+const isFullscreen = ref(false)
+
+const toggleFullscreen = () => {
+  isFullscreen.value = !isFullscreen.value
+}
+
+// ESC 键退出全屏
+const handleKeydown = (e: KeyboardEvent) => {
+  if (e.key === 'Escape' && isFullscreen.value) {
+    isFullscreen.value = false
+  }
+}
+
+// ==================== 初始化 ====================
 onMounted(() => {
-  controlledColumns.value = [...props.columns]
+  initColumnConfig()
+  loadDensityConfig()
+  updateDisplayColumns()
   handleSearch()
+  document.addEventListener('keydown', handleKeydown)
+})
+
+onUnmounted(() => {
+  document.removeEventListener('keydown', handleKeydown)
 })
 
 // Watch for column prop changes
-import { watch } from 'vue'
 watch(
   () => props.columns,
-  (newVal) => {
-    controlledColumns.value = [...newVal]
+  () => {
+    initColumnConfig()
+    updateDisplayColumns()
   },
   { deep: true },
 )
 
-// Filters State (Internal Column Filters - kept for compatibility but effectively replaced by external)
+// Filters State
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const filters = ref<Record<string, any>>({})
 
@@ -180,7 +357,6 @@ const isFilterObjectEqual = (a: Record<string, unknown>, b: Record<string, unkno
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const handleFiltersChange = (newFilters: Record<string, any>, sourceColumn: any) => {
-  // 1. Update Controlled Columns State (UI)
   const columnKey = sourceColumn.key
   const columnIndex = controlledColumns.value.findIndex((col) => col.key === columnKey)
   if (columnIndex !== -1) {
@@ -192,7 +368,6 @@ const handleFiltersChange = (newFilters: Record<string, any>, sourceColumn: any)
     }
   }
 
-  // 2. Format Filters for API
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const formattedFilters: Record<string, any> = {}
 
@@ -200,21 +375,17 @@ const handleFiltersChange = (newFilters: Record<string, any>, sourceColumn: any)
     const val = newFilters[key]
     const col = controlledColumns.value.find((c) => c.key === key)
     if (col && !col.filterMultiple && Array.isArray(val)) {
-      // If single select but got array (Naive UI default), take first.
       formattedFilters[key] = val && val.length ? val[0] : null
     } else {
       formattedFilters[key] = val
     }
   })
 
-  // Prevent redundant search if filters haven't changed
   if (isFilterObjectEqual(filters.value, formattedFilters)) {
     return
   }
 
-  // Filters state update
   filters.value = formattedFilters
-
   pagination.page = 1
   handleSearch()
 }
@@ -256,22 +427,28 @@ const clickOutside = () => {
 const handleSearch = async () => {
   tableLoading.value = true
   try {
-    // 1. Prepare base params
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const params: Record<string, any> = {
       page: pagination.page,
       page_size: pagination.pageSize,
-      ...filters.value, // Internal column filters
-      ...filterState.value, // External select filters
+      ...filters.value,
+      ...filterState.value,
     }
 
-    // 3) 排序参数（后端服务端排序）
-    if (sorterState.value && sorterState.value.columnKey && sorterState.value.order) {
+    // 支持多列排序
+    if (Array.isArray(sorterState.value) && sorterState.value.length > 0) {
+      // 多列排序：传递数组格式
+      const validSorters = sorterState.value.filter((s: { columnKey: string; order: string | false }) => s.columnKey && s.order)
+      if (validSorters.length > 0) {
+        params.sort_by = validSorters.map((s: { columnKey: string }) => s.columnKey).join(',')
+        params.sort_order = validSorters.map((s: { order: string }) => s.order === 'ascend' ? 'asc' : 'desc').join(',')
+      }
+    } else if (sorterState.value && sorterState.value.columnKey && sorterState.value.order) {
+      // 单列排序
       params.sort_by = sorterState.value.columnKey
       params.sort_order = sorterState.value.order === 'ascend' ? 'asc' : 'desc'
     }
 
-    // 2. Add keyword only if present and non-empty
     const kw = keyword.value.trim()
     if (kw) {
       params.keyword = kw
@@ -296,14 +473,24 @@ const handleRefresh = () => {
 const handleSorterChange = (sorter: any) => {
   sorterState.value = sorter
 
-  // 同步列 sortOrder，确保 UI 箭头状态正确
-  if (sorter && sorter.columnKey) {
+  // 支持多列排序：sorter 可能是数组或单个对象
+  if (Array.isArray(sorter)) {
+    // 多列排序
+    const sorterMap = new Map(sorter.map((s: { columnKey: string; order: string | false }) => [s.columnKey, s.order]))
+    controlledColumns.value = controlledColumns.value.map((col) => {
+      if (!col || !col.key) return col
+      const order = sorterMap.get(col.key)
+      return { ...col, sortOrder: order || false }
+    })
+  } else if (sorter && sorter.columnKey) {
+    // 单列排序
     controlledColumns.value = controlledColumns.value.map((col) => {
       if (!col || !col.key) return col
       if (col.key === sorter.columnKey) return { ...col, sortOrder: sorter.order }
       return { ...col, sortOrder: false }
     })
   } else {
+    // 清除排序
     controlledColumns.value = controlledColumns.value.map((col) => {
       if (!col || !col.key) return col
       return { ...col, sortOrder: false }
@@ -321,7 +508,6 @@ const handleSearchClick = () => {
 
 const handleResetClick = () => {
   keyword.value = ''
-  // Reset external filters
   filterState.value = {}
   emit('reset')
   pagination.page = 1
@@ -381,6 +567,8 @@ defineExpose({
   reload: handleSearch,
   refresh: handleSearch,
   reset: handleResetClick,
+  resetColumnConfig,
+  toggleFullscreen,
   getSelectedRows: () =>
     data.value.filter((row) => {
       const key = props.rowKey ? props.rowKey(row) : row.id
@@ -391,7 +579,11 @@ defineExpose({
 </script>
 
 <template>
-  <div class="pro-table" @click="clickOutside">
+  <div
+    class="pro-table"
+    :class="{ 'pro-table--fullscreen': isFullscreen }"
+    @click="clickOutside"
+  >
     <!-- Search Form Area -->
     <n-card class="search-card" :bordered="false" size="small">
       <div class="search-bar">
@@ -460,7 +652,7 @@ defineExpose({
             </n-button>
           </slot>
 
-          <!-- Create Button (Moved here, before Export) -->
+          <!-- Create Button -->
           <n-button v-if="showAdd" type="primary" @click="$emit('add')">
             <template #icon>
               <n-icon><AddIcon /></n-icon>
@@ -468,12 +660,87 @@ defineExpose({
             新建
           </n-button>
 
+          <!-- Export Button -->
           <n-button secondary @click="handleExport" title="导出 CSV">
             <template #icon>
               <n-icon><DownloadIcon /></n-icon>
             </template>
           </n-button>
 
+          <!-- Density Dropdown -->
+          <n-dropdown
+            v-if="densityOptions"
+            trigger="click"
+            :options="densityMenuOptions"
+            @select="handleDensityChange"
+          >
+            <n-button circle secondary title="表格密度">
+              <template #icon>
+                <n-icon><DensityIcon /></n-icon>
+              </template>
+            </n-button>
+          </n-dropdown>
+
+          <!-- Column Config Popover -->
+          <n-popover
+            v-if="columnConfigurable"
+            trigger="click"
+            placement="bottom-end"
+            :show="showColumnConfig"
+            @update:show="showColumnConfig = $event"
+          >
+            <template #trigger>
+              <n-button circle secondary title="列设置">
+                <template #icon>
+                  <n-icon><SettingsIcon /></n-icon>
+                </template>
+              </n-button>
+            </template>
+            <div class="column-config-panel">
+              <div class="column-config-header">
+                <span>列设置</span>
+                <n-button text size="small" @click="resetColumnConfig">
+                  <template #icon>
+                    <n-icon size="14"><ResetIcon /></n-icon>
+                  </template>
+                  重置
+                </n-button>
+              </div>
+              <n-divider style="margin: 8px 0" />
+              <div class="column-config-list">
+                <div
+                  v-for="col in columnConfig"
+                  :key="col.key"
+                  class="column-config-item"
+                >
+                  <n-checkbox
+                    :checked="col.visible"
+                    @update:checked="toggleColumnVisibility(col.key)"
+                  >
+                    {{ col.title }}
+                  </n-checkbox>
+                </div>
+              </div>
+            </div>
+          </n-popover>
+
+          <!-- Fullscreen Toggle -->
+          <n-button
+            v-if="fullscreenEnabled"
+            circle
+            secondary
+            @click="toggleFullscreen"
+            :title="isFullscreen ? '退出全屏' : '全屏'"
+          >
+            <template #icon>
+              <n-icon>
+                <ContractIcon v-if="isFullscreen" />
+                <ExpandIcon v-else />
+              </n-icon>
+            </template>
+          </n-button>
+
+          <!-- Refresh Button -->
           <n-button circle secondary @click="handleRefresh" title="刷新">
             <template #icon>
               <n-icon><RefreshIcon /></n-icon>
@@ -491,6 +758,9 @@ defineExpose({
         :pagination="disablePagination ? false : pagination"
         :row-key="rowKey"
         :row-props="rowProps"
+        :size="tableSize"
+        :resizable="resizable"
+        :multiple="multipleSort"
         v-model:checked-row-keys="checkedRowKeys"
         @update:checked-row-keys="handleCheck"
         @update:filters="handleFiltersChange"
@@ -523,6 +793,18 @@ defineExpose({
   flex-direction: column;
   gap: 16px;
   height: 100%;
+}
+
+.pro-table--fullscreen {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 1000;
+  background: var(--n-color, #fff);
+  padding: 16px;
+  overflow: auto;
 }
 
 .search-card {
@@ -562,5 +844,26 @@ defineExpose({
 .title {
   font-size: 16px;
   font-weight: 500;
+}
+
+/* Column Config Panel */
+.column-config-panel {
+  width: 200px;
+}
+
+.column-config-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-weight: 500;
+}
+
+.column-config-list {
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.column-config-item {
+  padding: 4px 0;
 }
 </style>

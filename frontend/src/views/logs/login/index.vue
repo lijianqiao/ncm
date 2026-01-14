@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { h, ref } from 'vue'
-import { NTag, type DataTableColumns } from 'naive-ui'
+import { NDrawer, NDrawerContent, NDescriptions, NDescriptionsItem, NTag, type DataTableColumns, type DropdownOption } from 'naive-ui'
 import { getLoginLogs, type LoginLog, type LogSearchParams } from '@/api/logs'
 import { formatDateTime } from '@/utils/date'
 import ProTable from '@/components/common/ProTable.vue'
@@ -39,6 +39,20 @@ const columns: DataTableColumns<LoginLog> = [
   },
 ]
 
+// 右键菜单
+const contextMenuOptions: DropdownOption[] = [{ label: '查看详情', key: 'detail' }]
+
+// 抽屉状态
+const showDrawer = ref(false)
+const currentLog = ref<LoginLog | null>(null)
+
+const handleContextMenuSelect = (key: string | number, row: LoginLog) => {
+  if (key === 'detail') {
+    currentLog.value = row
+    showDrawer.value = true
+  }
+}
+
 const loadData = async (params: LogSearchParams) => {
   const res = await getLoginLogs(params)
   return {
@@ -56,9 +70,33 @@ const loadData = async (params: LogSearchParams) => {
       :columns="columns"
       :request="loadData"
       :row-key="(row: LoginLog) => row.id"
+      :context-menu-options="contextMenuOptions"
       search-placeholder="搜索用户名/IP/消息"
       :scroll-x="1200"
+      @context-menu-select="handleContextMenuSelect"
     />
+
+    <!-- 详情抽屉 -->
+    <n-drawer v-model:show="showDrawer" :width="500" placement="right" :native-scrollbar="true">
+      <n-drawer-content title="登录日志详情" closable>
+        <n-descriptions v-if="currentLog" label-placement="left" :column="1" bordered>
+          <n-descriptions-item label="ID">{{ currentLog.id }}</n-descriptions-item>
+          <n-descriptions-item label="用户ID">{{ currentLog.user_id || '-' }}</n-descriptions-item>
+          <n-descriptions-item label="用户名">{{ currentLog.username }}</n-descriptions-item>
+          <n-descriptions-item label="IP">{{ currentLog.ip }}</n-descriptions-item>
+          <n-descriptions-item label="状态">
+            <n-tag :type="currentLog.status ? 'success' : 'error'" size="small">
+              {{ currentLog.status ? '成功' : '失败' }}
+            </n-tag>
+          </n-descriptions-item>
+          <n-descriptions-item label="消息">{{ currentLog.msg || '-' }}</n-descriptions-item>
+          <n-descriptions-item label="浏览器">{{ currentLog.browser || '-' }}</n-descriptions-item>
+          <n-descriptions-item label="系统">{{ currentLog.os || '-' }}</n-descriptions-item>
+          <n-descriptions-item label="设备">{{ currentLog.device || '-' }}</n-descriptions-item>
+          <n-descriptions-item label="时间">{{ formatDateTime(currentLog.created_at) }}</n-descriptions-item>
+        </n-descriptions>
+      </n-drawer-content>
+    </n-drawer>
   </div>
 </template>
 
@@ -68,4 +106,3 @@ const loadData = async (params: LogSearchParams) => {
   height: 100%;
 }
 </style>
-

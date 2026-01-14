@@ -1,9 +1,15 @@
 <script setup lang="ts">
 import { ref } from 'vue'
-import type { DataTableColumns } from 'naive-ui'
+import { NDrawer, NDrawerContent, NDescriptions, NDescriptionsItem, type DataTableColumns, type DropdownOption } from 'naive-ui'
 import { getOperationLogs, type LogSearchParams, type OperationLog } from '@/api/logs'
 import { formatDateTime } from '@/utils/date'
 import ProTable from '@/components/common/ProTable.vue'
+import hljs from 'highlight.js/lib/core'
+import json from 'highlight.js/lib/languages/json'
+import 'highlight.js/styles/github.css'
+
+// 注册 JSON 语言
+hljs.registerLanguage('json', json)
 
 defineOptions({
   name: 'OperationLog',
@@ -29,6 +35,31 @@ const columns: DataTableColumns<OperationLog> = [
   },
 ]
 
+// 右键菜单
+const contextMenuOptions: DropdownOption[] = [{ label: '查看详情', key: 'detail' }]
+
+// 抽屉状态
+const showDrawer = ref(false)
+const currentLog = ref<OperationLog | null>(null)
+
+const handleContextMenuSelect = (key: string | number, row: OperationLog) => {
+  if (key === 'detail') {
+    currentLog.value = row
+    showDrawer.value = true
+  }
+}
+
+// 格式化并高亮 JSON
+const highlightJson = (data: unknown): string => {
+  if (!data) return '-'
+  try {
+    const jsonStr = typeof data === 'string' ? data : JSON.stringify(data, null, 2)
+    return hljs.highlight(jsonStr, { language: 'json' }).value
+  } catch {
+    return String(data)
+  }
+}
+
 const loadData = async (params: LogSearchParams) => {
   const res = await getOperationLogs(params)
   return {
@@ -46,9 +77,39 @@ const loadData = async (params: LogSearchParams) => {
       :columns="columns"
       :request="loadData"
       :row-key="(row: OperationLog) => row.id"
+      :context-menu-options="contextMenuOptions"
       search-placeholder="搜索用户名/IP/模块/摘要/路径"
       :scroll-x="1400"
+      @context-menu-select="handleContextMenuSelect"
     />
+
+    <!-- 详情抽屉 -->
+    <n-drawer v-model:show="showDrawer" :width="630" placement="right" :native-scrollbar="true">
+      <n-drawer-content title="审计日志详情" closable>
+        <n-descriptions v-if="currentLog" label-placement="left" :column="1" bordered>
+          <n-descriptions-item label="ID">{{ currentLog.id }}</n-descriptions-item>
+          <n-descriptions-item label="用户ID">{{ currentLog.user_id }}</n-descriptions-item>
+          <n-descriptions-item label="用户名">{{ currentLog.username }}</n-descriptions-item>
+          <n-descriptions-item label="IP">{{ currentLog.ip }}</n-descriptions-item>
+          <n-descriptions-item label="模块">{{ currentLog.module || '-' }}</n-descriptions-item>
+          <n-descriptions-item label="摘要">{{ currentLog.summary || '-' }}</n-descriptions-item>
+          <n-descriptions-item label="方法">{{ currentLog.method }}</n-descriptions-item>
+          <n-descriptions-item label="路径">{{ currentLog.path }}</n-descriptions-item>
+          <n-descriptions-item label="状态码">{{ currentLog.response_code }}</n-descriptions-item>
+          <n-descriptions-item label="耗时">{{ currentLog.duration?.toFixed(4) }} ms</n-descriptions-item>
+          <n-descriptions-item label="User-Agent">{{ currentLog.user_agent || '-' }}</n-descriptions-item>
+          <n-descriptions-item label="时间">{{ formatDateTime(currentLog.created_at) }}</n-descriptions-item>
+        </n-descriptions>
+
+        <div v-if="currentLog" class="json-section">
+          <div class="json-title">请求参数 (params)</div>
+          <pre class="json-code" v-html="highlightJson(currentLog.params)"></pre>
+
+          <div class="json-title">响应结果 (response_result)</div>
+          <pre class="json-code" v-html="highlightJson(currentLog.response_result)"></pre>
+        </div>
+      </n-drawer-content>
+    </n-drawer>
   </div>
 </template>
 
@@ -57,5 +118,25 @@ const loadData = async (params: LogSearchParams) => {
   padding: 16px;
   height: 100%;
 }
-</style>
 
+.json-section {
+  margin-top: 16px;
+}
+
+.json-title {
+  font-weight: 500;
+  margin: 16px 0 8px;
+  color: #333;
+}
+
+.json-code {
+  background: #f6f8fa;
+  border: 1px solid #e1e4e8;
+  border-radius: 6px;
+  padding: 12px;
+  overflow-x: auto;
+  font-size: 13px;
+  line-height: 1.5;
+  margin: 0;
+}
+</style>
