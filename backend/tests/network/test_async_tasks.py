@@ -55,7 +55,7 @@ async def test_async_send_command():
 
     start = time.time()
     try:
-        result = await async_send_command(host, "display version")
+        result = await async_send_command(host, "display version")  # pyright: ignore[reportArgumentType]
         elapsed = time.time() - start
 
         print(f"执行结果: {'成功' if result['success'] else '失败'}")
@@ -122,7 +122,7 @@ async def test_async_collect_config():
 
     start = time.time()
     try:
-        result = await async_collect_config(host)
+        result = await async_collect_config(host)  # pyright: ignore[reportArgumentType]
         elapsed = time.time() - start
 
         print(f"采集结果: {'成功' if result['success'] else '失败'}")
