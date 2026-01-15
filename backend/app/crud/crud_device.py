@@ -8,9 +8,10 @@
 
 from uuid import UUID
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
+from sqlalchemy.sql.elements import ColumnElement
 
 from app.crud.base import CRUDBase
 from app.models.device import Device
@@ -44,11 +45,7 @@ class CRUDDevice(CRUDBase[Device, DeviceCreate, DeviceUpdate]):
         Returns:
             Device | None: 设备对象或 None
         """
-        query = (
-            select(self.model)
-            .where(self.model.ip_address == ip_address)
-            .where(self.model.is_deleted.is_(False))
-        )
+        query = select(self.model).where(self.model.ip_address == ip_address).where(self.model.is_deleted.is_(False))
         result = await db.execute(query)
         return result.scalars().first()
 
@@ -75,7 +72,7 @@ class CRUDDevice(CRUDBase[Device, DeviceCreate, DeviceUpdate]):
         result = await db.execute(query)
         return (result.scalar() or 0) > 0
 
-    async def get_multi_paginated_filtered(
+    async def get_multi_paginated(
         self,
         db: AsyncSession,
         *,
@@ -103,55 +100,31 @@ class CRUDDevice(CRUDBase[Device, DeviceCreate, DeviceUpdate]):
         Returns:
             (items, total): 设备列表和总数
         """
-        # 参数验证
-        page, page_size = self._validate_pagination(page, page_size)
+        conditions: list[ColumnElement[bool]] = [self.model.is_deleted.is_(False)]
 
-        # 基础查询
-        base_query = select(self.model).where(self.model.is_deleted.is_(False))
-
-        # 关键词搜索
-        keyword = self._normalize_keyword(keyword)
-        if keyword:
-            base_query = base_query.where(
-                or_(
-                    self.model.name.ilike(f"%{keyword}%"),
-                    self.model.ip_address.ilike(f"%{keyword}%"),
-                )
-            )
-
-        # 厂商筛选
+        keyword_clause = self._or_ilike_contains(keyword, [self.model.name, self.model.ip_address])
+        if keyword_clause is not None:
+            conditions.append(keyword_clause)
         if vendor:
-            base_query = base_query.where(self.model.vendor == vendor)
-
-        # 状态筛选
+            conditions.append(self.model.vendor == vendor)
         if status:
-            base_query = base_query.where(self.model.status == status)
-
-        # 设备分组筛选
+            conditions.append(self.model.status == status)
         if device_group:
-            base_query = base_query.where(self.model.device_group == device_group)
-
-        # 部门筛选
+            conditions.append(self.model.device_group == device_group)
         if dept_id:
-            base_query = base_query.where(self.model.dept_id == dept_id)
+            conditions.append(self.model.dept_id == dept_id)
 
-        # 计算总数
-        count_query = select(func.count()).select_from(base_query.subquery())
-        total_result = await db.execute(count_query)
-        total = total_result.scalar() or 0
-
-        # 分页查询
-        skip = (page - 1) * page_size
-        items_query = (
-            base_query.options(selectinload(Device.dept))
+        where_clause = self._and_where(conditions)
+        count_stmt = select(func.count(Device.id)).where(where_clause)
+        stmt = (
+            select(self.model)
+            .options(selectinload(Device.dept))
+            .where(where_clause)
             .order_by(self.model.created_at.desc())
-            .offset(skip)
-            .limit(page_size)
         )
-        items_result = await db.execute(items_query)
-        items = list(items_result.scalars().all())
-
-        return items, total
+        return await self.paginate(
+            db, stmt=stmt, count_stmt=count_stmt, page=page, page_size=page_size, max_size=10000, default_size=20
+        )
 
     async def batch_create(
         self, db: AsyncSession, *, devices_in: list[DeviceCreate]
@@ -169,36 +142,52 @@ class CRUDDevice(CRUDBase[Device, DeviceCreate, DeviceUpdate]):
         created_devices: list[Device] = []
         failed_items: list[dict] = []
 
+        if not devices_in:
+            return created_devices, failed_items
+
+        ips = list({d.ip_address for d in devices_in})
+        existing_ips = set(
+            (
+                await db.execute(
+                    select(Device.ip_address).where(Device.ip_address.in_(ips), Device.is_deleted.is_(False))
+                )
+            )
+            .scalars()
+            .all()
+        )
+
         for device_in in devices_in:
-            # 检查 IP 是否已存在
-            if await self.exists_ip(db, device_in.ip_address):
-                failed_items.append({
-                    "ip_address": device_in.ip_address,
-                    "name": device_in.name,
-                    "reason": f"IP 地址 {device_in.ip_address} 已存在",
-                })
+            if device_in.ip_address in existing_ips:
+                failed_items.append(
+                    {
+                        "ip_address": device_in.ip_address,
+                        "name": device_in.name,
+                        "reason": f"IP 地址 {device_in.ip_address} 已存在",
+                    }
+                )
                 continue
 
             try:
-                # 创建设备（排除 password 字段，由 Service 层处理加密）
-                obj_data = device_in.model_dump(exclude={"password"}, exclude_unset=True)
-                db_obj = self.model(**obj_data)
-                db.add(db_obj)
-                await db.flush()
-                await db.refresh(db_obj)
-                created_devices.append(db_obj)
+                async with db.begin_nested():
+                    obj_data = device_in.model_dump(exclude={"password"}, exclude_unset=True)
+                    db_obj = self.model(**obj_data)
+                    db.add(db_obj)
+                    await db.flush()
+                    await db.refresh(db_obj)
+                    created_devices.append(db_obj)
+                    existing_ips.add(device_in.ip_address)
             except Exception as e:
-                failed_items.append({
-                    "ip_address": device_in.ip_address,
-                    "name": device_in.name,
-                    "reason": str(e),
-                })
+                failed_items.append(
+                    {
+                        "ip_address": device_in.ip_address,
+                        "name": device_in.name,
+                        "reason": str(e),
+                    }
+                )
 
         return created_devices, failed_items
 
-    async def get_multi_by_ids(
-        self, db: AsyncSession, *, ids: list[UUID]
-    ) -> list[Device]:
+    async def get_multi_by_ids(self, db: AsyncSession, *, ids: list[UUID]) -> list[Device]:
         """
         通过 ID 列表批量获取设备。
 
@@ -235,28 +224,22 @@ class CRUDDevice(CRUDBase[Device, DeviceCreate, DeviceUpdate]):
         Returns:
             (items, total): 设备列表和总数
         """
-        page, page_size = self._validate_pagination(page, page_size)
-
-        # 查询已删除的设备
-        base_query = select(self.model).where(self.model.is_deleted.is_(True))
-
-        # 计算总数
-        count_query = select(func.count()).select_from(base_query.subquery())
-        total_result = await db.execute(count_query)
-        total = total_result.scalar() or 0
-
-        # 分页查询
-        skip = (page - 1) * page_size
-        items_query = (
-            base_query.options(selectinload(Device.dept))
+        where_clause = self.model.is_deleted.is_(True)
+        count_stmt = select(func.count(Device.id)).where(where_clause)
+        stmt = (
+            select(self.model)
+            .options(selectinload(Device.dept))
+            .where(where_clause)
             .order_by(self.model.updated_at.desc())
-            .offset(skip)
-            .limit(page_size)
         )
-        items_result = await db.execute(items_query)
-        items = list(items_result.scalars().all())
+        return await self.paginate(
+            db, stmt=stmt, count_stmt=count_stmt, page=page, page_size=page_size, max_size=10000, default_size=20
+        )
 
-        return items, total
+    async def get_multi_deleted_paginated(
+        self, db: AsyncSession, *, page: int = 1, page_size: int = 20
+    ) -> tuple[list[Device], int]:
+        return await self.get_recycle_bin(db, page=page, page_size=page_size)
 
 
 # 单例实例

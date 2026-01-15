@@ -160,7 +160,7 @@ async def list_deploy_tasks(
         ResponseBase[PaginatedResponse[DeployTaskResponse]]: 分页后的任务概览。
     """
     # 临时：复用 CRUD 的分页过滤能力
-    items, total = await service.task_crud.get_multi_paginated_filtered(
+    items, total = await service.task_crud.get_multi_paginated(
         service.db,
         page=page,
         page_size=page_size,

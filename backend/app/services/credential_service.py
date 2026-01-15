@@ -56,7 +56,7 @@ class CredentialService:
         Returns:
             (items, total): 凭据列表和总数
         """
-        return await self.credential_crud.get_multi_paginated_filtered(
+        return await self.credential_crud.get_multi_paginated(
             self.db,
             page=page,
             page_size=page_size,
@@ -196,6 +196,113 @@ class CredentialService:
         # 刷新对象以获取最新状态（包括 is_deleted=True 和 updated_at）
         await self.db.refresh(credential)
         return credential
+
+    @transactional()
+    async def batch_delete_credentials(self, ids: list[UUID]) -> tuple[int, list[UUID]]:
+        """
+        批量删除凭据（软删除）。
+
+        Args:
+            ids: 凭据ID列表
+
+        Returns:
+            (success_count, failed_ids): 成功数量和失败的ID列表
+        """
+        return await self.credential_crud.batch_remove(self.db, ids=ids, hard_delete=False)
+
+    async def get_recycle_bin_paginated(
+        self,
+        page: int = 1,
+        page_size: int = 20,
+        keyword: str | None = None,
+    ) -> tuple[list[DeviceGroupCredential], int]:
+        """
+        获取回收站凭据列表（分页）。
+
+        Args:
+            page: 页码
+            page_size: 每页数量
+            keyword: 关键字搜索
+
+        Returns:
+            (items, total): 已删除凭据列表和总数
+        """
+        return await self.credential_crud.get_multi_deleted_paginated(
+            self.db,
+            page=page,
+            page_size=page_size,
+            keyword=keyword,
+        )
+
+    @transactional()
+    async def restore_credential(self, credential_id: UUID) -> DeviceGroupCredential:
+        """
+        恢复已删除的凭据。
+
+        Args:
+            credential_id: 凭据ID
+
+        Returns:
+            DeviceGroupCredential: 恢复的凭据
+
+        Raises:
+            NotFoundException: 凭据不存在或未被删除
+        """
+        credential = await self.credential_crud.get_deleted(self.db, id=credential_id)
+        if not credential:
+            raise NotFoundException(message="凭据不存在或未被删除")
+
+        success_count, _ = await self.credential_crud.batch_restore(self.db, ids=[credential_id])
+        if success_count == 0:
+            raise NotFoundException(message="恢复失败")
+
+        await self.db.refresh(credential)
+        return credential
+
+    @transactional()
+    async def batch_restore_credentials(self, ids: list[UUID]) -> tuple[int, list[UUID]]:
+        """
+        批量恢复已删除的凭据。
+
+        Args:
+            ids: 凭据ID列表
+
+        Returns:
+            (success_count, failed_ids): 成功数量和失败的ID列表
+        """
+        return await self.credential_crud.batch_restore(self.db, ids=ids)
+
+    @transactional()
+    async def hard_delete_credential(self, credential_id: UUID) -> None:
+        """
+        彻底删除凭据（硬删除）。
+
+        Args:
+            credential_id: 凭据ID
+
+        Raises:
+            NotFoundException: 凭据不存在
+        """
+        credential = await self.credential_crud.get_deleted(self.db, id=credential_id)
+        if not credential:
+            raise NotFoundException(message="凭据不存在或未被软删除")
+
+        success_count, _ = await self.credential_crud.batch_remove(self.db, ids=[credential_id], hard_delete=True)
+        if success_count == 0:
+            raise NotFoundException(message="彻底删除失败")
+
+    @transactional()
+    async def batch_hard_delete_credentials(self, ids: list[UUID]) -> tuple[int, list[UUID]]:
+        """
+        批量彻底删除凭据（硬删除）。
+
+        Args:
+            ids: 凭据ID列表
+
+        Returns:
+            (success_count, failed_ids): 成功数量和失败的ID列表
+        """
+        return await self.credential_crud.batch_remove(self.db, ids=ids, hard_delete=True)
 
     async def cache_otp(self, request: OTPCacheRequest) -> OTPCacheResponse:
         """

@@ -9,9 +9,10 @@
 from datetime import datetime, timedelta
 from uuid import UUID
 
-from sqlalchemy import ColumnElement, and_, func, or_, select
+from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
+from sqlalchemy.sql.elements import ColumnElement
 
 from app.crud.base import CRUDBase
 from app.models.alert import Alert
@@ -32,7 +33,7 @@ class CRUDAlert(CRUDBase[Alert, AlertCreate, AlertUpdate]):
         result = await db.execute(query)
         return result.scalars().first()
 
-    async def get_multi_paginated_filtered(
+    async def get_multi_paginated(
         self,
         db: AsyncSession,
         *,
@@ -60,35 +61,24 @@ class CRUDAlert(CRUDBase[Alert, AlertCreate, AlertUpdate]):
         if related_device_id:
             conditions.append(self.model.related_device_id == related_device_id)
 
-        keyword = self._normalize_keyword(keyword)
-        if keyword:
-            conditions.append(
-                or_(
-                    self.model.title.ilike(f"%{keyword}%"),
-                    self.model.message.ilike(f"%{keyword}%"),
-                )
-            )
+        keyword_clause = self._or_ilike_contains(keyword, [self.model.title, self.model.message])
+        if keyword_clause is not None:
+            conditions.append(keyword_clause)
 
         if start_time:
             conditions.append(self.model.created_at >= start_time)
         if end_time:
             conditions.append(self.model.created_at <= end_time)
 
-        base_query = (
+        where_clause = and_(*conditions)
+        count_stmt = select(func.count(Alert.id)).where(where_clause)
+        stmt = (
             select(self.model)
             .options(selectinload(Alert.related_device), selectinload(Alert.related_discovery))
-            .where(and_(*conditions))
+            .where(where_clause)
+            .order_by(self.model.created_at.desc())
         )
-
-        count_query = select(func.count()).select_from(base_query.subquery())
-        total_result = await db.execute(count_query)
-        total = total_result.scalar() or 0
-
-        skip = (page - 1) * page_size
-        query = base_query.order_by(self.model.created_at.desc()).offset(skip).limit(page_size)
-        result = await db.execute(query)
-        items = list(result.scalars().all())
-        return items, total
+        return await self.paginate(db, stmt=stmt, count_stmt=count_stmt, page=page, page_size=page_size)
 
     async def exists_recent_open_alert(
         self,

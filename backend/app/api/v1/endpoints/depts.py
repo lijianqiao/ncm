@@ -184,3 +184,36 @@ async def restore_dept(
     """恢复已删除部门。需要超级管理员权限。"""
     dept = await dept_service.restore_dept(dept_id=id)
     return ResponseBase(data=dept, message="部门恢复成功")
+
+
+@router.delete("/{id}/hard", response_model=ResponseBase[dict], summary="彻底删除部门")
+async def hard_delete_dept(
+    id: UUID,
+    dept_service: deps.DeptServiceDep,
+    active_superuser: deps.User = Depends(deps.get_current_active_superuser),
+    _: deps.User = Depends(deps.require_permissions([PermissionCode.DEPT_DELETE.value])),
+) -> ResponseBase[dict]:
+    """彻底删除部门（硬删除，不可恢复）。需要超级管理员权限。"""
+    await dept_service.hard_delete_dept(dept_id=id)
+    return ResponseBase(
+        data={"message": "部门已彻底删除"},
+        message="部门已彻底删除",
+    )
+
+
+@router.delete("/batch/hard", response_model=ResponseBase[BatchOperationResult], summary="批量彻底删除部门")
+async def batch_hard_delete_depts(
+    request: BatchDeleteRequest,
+    dept_service: deps.DeptServiceDep,
+    active_superuser: deps.User = Depends(deps.get_current_active_superuser),
+    _: deps.User = Depends(deps.require_permissions([PermissionCode.DEPT_DELETE.value])),
+) -> ResponseBase[BatchOperationResult]:
+    """批量彻底删除部门（硬删除，不可恢复）。需要超级管理员权限。"""
+    success_count, failed_ids = await dept_service.batch_hard_delete_depts(ids=request.ids)
+    return ResponseBase(
+        data=BatchOperationResult(
+            success_count=success_count,
+            failed_ids=failed_ids,
+            message=f"成功彻底删除 {success_count} 个部门" if not failed_ids else "部分彻底删除成功",
+        )
+    )

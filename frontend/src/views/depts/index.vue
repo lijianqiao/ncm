@@ -210,8 +210,8 @@ const handleDelete = (row: Dept) => {
       try {
         await deleteDept(row.id)
         $alert.success('删除成功')
-        tableRef.value?.refresh()
-        fetchDeptTree() // 刷新树数据
+        await tableRef.value?.refresh()
+        await fetchDeptTree() // 刷新树数据
       } catch {
         // Error handled
       }
@@ -229,8 +229,8 @@ const handleBatchDelete = (ids: Array<string | number>) => {
       try {
         await batchDeleteDepts(ids as string[])
         $alert.success('批量删除成功')
-        tableRef.value?.refresh()
-        fetchDeptTree()
+        await tableRef.value?.refresh()
+        await fetchDeptTree()
       } catch {
         // Error handled
       }
@@ -248,28 +248,32 @@ const handleSubmit = async () => {
     }
   })
 
-  formRef.value?.validate(async (errors: unknown) => {
-    if (!errors) {
-      modalLoading.value = true
-      try {
-        if (modalType.value === 'create') {
-          await createDept(params as unknown as DeptCreate)
-          $alert.success('创建成功')
-        } else {
-          // @ts-expect-error id is added for update
-          await updateDept(model.value.id, params as unknown as DeptUpdate)
-          $alert.success('更新成功')
+  // 使用 Promise 包装 validate，确保正确的异步处理
+  return new Promise<void>((resolve) => {
+    formRef.value?.validate(async (errors: unknown) => {
+      if (!errors) {
+        modalLoading.value = true
+        try {
+          if (modalType.value === 'create') {
+            await createDept(params as unknown as DeptCreate)
+            $alert.success('创建成功')
+          } else {
+            // @ts-expect-error id is added for update
+            await updateDept(model.value.id, params as unknown as DeptUpdate)
+            $alert.success('更新成功')
+          }
+          showCreateModal.value = false
+          // 先刷新表格数据，再刷新树数据
+          await tableRef.value?.refresh()
+          await fetchDeptTree()
+        } catch {
+          // Error handled
+        } finally {
+          modalLoading.value = false
         }
-        showCreateModal.value = false
-        tableRef.value?.refresh()
-        // 刷新树数据
-        fetchDeptTree()
-      } catch {
-        // Error handled
-      } finally {
-        modalLoading.value = false
       }
-    }
+      resolve()
+    })
   })
 }
 

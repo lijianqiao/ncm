@@ -109,7 +109,8 @@ class TestCRUDMenuGet:
                     permission=None,
                 ),  # pyright: ignore[reportCallIssue]
             )
-        menus = await menu_crud.get_multi(db_session)
+        menus, total = await menu_crud.get_multi_paginated(db_session, page=1, page_size=50)
+        assert total >= 3
         assert len(menus) >= 3
 
 
@@ -158,5 +159,7 @@ class TestCRUDMenuDelete:
                 permission=None,
             ),  # pyright: ignore[reportCallIssue]
         )
-        await menu_crud.remove(db_session, id=menu.id)
+        success_count, failed_ids = await menu_crud.batch_remove(db_session, ids=[menu.id])
+        assert success_count == 1
+        assert failed_ids == []
         assert await menu_crud.get(db_session, id=menu.id) is None

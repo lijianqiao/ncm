@@ -171,3 +171,64 @@ export function approveTemplate(id: string, data: TemplateApproveRequest) {
     data,
   })
 }
+
+// ==================== 批量操作和回收站 API ====================
+
+/** 批量操作结果 */
+export interface TemplateBatchResult {
+  success_count: number
+  failed_count: number
+  failed_ids: string[]
+}
+
+/** 批量删除模板 */
+export function batchDeleteTemplates(ids: string[]) {
+  return request<ResponseBase<TemplateBatchResult>>({
+    url: '/templates/batch',
+    method: 'delete',
+    data: { ids },
+  })
+}
+
+/** 获取回收站模板列表 */
+export function getRecycleBinTemplates(params?: { page?: number; page_size?: number; keyword?: string }) {
+  return request<ResponseBase<PaginatedResponse<Template>>>({
+    url: '/templates/recycle-bin',
+    method: 'get',
+    params,
+  })
+}
+
+/** 恢复模板 */
+export function restoreTemplate(id: string) {
+  return request<ResponseBase<Template>>({
+    url: `/templates/${id}/restore`,
+    method: 'post',
+  })
+}
+
+/** 批量恢复模板 */
+export function batchRestoreTemplates(ids: string[]) {
+  return request<ResponseBase<TemplateBatchResult>>({
+    url: '/templates/batch/restore',
+    method: 'post',
+    data: { ids },
+  })
+}
+
+/** 彻底删除模板 */
+export function hardDeleteTemplate(id: string) {
+  return request<ResponseBase<Record<string, unknown>>>({
+    url: `/templates/${id}/hard`,
+    method: 'delete',
+  })
+}
+
+/** 批量彻底删除模板 */
+export function batchHardDeleteTemplates(ids: string[]) {
+  return request<ResponseBase<TemplateBatchResult>>({
+    url: '/templates/batch/hard',
+    method: 'delete',
+    data: { ids },
+  })
+}

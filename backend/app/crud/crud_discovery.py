@@ -9,8 +9,9 @@
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import ColumnElement, and_, func, or_, select
+from sqlalchemy import and_, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql.elements import ColumnElement
 
 from app.core.enums import DiscoveryStatus
 from app.crud.base import CRUDBase
@@ -233,7 +234,7 @@ class CRUDDiscovery(CRUDBase[Discovery, DiscoveryCreate, DiscoveryUpdate]):
         result = await db.execute(query)
         return list(result.scalars().all())
 
-    async def get_multi_paginated_filtered(
+    async def get_multi_paginated(
         self,
         db: AsyncSession,
         *,
@@ -259,6 +260,8 @@ class CRUDDiscovery(CRUDBase[Discovery, DiscoveryCreate, DiscoveryUpdate]):
         Returns:
             (items, total): 数据列表和总数
         """
+        page, page_size = self._validate_pagination(page, page_size)
+
         # 基础查询条件
         conditions: list[ColumnElement[bool]] = [self.model.is_deleted.is_(False)]
 
@@ -267,15 +270,11 @@ class CRUDDiscovery(CRUDBase[Discovery, DiscoveryCreate, DiscoveryUpdate]):
             conditions.append(self.model.status == status.value)
 
         # 关键词搜索
-        keyword = self._normalize_keyword(keyword)
-        if keyword:
-            conditions.append(
-                or_(
-                    self.model.ip_address.ilike(f"%{keyword}%"),
-                    self.model.hostname.ilike(f"%{keyword}%"),
-                    self.model.mac_address.ilike(f"%{keyword}%"),
-                )
-            )
+        keyword_clause = self._or_ilike_contains(
+            keyword, [self.model.ip_address, self.model.hostname, self.model.mac_address]
+        )
+        if keyword_clause is not None:
+            conditions.append(keyword_clause)
 
         # 扫描来源筛选
         if scan_source:
@@ -305,22 +304,14 @@ class CRUDDiscovery(CRUDBase[Discovery, DiscoveryCreate, DiscoveryUpdate]):
         if sort_order not in {"asc", "desc"}:
             sort_order = "desc"
 
-        # 构建查询
-        base_query = select(self.model).where(and_(*conditions))
+        where_clause = self._and_where(conditions)
+        count_stmt = select(func.count(Discovery.id)).where(where_clause)
 
-        # 查询总数
-        count_query = select(func.count()).select_from(base_query.subquery())
-        total_result = await db.execute(count_query)
-        total = total_result.scalar() or 0
-
-        # 分页查询
-        skip = (page - 1) * page_size
         order_expr = sort_col.asc() if sort_order == "asc" else sort_col.desc()
-        query = base_query.order_by(order_expr).offset(skip).limit(page_size)
-        result = await db.execute(query)
-        items = list(result.scalars().all())
-
-        return items, total
+        stmt = select(self.model).where(where_clause).order_by(order_expr)
+        return await self.paginate(
+            db, stmt=stmt, count_stmt=count_stmt, page=page, page_size=page_size, max_size=10000, default_size=20
+        )
 
     async def update_status(self, db: AsyncSession, *, id: UUID, status: DiscoveryStatus) -> Discovery | None:
         """
@@ -370,24 +361,16 @@ class CRUDDiscovery(CRUDBase[Discovery, DiscoveryCreate, DiscoveryUpdate]):
         Returns:
             更新的记录数量
         """
-        # 获取所有非离线状态且非删除的记录
-        query = select(self.model).where(
-            and_(
+        result = await db.execute(
+            update(self.model)
+            .where(
                 self.model.is_deleted.is_(False),
                 self.model.status != DiscoveryStatus.OFFLINE.value,
             )
+            .values(offline_days=self.model.offline_days + 1)
         )
-        result = await db.execute(query)
-        records = result.scalars().all()
-
-        count = 0
-        for record in records:
-            record.offline_days += 1
-            db.add(record)
-            count += 1
-
         await db.flush()
-        return count
+        return int(getattr(result, "rowcount", 0) or 0)
 
 
 # 创建单例实例

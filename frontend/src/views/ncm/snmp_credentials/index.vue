@@ -24,10 +24,17 @@ import {
   deleteSnmpCredential,
   getSnmpCredentials,
   updateSnmpCredential,
+  batchDeleteSnmpCredentials,
+  getRecycleBinSnmpCredentials,
+  restoreSnmpCredential,
+  batchRestoreSnmpCredentials,
+  hardDeleteSnmpCredential,
+  batchHardDeleteSnmpCredentials,
   type DeptSnmpCredential,
   type SnmpCredentialSearchParams,
   type SnmpVersion,
 } from '@/api/snmp_credentials'
+import RecycleBinModal from '@/components/common/RecycleBinModal.vue'
 
 defineOptions({
   name: 'SnmpCredentials',
@@ -35,6 +42,91 @@ defineOptions({
 
 const dialog = useDialog()
 const tableRef = ref()
+const selectedRowKeys = ref<string[]>([])
+
+// ==================== 回收站 ====================
+
+const showRecycleBin = ref(false)
+const recycleBinRef = ref()
+
+const recycleBinColumns: DataTableColumns<DeptSnmpCredential> = [
+  { type: 'selection', fixed: 'left' },
+  {
+    title: '所属部门',
+    key: 'dept_name',
+    width: 180,
+    ellipsis: { tooltip: true },
+    render: (row) => row.dept_name || '-',
+  },
+  {
+    title: 'SNMP 版本',
+    key: 'snmp_version',
+    width: 100,
+    render: (row) =>
+      h(
+        NTag,
+        { type: row.snmp_version === 'v3' ? 'warning' : 'info', bordered: false, size: 'small' },
+        { default: () => row.snmp_version },
+      ),
+  },
+  { title: '端口', key: 'port', width: 80 },
+  {
+    title: '删除时间',
+    key: 'updated_at',
+    width: 180,
+    render: (row) => formatDateTime(row.updated_at),
+  },
+]
+
+const loadRecycleBinData = async (params: { page?: number; page_size?: number; keyword?: string }) => {
+  const res = await getRecycleBinSnmpCredentials(params)
+  return {
+    data: res.data.items,
+    total: res.data.total,
+  }
+}
+
+const handleRestore = async (row: DeptSnmpCredential) => {
+  try {
+    await restoreSnmpCredential(row.id)
+    $alert.success('SNMP 凭据已恢复')
+    recycleBinRef.value?.reload()
+    tableRef.value?.reload()
+  } catch {
+    // ignore
+  }
+}
+
+const handleBatchRestore = async (ids: string[]) => {
+  try {
+    const res = await batchRestoreSnmpCredentials(ids)
+    $alert.success(`成功恢复 ${res.data.success_count} 条 SNMP 凭据`)
+    recycleBinRef.value?.reload()
+    tableRef.value?.reload()
+  } catch {
+    // ignore
+  }
+}
+
+const handleHardDelete = async (row: DeptSnmpCredential) => {
+  try {
+    await hardDeleteSnmpCredential(row.id)
+    $alert.success('SNMP 凭据已彻底删除')
+    recycleBinRef.value?.reload()
+  } catch {
+    // ignore
+  }
+}
+
+const handleBatchHardDelete = async (ids: string[]) => {
+  try {
+    const res = await batchHardDeleteSnmpCredentials(ids)
+    $alert.success(`成功彻底删除 ${res.data.success_count} 条 SNMP 凭据`)
+    recycleBinRef.value?.reload()
+  } catch {
+    // ignore
+  }
+}
 
 interface TreeSelectOption {
   label: string
@@ -83,6 +175,7 @@ const snmpVersionOptions = [
 ]
 
 const columns: DataTableColumns<DeptSnmpCredential> = [
+  { type: 'selection', fixed: 'left' },
   {
     title: '所属部门',
     key: 'dept_name',
@@ -156,6 +249,31 @@ const contextMenuOptions: DropdownOption[] = [
 const handleContextMenuSelect = (key: string | number, row: DeptSnmpCredential) => {
   if (key === 'edit') handleEdit(row)
   if (key === 'delete') handleDelete(row)
+}
+
+// ==================== 批量删除 ====================
+
+const handleBatchDelete = () => {
+  if (selectedRowKeys.value.length === 0) {
+    $alert.warning('请先选择要删除的 SNMP 凭据')
+    return
+  }
+  dialog.warning({
+    title: '确认批量删除',
+    content: `确定要删除选中的 ${selectedRowKeys.value.length} 条 SNMP 凭据吗？`,
+    positiveText: '确认',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      try {
+        const res = await batchDeleteSnmpCredentials(selectedRowKeys.value)
+        $alert.success(`成功删除 ${res.data.success_count} 条 SNMP 凭据`)
+        selectedRowKeys.value = []
+        tableRef.value?.reload()
+      } catch {
+        // ignore
+      }
+    },
+  })
 }
 
 const modalType = ref<'create' | 'edit'>('create')
@@ -302,10 +420,38 @@ const handleDelete = (row: DeptSnmpCredential) => {
       :context-menu-options="contextMenuOptions"
       search-placeholder="搜索部门/描述"
       :search-filters="searchFilters"
+      v-model:checked-row-keys="selectedRowKeys"
       @add="handleCreate"
       @context-menu-select="handleContextMenuSelect"
       show-add
       :scroll-x="1100"
+    >
+      <template #toolbar>
+        <n-button
+          type="error"
+          :disabled="selectedRowKeys.length === 0"
+          @click="handleBatchDelete"
+        >
+          批量删除
+        </n-button>
+        <n-button @click="showRecycleBin = true">回收站</n-button>
+      </template>
+    </ProTable>
+
+    <!-- 回收站 Modal -->
+    <RecycleBinModal
+      ref="recycleBinRef"
+      v-model:show="showRecycleBin"
+      title="回收站 (已删除 SNMP 凭据)"
+      :columns="recycleBinColumns"
+      :request="loadRecycleBinData"
+      :row-key="(row: DeptSnmpCredential) => row.id"
+      search-placeholder="搜索部门/描述..."
+      :scroll-x="700"
+      @restore="handleRestore"
+      @batch-restore="handleBatchRestore"
+      @hard-delete="handleHardDelete"
+      @batch-hard-delete="handleBatchHardDelete"
     />
 
     <n-modal

@@ -8,16 +8,53 @@
 
 from uuid import UUID
 
-from sqlalchemy import and_, delete, func, or_, select
+from sqlalchemy import and_, delete, func, or_, select, text, update
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import with_loader_criteria
 
 from app.crud.base import CRUDBase
+from app.models.device import Device
 from app.models.topology import TopologyLink
 from app.schemas.topology import TopologyLinkCreate, TopologyLinkResponse
 
 
 class CRUDTopology(CRUDBase[TopologyLink, TopologyLinkCreate, TopologyLinkResponse]):
     """网络拓扑 CRUD 类。"""
+
+    @staticmethod
+    def _upsert_set_clause(stmt):
+        excluded = stmt.excluded
+        return {
+            "target_device_id": excluded.target_device_id,
+            "target_interface": excluded.target_interface,
+            "target_hostname": excluded.target_hostname,
+            "target_ip": excluded.target_ip,
+            "target_mac": excluded.target_mac,
+            "target_description": excluded.target_description,
+            "link_type": excluded.link_type,
+            "link_speed": excluded.link_speed,
+            "link_status": excluded.link_status,
+            "collected_at": excluded.collected_at,
+            "is_deleted": False,
+            "updated_at": func.now(),
+            "version_id": text("md5(random()::text)"),
+        }
+
+    async def upsert_many(self, db: AsyncSession, *, links_data: list[TopologyLinkCreate]) -> int:
+        if not links_data:
+            return 0
+
+        values = [d.model_dump(exclude_unset=True) for d in links_data]
+        stmt = insert(TopologyLink).values(values)
+        stmt = stmt.on_conflict_do_update(
+            index_elements=["source_device_id", "source_interface"],
+            index_where=text("is_deleted = false"),
+            set_=self._upsert_set_clause(stmt),
+        )
+        result = await db.execute(stmt)
+        await db.flush()
+        return int(getattr(result, "rowcount", 0) or 0)
 
     async def get_by_source_interface(
         self,
@@ -63,31 +100,12 @@ class CRUDTopology(CRUDBase[TopologyLink, TopologyLinkCreate, TopologyLinkRespon
         Returns:
             TopologyLink 记录
         """
-        existing = await self.get_by_source_interface(
+        await self.upsert_many(db, links_data=[data])
+        return await self.get_by_source_interface(
             db,
             source_device_id=data.source_device_id,
             source_interface=data.source_interface,
-        )
-
-        if existing:
-            # 更新现有记录
-            update_data = data.model_dump(exclude_unset=True)
-            for field, value in update_data.items():
-                if hasattr(existing, field):
-                    setattr(existing, field, value)
-
-            db.add(existing)
-            await db.flush()
-            await db.refresh(existing)
-            return existing
-        else:
-            # 创建新记录
-            obj_data = data.model_dump(exclude_unset=True)
-            db_obj = self.model(**obj_data)
-            db.add(db_obj)
-            await db.flush()
-            await db.refresh(db_obj)
-            return db_obj
+        )  # type: ignore[return-value]
 
     async def get_device_neighbors(self, db: AsyncSession, *, device_id: UUID) -> list[TopologyLink]:
         """
@@ -102,6 +120,7 @@ class CRUDTopology(CRUDBase[TopologyLink, TopologyLinkCreate, TopologyLinkRespon
         """
         query = (
             select(self.model)
+            .options(with_loader_criteria(Device, Device.is_deleted.is_(False), include_aliases=True))
             .where(
                 and_(
                     self.model.source_device_id == device_id,
@@ -127,6 +146,7 @@ class CRUDTopology(CRUDBase[TopologyLink, TopologyLinkCreate, TopologyLinkRespon
         """
         query = (
             select(self.model)
+            .options(with_loader_criteria(Device, Device.is_deleted.is_(False), include_aliases=True))
             .where(self.model.is_deleted.is_(False))
             .order_by(self.model.created_at.desc())
             .offset(skip)
@@ -165,15 +185,17 @@ class CRUDTopology(CRUDBase[TopologyLink, TopologyLinkCreate, TopologyLinkRespon
             await db.flush()
             return result.rowcount  # type: ignore
         else:
-            # 软删除
-            links = await self.get_device_neighbors(db, device_id=device_id)
-            count = 0
-            for link in links:
-                link.is_deleted = True
-                db.add(link)
-                count += 1
+            result = await db.execute(
+                update(self.model)
+                .where(self.model.source_device_id == device_id, self.model.is_deleted.is_(False))
+                .values(
+                    is_deleted=True,
+                    updated_at=func.now(),
+                    version_id=text("md5(random()::text)"),
+                )
+            )
             await db.flush()
-            return count
+            return int(getattr(result, "rowcount", 0) or 0)
 
     async def batch_create_links(
         self,
@@ -191,11 +213,11 @@ class CRUDTopology(CRUDBase[TopologyLink, TopologyLinkCreate, TopologyLinkRespon
         Returns:
             创建的 TopologyLink 列表
         """
-        created_links = []
-        for data in links_data:
-            link = await self.upsert_link(db, data=data)
-            created_links.append(link)
-        return created_links
+        await self.upsert_many(db, links_data=links_data)
+        if not links_data:
+            return []
+        source_device_id = links_data[0].source_device_id
+        return await self.get_device_neighbors(db, device_id=source_device_id)
 
     async def refresh_device_topology(
         self,
@@ -218,13 +240,8 @@ class CRUDTopology(CRUDBase[TopologyLink, TopologyLinkCreate, TopologyLinkRespon
         # 软删除旧链路
         deleted_count = await self.delete_device_links(db, device_id=device_id, hard_delete=False)
 
-        # 创建新链路
-        created_links = []
-        for data in links_data:
-            link = await self.upsert_link(db, data=data)
-            created_links.append(link)
-
-        return deleted_count, len(created_links)
+        created_count = await self.upsert_many(db, links_data=links_data)
+        return deleted_count, created_count
 
     async def get_bidirectional_link(
         self,
@@ -259,6 +276,7 @@ class CRUDTopology(CRUDBase[TopologyLink, TopologyLinkCreate, TopologyLinkRespon
                 ),
             )
         )
+        query = query.options(with_loader_criteria(Device, Device.is_deleted.is_(False), include_aliases=True))
         result = await db.execute(query)
         return list(result.scalars().all())
 

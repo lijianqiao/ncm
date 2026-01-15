@@ -119,3 +119,64 @@ export function cacheOTP(data: OTPCacheRequest) {
     data,
   })
 }
+
+// ==================== 批量操作和回收站 API ====================
+
+/** 批量操作结果 */
+export interface CredentialBatchResult {
+  success_count: number
+  failed_count: number
+  failed_ids: string[]
+}
+
+/** 批量删除凭据 */
+export function batchDeleteCredentials(ids: string[]) {
+  return request<ResponseBase<CredentialBatchResult>>({
+    url: '/credentials/batch',
+    method: 'delete',
+    data: { ids },
+  })
+}
+
+/** 获取回收站凭据列表 */
+export function getRecycleBinCredentials(params?: { page?: number; page_size?: number; keyword?: string }) {
+  return request<ResponseBase<PaginatedResponse<Credential>>>({
+    url: '/credentials/recycle-bin',
+    method: 'get',
+    params,
+  })
+}
+
+/** 恢复凭据 */
+export function restoreCredential(id: string) {
+  return request<ResponseBase<Credential>>({
+    url: `/credentials/${id}/restore`,
+    method: 'post',
+  })
+}
+
+/** 批量恢复凭据 */
+export function batchRestoreCredentials(ids: string[]) {
+  return request<ResponseBase<CredentialBatchResult>>({
+    url: '/credentials/batch/restore',
+    method: 'post',
+    data: { ids },
+  })
+}
+
+/** 彻底删除凭据 */
+export function hardDeleteCredential(id: string) {
+  return request<ResponseBase<Record<string, unknown>>>({
+    url: `/credentials/${id}/hard`,
+    method: 'delete',
+  })
+}
+
+/** 批量彻底删除凭据 */
+export function batchHardDeleteCredentials(ids: string[]) {
+  return request<ResponseBase<CredentialBatchResult>>({
+    url: '/credentials/batch/hard',
+    method: 'delete',
+    data: { ids },
+  })
+}

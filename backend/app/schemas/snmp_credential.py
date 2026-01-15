@@ -60,3 +60,17 @@ class DeptSnmpCredentialResponse(BaseModel):
     updated_at: datetime | None = Field(default=None, description="更新时间")
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class SnmpCredentialBatchRequest(BaseModel):
+    """SNMP 凭据批量操作请求。"""
+
+    ids: list[UUID] = Field(..., min_length=1, description="SNMP 凭据ID列表")
+
+
+class SnmpCredentialBatchResult(BaseModel):
+    """SNMP 凭据批量操作结果。"""
+
+    success_count: int = Field(..., description="成功数量")
+    failed_count: int = Field(..., description="失败数量")
+    failed_ids: list[UUID] = Field(default_factory=list, description="失败的ID列表")

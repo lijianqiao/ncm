@@ -26,6 +26,12 @@ import {
   createTemplateVersion,
   submitTemplate,
   approveTemplate,
+  batchDeleteTemplates,
+  getRecycleBinTemplates,
+  restoreTemplate,
+  batchRestoreTemplates,
+  hardDeleteTemplate,
+  batchHardDeleteTemplates,
   type Template,
   type TemplateSearchParams,
   type TemplateType,
@@ -38,6 +44,7 @@ import { renderTemplate } from '@/api/render'
 import { formatDateTime } from '@/utils/date'
 import { formatUserDisplayNameParts } from '@/utils/user'
 import ProTable, { type FilterConfig } from '@/components/common/ProTable.vue'
+import RecycleBinModal from '@/components/common/RecycleBinModal.vue'
 
 defineOptions({
   name: 'TemplateManagement',
@@ -45,6 +52,86 @@ defineOptions({
 
 const dialog = useDialog()
 const tableRef = ref()
+const selectedRowKeys = ref<string[]>()
+
+// ==================== 回收站 ====================
+
+const showRecycleBin = ref(false)
+const recycleBinRef = ref()
+
+const recycleBinColumns: DataTableColumns<Template> = [
+  { type: 'selection', fixed: 'left' },
+  { title: '模板名称', key: 'name', width: 200, ellipsis: { tooltip: true } },
+  {
+    title: '类型',
+    key: 'template_type',
+    width: 100,
+    render: (row) => templateTypeLabelMap[row.template_type],
+  },
+  {
+    title: '适用厂商',
+    key: 'vendors',
+    width: 150,
+    render: (row) => row.vendors.map((v) => vendorLabelMap[v]).join(', ') || '-',
+  },
+  { title: '版本', key: 'version', width: 80 },
+  {
+    title: '删除时间',
+    key: 'updated_at',
+    width: 180,
+    render: (row) => (row.updated_at ? formatDateTime(row.updated_at) : '-'),
+  },
+]
+
+const loadRecycleBinData = async (params: { page?: number; page_size?: number; keyword?: string }) => {
+  const res = await getRecycleBinTemplates(params)
+  return {
+    data: res.data.items,
+    total: res.data.total,
+  }
+}
+
+const handleRestore = async (row: Template) => {
+  try {
+    await restoreTemplate(row.id)
+    $alert.success('模板已恢复')
+    recycleBinRef.value?.reload()
+    tableRef.value?.reload()
+  } catch {
+    // Error handled
+  }
+}
+
+const handleBatchRestore = async (ids: string[]) => {
+  try {
+    const res = await batchRestoreTemplates(ids)
+    $alert.success(`成功恢复 ${res.data.success_count} 个模板`)
+    recycleBinRef.value?.reload()
+    tableRef.value?.reload()
+  } catch {
+    // Error handled
+  }
+}
+
+const handleHardDelete = async (row: Template) => {
+  try {
+    await hardDeleteTemplate(row.id)
+    $alert.success('模板已彻底删除')
+    recycleBinRef.value?.reload()
+  } catch {
+    // Error handled
+  }
+}
+
+const handleBatchHardDelete = async (ids: string[]) => {
+  try {
+    const res = await batchHardDeleteTemplates(ids)
+    $alert.success(`成功彻底删除 ${res.data.success_count} 个模板`)
+    recycleBinRef.value?.reload()
+  } catch {
+    // Error handled
+  }
+}
 
 const templateContentExample = `# 1) 直接使用 params
 
@@ -257,6 +344,31 @@ const handleContextMenuSelect = (key: string | number, row: Template) => {
   if (key === 'submit') handleSubmit(row)
   if (key === 'approve') handleApprove(row)
   if (key === 'delete') handleDelete(row)
+}
+
+// ==================== 批量删除 ====================
+
+const handleBatchDelete = () => {
+  if (!selectedRowKeys.value || selectedRowKeys.value.length === 0) {
+    $alert.warning('请先选择要删除的模板')
+    return
+  }
+  dialog.warning({
+    title: '确认批量删除',
+    content: `确定要删除选中的 ${selectedRowKeys.value.length} 个模板吗？`,
+    positiveText: '确认',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      try {
+        const res = await batchDeleteTemplates(selectedRowKeys.value!)
+        $alert.success(`成功删除 ${res.data.success_count} 个模板`)
+        selectedRowKeys.value = []
+        tableRef.value?.reload()
+      } catch {
+        // Error handled
+      }
+    },
+  })
 }
 
 // ==================== 查看模板 ====================
@@ -628,10 +740,38 @@ const submitApprove = async () => {
       :context-menu-options="contextMenuOptions"
       search-placeholder="搜索模板名称/描述"
       :search-filters="searchFilters"
+      v-model:checked-row-keys="selectedRowKeys"
       @add="handleCreate"
       @context-menu-select="handleContextMenuSelect"
       show-add
       :scroll-x="1200"
+    >
+      <template #toolbar>
+        <n-button
+          type="error"
+          :disabled="!selectedRowKeys || selectedRowKeys.length === 0"
+          @click="handleBatchDelete"
+        >
+          批量删除
+        </n-button>
+        <n-button @click="showRecycleBin = true">回收站</n-button>
+      </template>
+    </ProTable>
+
+    <!-- 回收站 Modal -->
+    <RecycleBinModal
+      ref="recycleBinRef"
+      v-model:show="showRecycleBin"
+      title="回收站 (已删除模板)"
+      :columns="recycleBinColumns"
+      :request="loadRecycleBinData"
+      :row-key="(row: Template) => row.id"
+      search-placeholder="搜索模板名称..."
+      :scroll-x="900"
+      @restore="handleRestore"
+      @batch-restore="handleBatchRestore"
+      @hard-delete="handleHardDelete"
+      @batch-hard-delete="handleBatchHardDelete"
     />
 
     <!-- 提交审批 Modal -->

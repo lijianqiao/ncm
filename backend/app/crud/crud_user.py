@@ -6,7 +6,7 @@
 @Docs: User CRUD operations.
 """
 
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 from sqlalchemy import func, or_, select
@@ -29,33 +29,36 @@ class CRUDUser(CRUDBase[User, UserCreate, UserUpdate]):
 
         clauses = []
 
-        # 文本字段：用户名、昵称、邮箱、手机号、性别
-        pattern = f"%{kw}%"
-        clauses.append(
-            or_(
-                User.username.ilike(pattern),
-                User.nickname.ilike(pattern),
-                User.email.ilike(pattern),
-                User.phone.ilike(pattern),
-                User.gender.ilike(pattern),
-            )
+        text_clause = CRUDBase._or_ilike_contains(
+            kw,
+            [
+                User.username,
+                User.nickname,
+                User.email,
+                User.phone,
+                User.gender,
+            ],
         )
+        if text_clause is not None:
+            clauses.append(text_clause)
 
         # 状态（启用/禁用）
         active_true = {"启用", "正常", "有效", "active", "enabled", "true", "是", "1"}
         active_false = {"禁用", "停用", "无效", "inactive", "disabled", "false", "否", "0"}
-        if kw.lower() in active_true or kw in active_true:
-            clauses.append(User.is_active.is_(True))
-        elif kw.lower() in active_false or kw in active_false:
-            clauses.append(User.is_active.is_(False))
+        active_clause = CRUDBase._bool_clause_from_keyword(
+            kw, User.is_active, true_values=active_true, false_values=active_false
+        )
+        if active_clause is not None:
+            clauses.append(active_clause)
 
         # 超级管理员
         su_true = {"超级管理员", "超管", "superuser"}
         su_false = {"普通用户", "非超管"}
-        if kw.lower() in su_true or kw in su_true:
-            clauses.append(User.is_superuser.is_(True))
-        elif kw.lower() in su_false or kw in su_false:
-            clauses.append(User.is_superuser.is_(False))
+        su_clause = CRUDBase._bool_clause_from_keyword(
+            kw, User.is_superuser, true_values=su_true, false_values=su_false
+        )
+        if su_clause is not None:
+            clauses.append(su_clause)
 
         return stmt.where(or_(*clauses))
 
@@ -163,12 +166,31 @@ class CRUDUser(CRUDBase[User, UserCreate, UserUpdate]):
         result = await db.execute(select(User).where(User.username == username, User.is_deleted.is_(False)))
         return result.scalars().first()
 
+    async def get_by_unique_field(
+        self,
+        db: AsyncSession,
+        *,
+        field: Literal["username", "email", "phone"],
+        value: str,
+        include_deleted: bool = False,
+    ) -> User | None:
+        col_map = {
+            "username": User.username,
+            "email": User.email,
+            "phone": User.phone,
+        }
+        col = col_map[field]
+        stmt = select(User).where(col == value)
+        if not include_deleted:
+            stmt = stmt.where(User.is_deleted.is_(False))
+        result = await db.execute(stmt)
+        return result.scalars().first()
+
     async def get_by_username_include_deleted(self, db: AsyncSession, *, username: str) -> User | None:
         """
         根据用户名查询用户 (包含已软删除)。
         """
-        result = await db.execute(select(User).where(User.username == username))
-        return result.scalars().first()
+        return await self.get_by_unique_field(db, field="username", value=username, include_deleted=True)
 
     async def get_by_email(self, db: AsyncSession, *, email: str) -> User | None:
         """
@@ -181,8 +203,7 @@ class CRUDUser(CRUDBase[User, UserCreate, UserUpdate]):
         """
         根据邮箱查询用户 (包含已软删除)。
         """
-        result = await db.execute(select(User).where(User.email == email))
-        return result.scalars().first()
+        return await self.get_by_unique_field(db, field="email", value=email, include_deleted=True)
 
     async def get_by_phone(self, db: AsyncSession, *, phone: str) -> User | None:
         """
@@ -195,8 +216,7 @@ class CRUDUser(CRUDBase[User, UserCreate, UserUpdate]):
         """
         根据手机号查询用户 (包含已软删除)。
         """
-        result = await db.execute(select(User).where(User.phone == phone))
-        return result.scalars().first()
+        return await self.get_by_unique_field(db, field="phone", value=phone, include_deleted=True)
 
     async def get_with_roles(self, db: AsyncSession, *, id: UUID) -> User | None:
         """获取用户并预加载 roles，避免后续访问触发惰性加载。"""

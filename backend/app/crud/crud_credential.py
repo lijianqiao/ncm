@@ -11,6 +11,7 @@ from uuid import UUID
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
+from sqlalchemy.sql.elements import ColumnElement
 
 from app.crud.base import CRUDBase
 from app.models.credential import DeviceGroupCredential
@@ -88,7 +89,7 @@ class CRUDCredential(CRUDBase[DeviceGroupCredential, DeviceGroupCredentialCreate
         result = await db.execute(query)
         return (result.scalar() or 0) > 0
 
-    async def get_multi_paginated_filtered(
+    async def get_multi_paginated(
         self,
         db: AsyncSession,
         *,
@@ -110,37 +111,23 @@ class CRUDCredential(CRUDBase[DeviceGroupCredential, DeviceGroupCredentialCreate
         Returns:
             (items, total): 凭据列表和总数
         """
-        # 参数验证
         page, page_size = self._validate_pagination(page, page_size)
 
-        # 基础查询
-        base_query = select(self.model).where(self.model.is_deleted.is_(False))
-
-        # 部门筛选
+        conditions: list[ColumnElement[bool]] = [self.model.is_deleted.is_(False)]
         if dept_id:
-            base_query = base_query.where(self.model.dept_id == dept_id)
-
-        # 设备分组筛选
+            conditions.append(self.model.dept_id == dept_id)
         if device_group:
-            base_query = base_query.where(self.model.device_group == device_group)
+            conditions.append(self.model.device_group == device_group)
 
-        # 计算总数
-        count_query = select(func.count()).select_from(base_query.subquery())
-        total_result = await db.execute(count_query)
-        total = total_result.scalar() or 0
-
-        # 分页查询
-        skip = (page - 1) * page_size
-        items_query = (
-            base_query.options(selectinload(DeviceGroupCredential.dept))
+        where_clause = self._and_where(conditions)
+        count_stmt = select(func.count(DeviceGroupCredential.id)).where(where_clause)
+        stmt = (
+            select(self.model)
+            .options(selectinload(DeviceGroupCredential.dept))
+            .where(where_clause)
             .order_by(self.model.created_at.desc())
-            .offset(skip)
-            .limit(page_size)
         )
-        items_result = await db.execute(items_query)
-        items = list(items_result.scalars().all())
-
-        return items, total
+        return await self.paginate(db, stmt=stmt, count_stmt=count_stmt, page=page, page_size=page_size, max_size=500)
 
     async def get_by_dept(self, db: AsyncSession, dept_id: UUID) -> list[DeviceGroupCredential]:
         """
@@ -162,6 +149,63 @@ class CRUDCredential(CRUDBase[DeviceGroupCredential, DeviceGroupCredentialCreate
         )
         result = await db.execute(query)
         return list(result.scalars().all())
+
+    async def get_multi_deleted_paginated(
+        self,
+        db: AsyncSession,
+        *,
+        page: int = 1,
+        page_size: int = 20,
+        keyword: str | None = None,
+    ) -> tuple[list[DeviceGroupCredential], int]:
+        """
+        获取已删除凭据的分页列表（回收站）。
+
+        Args:
+            db: 数据库会话
+            page: 页码
+            page_size: 每页数量
+            keyword: 关键字搜索
+
+        Returns:
+            (items, total): 已删除凭据列表和总数
+        """
+        page, page_size = self._validate_pagination(page, page_size)
+
+        conditions: list[ColumnElement[bool]] = [self.model.is_deleted.is_(True)]
+        keyword_clause = self._or_ilike_contains(keyword, [self.model.username, self.model.description])
+        if keyword_clause is not None:
+            conditions.append(keyword_clause)
+
+        where_clause = self._and_where(conditions)
+        count_stmt = select(func.count(DeviceGroupCredential.id)).where(where_clause)
+        stmt = (
+            select(self.model)
+            .options(selectinload(DeviceGroupCredential.dept))
+            .where(where_clause)
+            .order_by(self.model.updated_at.desc())
+        )
+        return await self.paginate(db, stmt=stmt, count_stmt=count_stmt, page=page, page_size=page_size, max_size=500)
+
+    async def get_deleted(self, db: AsyncSession, id: UUID) -> DeviceGroupCredential | None:
+        """
+        获取已删除的凭据（用于恢复或彻底删除）。
+
+        Args:
+            db: 数据库会话
+            id: 凭据ID
+
+        Returns:
+            DeviceGroupCredential | None: 凭据对象或 None
+        """
+        query = (
+            select(self.model)
+            .options(selectinload(DeviceGroupCredential.dept))
+            .where(self.model.id == id)
+            .where(self.model.is_deleted.is_(True))
+        )
+        result = await db.execute(query)
+        return result.scalars().first()
 
 
 # 单例实例

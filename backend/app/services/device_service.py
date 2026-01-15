@@ -53,7 +53,7 @@ class DeviceService:
         Returns:
             (items, total): 设备列表和总数
         """
-        return await self.device_crud.get_multi_paginated_filtered(
+        return await self.device_crud.get_multi_paginated(
             self.db,
             page=query.page,
             page_size=query.page_size,
@@ -257,7 +257,7 @@ class DeviceService:
         Returns:
             (items, total): 设备列表和总数
         """
-        return await self.device_crud.get_recycle_bin(self.db, page=page, page_size=page_size)
+        return await self.device_crud.get_multi_deleted_paginated(self.db, page=page, page_size=page_size)
 
     @transactional()
     async def transition_status(
@@ -436,4 +436,42 @@ class DeviceService:
             success_count=success_count,
             failed_count=len(failed_ids),
             failed_items=[{"id": str(id_), "reason": "设备不存在或恢复失败"} for id_ in failed_ids],
+        )
+
+    @transactional()
+    async def hard_delete_device(self, device_id: UUID) -> None:
+        """
+        彻底删除设备（硬删除）
+
+        Args:
+            device_id: 设备ID
+
+        Raises:
+            NotFoundException: 设备不存在或未被软删除
+        """
+        stmt = select(Device).where(Device.id == device_id).where(Device.is_deleted.is_(True))
+        deleted_device = (await self.db.execute(stmt)).scalars().first()
+        if not deleted_device:
+            raise NotFoundException(message="设备不存在或未被软删除")
+
+        success_count, _ = await self.device_crud.batch_remove(self.db, ids=[device_id], hard_delete=True)
+        if success_count == 0:
+            raise NotFoundException(message="彻底删除失败")
+
+    @transactional()
+    async def batch_hard_delete_devices(self, ids: list[UUID]) -> DeviceBatchResult:
+        """
+        批量彻底删除设备（硬删除）
+
+        Args:
+            ids: 设备ID列表
+
+        Returns:
+            DeviceBatchResult: 批量操作结果
+        """
+        success_count, failed_ids = await self.device_crud.batch_remove(self.db, ids=ids, hard_delete=True)
+        return DeviceBatchResult(
+            success_count=success_count,
+            failed_count=len(failed_ids),
+            failed_items=[{"id": str(id_), "reason": "设备不存在或彻底删除失败"} for id_ in failed_ids],
         )

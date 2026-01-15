@@ -74,7 +74,7 @@ def scan_subnet(
             if resolved == "masscan":
                 result = await scan_service.masscan_scan(subnet, ports=ports)
             elif resolved == "nmap":
-                result = await scan_service.nmap_ping_scan(subnet)
+                result = await scan_service.nmap_scan(subnet, ports=ports)
             else:
                 from datetime import datetime
 
@@ -199,7 +199,7 @@ def scan_subnets_batch(
                     if resolved == "masscan":
                         result = await scan_service.masscan_scan(subnet, ports=ports)
                     elif resolved == "nmap":
-                        result = await scan_service.nmap_ping_scan(subnet)
+                        result = await scan_service.nmap_scan(subnet, ports=ports)
                     else:
                         from datetime import datetime
 
@@ -365,26 +365,7 @@ def scheduled_network_scan(self) -> dict[str, Any]:
 
             for subnet in subnets:
                 try:
-                    resolved = scan_service.resolve_scan_type("auto")
-                    if resolved == "masscan":
-                        result = await scan_service.masscan_scan(subnet)
-                    elif resolved == "nmap":
-                        result = await scan_service.nmap_ping_scan(subnet)
-                    else:
-                        from datetime import datetime
-
-                        from app.schemas.discovery import ScanResult as ScanResultSchema
-
-                        result = ScanResultSchema(
-                            subnet=subnet,
-                            scan_type="auto",
-                            hosts_found=0,
-                            hosts=[],
-                            started_at=datetime.now(),
-                            completed_at=datetime.now(),
-                            duration_seconds=0,
-                            error="未检测到可用扫描器：请安装 nmap 或 masscan，并确保在 PATH 中",
-                        )
+                    result = await scan_service.nmap_scan(subnet)
                     if result.hosts:
                         result.task_id = celery_task_id
                         await scan_service.process_scan_result(db, scan_result=result, scan_task_id=celery_task_id)

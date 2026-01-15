@@ -80,7 +80,7 @@ class TopologyService:
             if device_ids:
                 devices = await self.device_crud.get_multi_by_ids(db, ids=device_ids)
             else:
-                devices, _ = await self.device_crud.get_multi_paginated_filtered(
+                devices, _ = await self.device_crud.get_multi_paginated(
                     db, page=1, page_size=10000, status=DeviceStatus.ACTIVE
                 )
 

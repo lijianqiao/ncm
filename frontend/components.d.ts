@@ -28,6 +28,7 @@ declare module 'vue' {
     NTabs: typeof import('naive-ui')['NTabs']
     OtpModal: typeof import('./src/components/common/OtpModal.vue')['default']
     ProTable: typeof import('./src/components/common/ProTable.vue')['default']
+    RecycleBinModal: typeof import('./src/components/common/RecycleBinModal.vue')['default']
     RouterLink: typeof import('vue-router')['RouterLink']
     RouterView: typeof import('vue-router')['RouterView']
     UnifiedDiffViewer: typeof import('./src/components/common/UnifiedDiffViewer.vue')['default']

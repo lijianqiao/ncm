@@ -168,3 +168,26 @@ export function batchRestoreDepts(ids: string[]) {
     data: { ids },
   })
 }
+
+// ==================== 彻底删除 API ====================
+
+/**
+ * 彻底删除部门
+ */
+export function hardDeleteDept(id: string) {
+  return request<ResponseBase<Record<string, unknown>>>({
+    url: `/depts/${id}/hard`,
+    method: 'delete',
+  })
+}
+
+/**
+ * 批量彻底删除部门
+ */
+export function batchHardDeleteDepts(ids: string[]) {
+  return request<ResponseBase<BatchOperationResult>>({
+    url: '/depts/batch/hard',
+    method: 'delete',
+    data: { ids },
+  })
+}

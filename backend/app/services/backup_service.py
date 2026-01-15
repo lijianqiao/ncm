@@ -76,7 +76,7 @@ class BackupService(DeviceCredentialMixin):
         Returns:
             (items, total): 备份列表和总数
         """
-        return await self.backup_crud.get_multi_paginated_filtered(
+        return await self.backup_crud.get_multi_paginated(
             self.db,
             page=query.page,
             page_size=query.page_size,
@@ -90,7 +90,7 @@ class BackupService(DeviceCredentialMixin):
     async def get_recycle_backups_paginated(self, query: BackupListQuery) -> tuple[list[Backup], int]:
         """获取回收站（已软删除）备份列表。"""
 
-        return await self.backup_crud.get_multi_paginated_deleted_filtered(
+        return await self.backup_crud.get_multi_deleted_paginated(
             self.db,
             page=query.page,
             page_size=query.page_size,
@@ -817,7 +817,7 @@ class BackupService(DeviceCredentialMixin):
         Returns:
             list[Device]: 活跃设备列表
         """
-        devices, _ = await self.device_crud.get_multi_paginated_filtered(
+        devices, _ = await self.device_crud.get_multi_paginated(
             self.db,
             page=1,
             page_size=10000,  # 大页获取所有

@@ -8,7 +8,7 @@
 
 from uuid import UUID
 
-from sqlalchemy import and_, func, or_, select, text
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from sqlalchemy.sql.elements import ColumnElement
@@ -36,9 +36,17 @@ class CRUDDept(CRUDBase[Department, DeptCreate, DeptUpdate]):
 
         conditions: list[ColumnElement[bool]] = [Department.is_deleted.is_(True)]
 
-        if keyword:
-            kw = self._normalize_keyword(keyword)
-            conditions.append(or_(Department.name.ilike(kw), Department.code.ilike(kw), Department.leader.ilike(kw)))
+        kw = self._normalize_keyword(keyword)
+        if kw:
+            escaped = self._escape_like(kw)
+            pattern = f"%{escaped}%"
+            conditions.append(
+                or_(
+                    Department.name.ilike(pattern, escape="\\"),
+                    Department.code.ilike(pattern, escape="\\"),
+                    Department.leader.ilike(pattern, escape="\\"),
+                )
+            )
 
         if is_active is not None:
             conditions.append(Department.is_active.is_(is_active))
@@ -81,17 +89,27 @@ class CRUDDept(CRUDBase[Department, DeptCreate, DeptUpdate]):
         Returns:
             部门列表和总数
         """
-        conditions = []
+        page, page_size = self._validate_pagination(page, page_size)
+
+        conditions: list[ColumnElement[bool]] = []
 
         if not include_deleted:
-            conditions.append(Department.is_deleted == False)  # noqa: E712
+            conditions.append(Department.is_deleted.is_(False))
 
-        if keyword:
-            kw = self._normalize_keyword(keyword)
-            conditions.append(or_(Department.name.ilike(kw), Department.code.ilike(kw), Department.leader.ilike(kw)))
+        kw = self._normalize_keyword(keyword)
+        if kw:
+            escaped = self._escape_like(kw)
+            pattern = f"%{escaped}%"
+            conditions.append(
+                or_(
+                    Department.name.ilike(pattern, escape="\\"),
+                    Department.code.ilike(pattern, escape="\\"),
+                    Department.leader.ilike(pattern, escape="\\"),
+                )
+            )
 
         if is_active is not None:
-            conditions.append(Department.is_active == is_active)
+            conditions.append(Department.is_active.is_(is_active))
 
         # 查询总数
         count_stmt = select(func.count()).select_from(Department)
@@ -138,7 +156,16 @@ class CRUDDept(CRUDBase[Department, DeptCreate, DeptUpdate]):
 
         if keyword:
             kw = self._normalize_keyword(keyword)
-            conditions.append(or_(Department.name.ilike(kw), Department.code.ilike(kw), Department.leader.ilike(kw)))
+            if kw:
+                escaped = self._escape_like(kw)
+                pattern = f"%{escaped}%"
+                conditions.append(
+                    or_(
+                        Department.name.ilike(pattern, escape="\\"),
+                        Department.code.ilike(pattern, escape="\\"),
+                        Department.leader.ilike(pattern, escape="\\"),
+                    )
+                )
 
         stmt = select(Department).where(and_(*conditions)).order_by(Department.sort.asc(), Department.created_at.desc())
 
@@ -156,24 +183,18 @@ class CRUDDept(CRUDBase[Department, DeptCreate, DeptUpdate]):
         Returns:
             所有子部门 ID 列表
         """
-        # 使用 CTE 递归查询，一次性获取所有子部门
-        cte_sql = text("""
-            WITH RECURSIVE dept_tree AS (
-                -- 锚定成员：直接子部门
-                SELECT id FROM department
-                WHERE parent_id = :parent_id AND is_deleted = false
+        dept_tree = (
+            select(Department.id)
+            .where(Department.parent_id == dept_id, Department.is_deleted.is_(False))
+            .cte(name="dept_tree", recursive=True)
+        )
+        dept_tree = dept_tree.union_all(
+            select(Department.id).where(Department.parent_id == dept_tree.c.id, Department.is_deleted.is_(False))
+        )
 
-                UNION ALL
-
-                -- 递归成员：子部门的子部门
-                SELECT d.id FROM department d
-                INNER JOIN dept_tree dt ON d.parent_id = dt.id
-                WHERE d.is_deleted = false
-            )
-            SELECT id FROM dept_tree
-        """)
-        result = await db.execute(cte_sql, {"parent_id": str(dept_id)})
-        return [UUID(row[0]) for row in result.fetchall()]
+        result = await db.execute(select(dept_tree.c.id))
+        ids = list(result.scalars().all())
+        return [id_ if isinstance(id_, UUID) else UUID(str(id_)) for id_ in ids]
 
     async def exists_code(self, db: AsyncSession, *, code: str, exclude_id: UUID | None = None) -> bool:
         """
@@ -190,7 +211,7 @@ class CRUDDept(CRUDBase[Department, DeptCreate, DeptUpdate]):
 
         conditions = [
             Department.code == code,
-            Department.is_deleted == False,  # noqa: E712
+            Department.is_deleted.is_(False),
         ]
         if exclude_id is not None:
             conditions.append(Department.id != exclude_id)
@@ -216,7 +237,7 @@ class CRUDDept(CRUDBase[Department, DeptCreate, DeptUpdate]):
             .where(
                 and_(
                     Department.parent_id == dept_id,
-                    Department.is_deleted == False,  # noqa: E712
+                    Department.is_deleted.is_(False),
                 )
             )
         )
@@ -243,7 +264,7 @@ class CRUDDept(CRUDBase[Department, DeptCreate, DeptUpdate]):
             .where(
                 and_(
                     User.dept_id == dept_id,
-                    User.is_deleted == False,  # noqa: E712
+                    User.is_deleted.is_(False),
                 )
             )
         )

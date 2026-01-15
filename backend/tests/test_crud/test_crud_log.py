@@ -29,7 +29,8 @@ class TestCRUDLoginLog:
         for i in range(3):
             await login_log_crud.create(db_session, obj_in=LoginLogCreate(username=f"User{i}", status=True))
 
-        logs = await login_log_crud.get_multi(db_session)
+        logs, total = await login_log_crud.get_multi_paginated(db_session, page=1, page_size=50)
+        assert total >= 3
         assert len(logs) >= 3
 
 

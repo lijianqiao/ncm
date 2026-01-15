@@ -355,7 +355,7 @@ class CollectService:
             CollectResult: 采集结果
         """
         # 获取所有活跃设备
-        devices, _ = await self.device_crud.get_multi_paginated_filtered(
+        devices, _ = await self.device_crud.get_multi_paginated(
             self.db,
             page=1,
             page_size=10000,  # 获取所有活跃设备
@@ -571,7 +571,7 @@ class CollectService:
             )
 
         # 获取所有设备
-        devices, _ = await self.device_crud.get_multi_paginated_filtered(
+        devices, _ = await self.device_crud.get_multi_paginated(
             self.db,
             page=1,
             page_size=10000,
@@ -667,7 +667,7 @@ class CollectService:
             return stored_normalized == mac_normalized
 
         # 获取所有设备
-        devices, _ = await self.device_crud.get_multi_paginated_filtered(
+        devices, _ = await self.device_crud.get_multi_paginated(
             self.db,
             page=1,
             page_size=10000,

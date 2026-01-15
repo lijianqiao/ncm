@@ -39,14 +39,24 @@ class UserService(PermissionCacheMixin):
     @transactional()
     async def create_user(self, obj_in: UserCreate) -> User:
         # 1. 检查用户名
-        user = await self.user_crud.get_by_username_include_deleted(self.db, username=obj_in.username)
+        user = await self.user_crud.get_by_unique_field(
+            self.db,
+            field="username",
+            value=obj_in.username,
+            include_deleted=True,
+        )
         if user:
             if user.is_deleted:
                 raise BadRequestException(message="该用户名已被注销/删除，请联系管理员恢复")
             raise BadRequestException(message="该用户名的用户已存在")
 
         # 2. 检查手机号
-        user = await self.user_crud.get_by_phone_include_deleted(self.db, phone=obj_in.phone)
+        user = await self.user_crud.get_by_unique_field(
+            self.db,
+            field="phone",
+            value=obj_in.phone,
+            include_deleted=True,
+        )
         if user:
             if user.is_deleted:
                 raise BadRequestException(message="该手机号已被注销/删除，请联系管理员恢复")
@@ -54,7 +64,12 @@ class UserService(PermissionCacheMixin):
 
         # 3. 检查邮箱
         if obj_in.email:
-            user = await self.user_crud.get_by_email_include_deleted(self.db, email=obj_in.email)
+            user = await self.user_crud.get_by_unique_field(
+                self.db,
+                field="email",
+                value=obj_in.email,
+                include_deleted=True,
+            )
             if user:
                 if user.is_deleted:
                     raise BadRequestException(message="该邮箱已被注销/删除，请联系管理员恢复")

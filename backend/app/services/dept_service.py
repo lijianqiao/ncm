@@ -314,3 +314,42 @@ class DeptService:
             成功数量和失败 ID 列表
         """
         return await self.dept_crud.batch_restore(self.db, ids=ids)
+
+    @transactional()
+    async def hard_delete_dept(self, *, dept_id: UUID) -> None:
+        """
+        彻底删除部门（硬删除）。
+
+        Args:
+            dept_id: 部门 ID
+
+        Raises:
+            NotFoundException: 部门不存在或未被软删除
+        """
+        # 检查部门是否在回收站中
+        deleted_depts, _ = await self.dept_crud.get_multi_deleted_paginated(self.db, page=1, page_size=10000)
+        deleted_dept = None
+        for d in deleted_depts:
+            if d.id == dept_id:
+                deleted_dept = d
+                break
+
+        if not deleted_dept:
+            raise NotFoundException(message="部门不存在或未被软删除")
+
+        success_count, _ = await self.dept_crud.batch_remove(self.db, ids=[dept_id], hard_delete=True)
+        if success_count == 0:
+            raise NotFoundException(message="彻底删除失败")
+
+    @transactional()
+    async def batch_hard_delete_depts(self, *, ids: list[UUID]) -> tuple[int, list[UUID]]:
+        """
+        批量彻底删除部门（硬删除）。
+
+        Args:
+            ids: 部门 ID 列表
+
+        Returns:
+            成功数量和失败 ID 列表
+        """
+        return await self.dept_crud.batch_remove(self.db, ids=ids, hard_delete=True)

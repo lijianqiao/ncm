@@ -21,7 +21,8 @@ class TestAuthRefresh:
             data={"username": "testuser", "password": "Test@123456"},
         )
         assert response.status_code == 200
-        data = response.json()
+        body = response.json()
+        data = body["data"] if isinstance(body, dict) and "data" in body else body
         assert "access_token" in data
         assert data["token_type"] == "bearer"
 
@@ -49,7 +50,8 @@ class TestAuthRefresh:
             headers={csrf_header_name(): str(csrf)},
         )
         assert response.status_code == 200
-        data = response.json()
+        body = response.json()
+        data = body["data"] if isinstance(body, dict) and "data" in body else body
         assert "access_token" in data
 
         # Refresh Token Rotation：refresh cookie 应该被轮换

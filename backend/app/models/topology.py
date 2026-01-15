@@ -12,7 +12,7 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING, Optional
 
-from sqlalchemy import DateTime, ForeignKey, String, Text
+from sqlalchemy import DateTime, ForeignKey, Index, String, Text, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import AuditableModel
@@ -25,6 +25,15 @@ class TopologyLink(AuditableModel):
     """网络拓扑链路模型。"""
 
     __tablename__ = "ncm_topology_link"
+    __table_args__ = (
+        Index(
+            "uq_ncm_topology_link_source_iface_not_deleted",
+            "source_device_id",
+            "source_interface",
+            unique=True,
+            postgresql_where=text("is_deleted = false"),
+        ),
+    )
 
     # 源设备（本地设备）
     source_device_id: Mapped[uuid.UUID] = mapped_column(

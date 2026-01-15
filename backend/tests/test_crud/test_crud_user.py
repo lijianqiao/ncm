@@ -111,14 +111,16 @@ class TestCRUDUserDelete:
         """测试软删除用户"""
         user_id = test_user.id
 
-        deleted_user = await user_crud.remove(db_session, id=user_id)
-
-        assert deleted_user is not None
-        assert deleted_user.is_deleted is True
+        success_count, failed_ids = await user_crud.batch_remove(db_session, ids=[user_id])
+        assert success_count == 1
+        assert failed_ids == []
 
         # 软删除后通过 get 应该查不到
         user = await user_crud.get(db_session, id=user_id)
         assert user is None
+
+        deleted_items, _ = await user_crud.get_multi_deleted_paginated(db_session, page=1, page_size=50)
+        assert any(x.id == user_id for x in deleted_items)
 
     async def test_batch_remove(self, db_session: AsyncSession, user_crud: CRUDUser):
         """测试批量删除"""

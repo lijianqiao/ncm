@@ -27,17 +27,18 @@ class CRUDRole(CRUDBase[Role, RoleCreate, RoleUpdate]):
 
         clauses = []
 
-        # 文本字段：角色名称、角色标识
-        pattern = f"%{kw}%"
-        clauses.append(or_(Role.name.ilike(pattern), Role.code.ilike(pattern)))
+        text_clause = CRUDBase._or_ilike_contains(kw, [Role.name, Role.code])
+        if text_clause is not None:
+            clauses.append(text_clause)
 
         # 状态（启用/禁用）
         active_true = {"启用", "正常", "有效", "active", "enabled", "true", "是", "1"}
         active_false = {"禁用", "停用", "无效", "inactive", "disabled", "false", "否", "0"}
-        if kw.lower() in active_true or kw in active_true:
-            clauses.append(Role.is_active.is_(True))
-        elif kw.lower() in active_false or kw in active_false:
-            clauses.append(Role.is_active.is_(False))
+        active_clause = CRUDBase._bool_clause_from_keyword(
+            kw, Role.is_active, true_values=active_true, false_values=active_false
+        )
+        if active_clause is not None:
+            clauses.append(active_clause)
 
         return stmt.where(or_(*clauses))
 
@@ -67,14 +68,15 @@ class CRUDRole(CRUDBase[Role, RoleCreate, RoleUpdate]):
         return list(result.scalars().all()), total
 
     async def get_user_ids_by_role(self, db: AsyncSession, *, role_id: UUID) -> list[UUID]:
-        result = await db.execute(select(UserRole.user_id).where(UserRole.role_id == role_id))
-        return list(result.scalars().all())
+        return await self.get_user_ids_by_roles(db, role_ids=[role_id])
 
     async def get_user_ids_by_roles(self, db: AsyncSession, *, role_ids: list[UUID]) -> list[UUID]:
         if not role_ids:
             return []
-        result = await db.execute(select(UserRole.user_id).where(UserRole.role_id.in_(role_ids)))
-        return list(set(result.scalars().all()))
+        result = await db.execute(
+            select(UserRole.user_id).distinct().where(UserRole.role_id.in_(role_ids))
+        )
+        return list(result.scalars().all())
 
     async def get(self, db: AsyncSession, id: UUID) -> Role | None:
         """

@@ -19,6 +19,12 @@ import {
   updateCredential,
   deleteCredential,
   cacheOTP,
+  batchDeleteCredentials,
+  getRecycleBinCredentials,
+  restoreCredential,
+  batchRestoreCredentials,
+  hardDeleteCredential,
+  batchHardDeleteCredentials,
   type Credential,
   type CredentialSearchParams,
 } from '@/api/credentials'
@@ -32,6 +38,7 @@ import {
 import { getDeptTree, type Dept } from '@/api/depts'
 import { formatDateTime } from '@/utils/date'
 import ProTable, { type FilterConfig } from '@/components/common/ProTable.vue'
+import RecycleBinModal from '@/components/common/RecycleBinModal.vue'
 
 defineOptions({
   name: 'CredentialManagement',
@@ -39,6 +46,98 @@ defineOptions({
 
 const dialog = useDialog()
 const tableRef = ref()
+const selectedRowKeys = ref<string[]>([])
+
+// ==================== 回收站 ====================
+
+const showRecycleBin = ref(false)
+const recycleBinRef = ref()
+
+const recycleBinColumns: DataTableColumns<Credential> = [
+  { type: 'selection', fixed: 'left' },
+  {
+    title: '所属部门',
+    key: 'dept_name',
+    width: 150,
+    ellipsis: { tooltip: true },
+    render: (row) => row.dept_name || '-',
+  },
+  {
+    title: '设备分组',
+    key: 'device_group',
+    width: 120,
+    render: (row) => groupLabelMap[row.device_group],
+  },
+  { title: 'SSH 用户名', key: 'username', width: 150 },
+  {
+    title: '认证类型',
+    key: 'auth_type',
+    width: 120,
+    render(row) {
+      return h(
+        NTag,
+        { type: row.auth_type === 'static' ? 'default' : 'info', bordered: false },
+        { default: () => authTypeLabelMap[row.auth_type] },
+      )
+    },
+  },
+  {
+    title: '删除时间',
+    key: 'updated_at',
+    width: 180,
+    render: (row) => formatDateTime(row.updated_at),
+  },
+]
+
+const loadRecycleBinData = async (params: { page?: number; page_size?: number; keyword?: string }) => {
+  const res = await getRecycleBinCredentials(params)
+  return {
+    data: res.data.items,
+    total: res.data.total,
+  }
+}
+
+const handleRestore = async (row: Credential) => {
+  try {
+    await restoreCredential(row.id)
+    $alert.success('凭据已恢复')
+    recycleBinRef.value?.reload()
+    tableRef.value?.reload()
+  } catch {
+    // Error handled
+  }
+}
+
+const handleBatchRestore = async (ids: string[]) => {
+  try {
+    const res = await batchRestoreCredentials(ids)
+    $alert.success(`成功恢复 ${res.data.success_count} 条凭据`)
+    recycleBinRef.value?.reload()
+    tableRef.value?.reload()
+  } catch {
+    // Error handled
+  }
+}
+
+const handleHardDelete = async (row: Credential) => {
+  try {
+    await hardDeleteCredential(row.id)
+    $alert.success('凭据已彻底删除')
+    recycleBinRef.value?.reload()
+  } catch {
+    // Error handled
+  }
+}
+
+const handleBatchHardDelete = async (ids: string[]) => {
+  try {
+    const res = await batchHardDeleteCredentials(ids)
+    $alert.success(`成功彻底删除 ${res.data.success_count} 条凭据`)
+    recycleBinRef.value?.reload()
+  } catch {
+    // Error handled
+  }
+}
 
 // ==================== 常量定义（使用统一枚举） ====================
 
@@ -151,6 +250,31 @@ const handleContextMenuSelect = (key: string | number, row: Credential) => {
   if (key === 'edit') handleEdit(row)
   if (key === 'delete') handleDelete(row)
   if (key === 'cache_otp') handleCacheOTP(row)
+}
+
+// ==================== 批量删除 ====================
+
+const handleBatchDelete = () => {
+  if (selectedRowKeys.value.length === 0) {
+    $alert.warning('请先选择要删除的凭据')
+    return
+  }
+  dialog.warning({
+    title: '确认批量删除',
+    content: `确定要删除选中的 ${selectedRowKeys.value.length} 条凭据吗？`,
+    positiveText: '确认',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      try {
+        const res = await batchDeleteCredentials(selectedRowKeys.value)
+        $alert.success(`成功删除 ${res.data.success_count} 条凭据`)
+        selectedRowKeys.value = []
+        tableRef.value?.reload()
+      } catch {
+        // Error handled
+      }
+    },
+  })
 }
 
 // ==================== 创建/编辑凭据 ====================
@@ -311,10 +435,38 @@ const submitCacheOTP = async () => {
       :context-menu-options="contextMenuOptions"
       search-placeholder="搜索用户名/描述"
       :search-filters="searchFilters"
+      v-model:checked-row-keys="selectedRowKeys"
       @add="handleCreate"
       @context-menu-select="handleContextMenuSelect"
       show-add
       :scroll-x="1200"
+    >
+      <template #toolbar>
+        <n-button
+          type="error"
+          :disabled="selectedRowKeys.length === 0"
+          @click="handleBatchDelete"
+        >
+          批量删除
+        </n-button>
+        <n-button @click="showRecycleBin = true">回收站</n-button>
+      </template>
+    </ProTable>
+
+    <!-- 回收站 Modal -->
+    <RecycleBinModal
+      ref="recycleBinRef"
+      v-model:show="showRecycleBin"
+      title="回收站 (已删除凭据)"
+      :columns="recycleBinColumns"
+      :request="loadRecycleBinData"
+      :row-key="(row: Credential) => row.id"
+      search-placeholder="搜索用户名/描述..."
+      :scroll-x="900"
+      @restore="handleRestore"
+      @batch-restore="handleBatchRestore"
+      @hard-delete="handleHardDelete"
+      @batch-hard-delete="handleBatchHardDelete"
     />
 
     <!-- 创建/编辑凭据 Modal -->

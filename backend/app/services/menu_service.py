@@ -322,17 +322,7 @@ class MenuService(PermissionCacheMixin):
         if not menu:
             raise NotFoundException(message="菜单不存在")
 
-        affected_user_ids = await self.menu_crud.get_affected_user_ids(self.db, menu_id=id)
-
-        success_count, _ = await self.menu_crud.batch_remove(self.db, ids=[id])
-        if success_count == 0:
-            raise NotFoundException(message="菜单删除失败")
-
-        self._invalidate_permissions_cache_after_commit(affected_user_ids)
-
-        # 手动构建响应，避免访问 menu.children 触发 implicit IO (MissingGreenlet)
-        # 且删除后的对象 children 应为空
-        return MenuResponse(
+        resp = MenuResponse(
             id=menu.id,
             title=menu.title,
             name=menu.name,
@@ -350,6 +340,18 @@ class MenuService(PermissionCacheMixin):
             updated_at=menu.updated_at,
             children=[],
         )
+
+        affected_user_ids = await self.menu_crud.get_affected_user_ids(self.db, menu_id=id)
+
+        success_count, _ = await self.menu_crud.batch_remove(self.db, ids=[id])
+        if success_count == 0:
+            raise NotFoundException(message="菜单删除失败")
+
+        self._invalidate_permissions_cache_after_commit(affected_user_ids)
+
+        # 手动构建响应，避免访问 menu.children 触发 implicit IO (MissingGreenlet)
+        # 且删除后的对象 children 应为空
+        return resp
 
     @transactional()
     async def batch_delete_menus(self, ids: list[UUID], hard_delete: bool = False) -> tuple[int, list[UUID]]:

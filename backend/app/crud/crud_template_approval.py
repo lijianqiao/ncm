@@ -40,13 +40,14 @@ class CRUDTemplateApprovalStep(
         stmt = select(TemplateApprovalStep).where(
             TemplateApprovalStep.template_id == template_id,
             TemplateApprovalStep.level == level,
+            TemplateApprovalStep.is_deleted.is_(False),
         )
         return (await db.execute(stmt)).scalars().first()
 
     async def list_by_template(self, db: AsyncSession, *, template_id: UUID) -> list[TemplateApprovalStep]:
         stmt = (
             select(TemplateApprovalStep)
-            .where(TemplateApprovalStep.template_id == template_id)
+            .where(TemplateApprovalStep.template_id == template_id, TemplateApprovalStep.is_deleted.is_(False))
             .order_by(TemplateApprovalStep.level.asc())
         )
         return list((await db.execute(stmt)).scalars().all())

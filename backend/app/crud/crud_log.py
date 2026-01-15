@@ -29,23 +29,18 @@ class CRUDLoginLog(CRUDBase[LoginLog, LoginLogCreate, LoginLogCreate]):
         clauses = []
 
         # 文本字段：用户名、IP、提示信息、操作系统
-        pattern = f"%{kw}%"
-        clauses.append(
-            or_(
-                LoginLog.username.ilike(pattern),
-                LoginLog.ip.ilike(pattern),
-                LoginLog.msg.ilike(pattern),
-                LoginLog.os.ilike(pattern),
-            )
-        )
+        text_clause = CRUDBase._or_ilike_contains(kw, [LoginLog.username, LoginLog.ip, LoginLog.msg, LoginLog.os])
+        if text_clause is not None:
+            clauses.append(text_clause)
 
         # 状态（成功/失败）
         status_true = {"成功", "success", "true", "是", "1"}
         status_false = {"失败", "fail", "false", "否", "0"}
-        if kw.lower() in status_true or kw in status_true:
-            clauses.append(LoginLog.status.is_(True))
-        elif kw.lower() in status_false or kw in status_false:
-            clauses.append(LoginLog.status.is_(False))
+        status_clause = CRUDBase._bool_clause_from_keyword(
+            kw, LoginLog.status, true_values=status_true, false_values=status_false
+        )
+        if status_clause is not None:
+            clauses.append(status_clause)
 
         return stmt.where(or_(*clauses))
 
@@ -84,7 +79,7 @@ class CRUDLoginLog(CRUDBase[LoginLog, LoginLogCreate, LoginLogCreate]):
         today_end = today_start + timedelta(days=1)
         return await self.count_by_range(db, today_start, today_end)
 
-    async def count_by_range(self, db: AsyncSession, start: Any, end: Any) -> int:
+    async def count_by_range(self, db: AsyncSession, start: Any, end: Any, *, user_id: UUID | None = None) -> int:
         """
         统计指定时间范围内的登录次数。
 
@@ -96,30 +91,24 @@ class CRUDLoginLog(CRUDBase[LoginLog, LoginLogCreate, LoginLogCreate]):
         Returns:
             int: 该时间段内的登录总数。
         """
-        result = await db.execute(
-            select(func.count(LoginLog.id)).where(LoginLog.created_at >= start, LoginLog.created_at < end)
-        )
+        stmt = select(func.count(LoginLog.id)).where(LoginLog.created_at >= start, LoginLog.created_at < end)
+        if user_id is not None:
+            stmt = stmt.where(LoginLog.user_id == user_id)
+        result = await db.execute(stmt)
         return result.scalar_one()
 
     async def count_by_range_and_user(self, db: AsyncSession, start: Any, end: Any, *, user_id: UUID) -> int:
         """统计指定时间范围内某个用户的登录次数。"""
-        result = await db.execute(
-            select(func.count(LoginLog.id)).where(
-                LoginLog.created_at >= start,
-                LoginLog.created_at < end,
-                LoginLog.user_id == user_id,
-            )
-        )
-        return result.scalar_one()
+        return await self.count_by_range(db, start, end, user_id=user_id)
 
     async def count_today_by_user(self, db: AsyncSession, *, user_id: UUID) -> int:
         """统计某个用户的今日登录次数。"""
         now = datetime.now(UTC).replace(tzinfo=None)
         today_start = datetime(now.year, now.month, now.day)
         today_end = today_start + timedelta(days=1)
-        return await self.count_by_range_and_user(db, today_start, today_end, user_id=user_id)
+        return await self.count_by_range(db, today_start, today_end, user_id=user_id)
 
-    async def get_trend(self, db: AsyncSession, days: int = 7) -> list[dict[str, Any]]:
+    async def get_trend(self, db: AsyncSession, days: int = 7, *, user_id: UUID | None = None) -> list[dict[str, Any]]:
         """
         获取近 N 天的登录趋势统计。
 
@@ -147,6 +136,8 @@ class CRUDLoginLog(CRUDBase[LoginLog, LoginLogCreate, LoginLogCreate]):
             .group_by(date_col)
             .order_by(date_col.asc())
         )
+        if user_id is not None:
+            stmt = stmt.where(LoginLog.user_id == user_id)
 
         try:
             result = await db.execute(stmt)
@@ -156,26 +147,9 @@ class CRUDLoginLog(CRUDBase[LoginLog, LoginLogCreate, LoginLogCreate]):
             return []
 
     async def get_trend_by_user(self, db: AsyncSession, *, user_id: UUID, days: int = 7) -> list[dict[str, Any]]:
-        """获取某个用户近 N 天的登录趋势统计。"""
-        end_date = datetime.now(UTC).date()
-        start_date = end_date - timedelta(days=days - 1)
+        return await self.get_trend(db, days=days, user_id=user_id)
 
-        date_col = cast(LoginLog.created_at, Date)
-        stmt = (
-            select(date_col.label("d"), func.count().label("c"))
-            .where(date_col >= start_date, LoginLog.user_id == user_id)
-            .group_by(date_col)
-            .order_by(date_col.asc())
-        )
-
-        try:
-            result = await db.execute(stmt)
-            return [{"date": str(row.d), "count": row.c} for row in result.all()]
-        except Exception as e:
-            logger.error(f"获取用户登录趋势失败: {e}")
-            return []
-
-    async def get_recent(self, db: AsyncSession, limit: int = 10) -> list[LoginLog]:
+    async def get_recent(self, db: AsyncSession, limit: int = 10, *, user_id: UUID | None = None) -> list[LoginLog]:
         """
         获取最近的登录日志。
 
@@ -186,15 +160,14 @@ class CRUDLoginLog(CRUDBase[LoginLog, LoginLogCreate, LoginLogCreate]):
         Returns:
             list[LoginLog]: 最近的登录日志列表。
         """
-        result = await db.execute(select(LoginLog).order_by(LoginLog.created_at.desc()).limit(limit))
+        stmt = select(LoginLog)
+        if user_id is not None:
+            stmt = stmt.where(LoginLog.user_id == user_id)
+        result = await db.execute(stmt.order_by(LoginLog.created_at.desc()).limit(limit))
         return list(result.scalars().all())
 
     async def get_recent_by_user(self, db: AsyncSession, *, user_id: UUID, limit: int = 10) -> list[LoginLog]:
-        """获取某个用户最近的登录日志。"""
-        result = await db.execute(
-            select(LoginLog).where(LoginLog.user_id == user_id).order_by(LoginLog.created_at.desc()).limit(limit)
-        )
-        return list(result.scalars().all())
+        return await self.get_recent(db, limit=limit, user_id=user_id)
 
 
 class CRUDOperationLog(CRUDBase[OperationLog, OperationLogCreate, OperationLogCreate]):
@@ -207,15 +180,11 @@ class CRUDOperationLog(CRUDBase[OperationLog, OperationLogCreate, OperationLogCr
         clauses = []
 
         # 文本字段：操作人、模块、IP、请求方法
-        pattern = f"%{kw}%"
-        clauses.append(
-            or_(
-                OperationLog.username.ilike(pattern),
-                OperationLog.module.ilike(pattern),
-                OperationLog.ip.ilike(pattern),
-                OperationLog.method.ilike(pattern),
-            )
+        text_clause = CRUDBase._or_ilike_contains(
+            kw, [OperationLog.username, OperationLog.module, OperationLog.ip, OperationLog.method]
         )
+        if text_clause is not None:
+            clauses.append(text_clause)
 
         # 状态码：keyword 是纯数字时，按 response_code 精确匹配
         if kw.isdigit():
@@ -243,7 +212,7 @@ class CRUDOperationLog(CRUDBase[OperationLog, OperationLogCreate, OperationLogCr
         result = await db.execute(stmt)
         return list(result.scalars().all()), total
 
-    async def count_by_range(self, db: AsyncSession, start: Any, end: Any) -> int:
+    async def count_by_range(self, db: AsyncSession, start: Any, end: Any, *, user_id: UUID | None = None) -> int:
         """
         统计指定时间范围内的操作日志数量。
 
@@ -255,21 +224,17 @@ class CRUDOperationLog(CRUDBase[OperationLog, OperationLogCreate, OperationLogCr
         Returns:
             int: 该时间段内的操作日志总数。
         """
-        result = await db.execute(
-            select(func.count(OperationLog.id)).where(OperationLog.created_at >= start, OperationLog.created_at <= end)
+        stmt = select(func.count(OperationLog.id)).where(
+            OperationLog.created_at >= start, OperationLog.created_at <= end
         )
+        if user_id is not None:
+            stmt = stmt.where(OperationLog.user_id == user_id)
+        result = await db.execute(stmt)
         return result.scalar_one()
 
     async def count_by_range_and_user(self, db: AsyncSession, start: Any, end: Any, *, user_id: UUID) -> int:
         """统计指定时间范围内某个用户的操作日志数量。"""
-        result = await db.execute(
-            select(func.count(OperationLog.id)).where(
-                OperationLog.created_at >= start,
-                OperationLog.created_at <= end,
-                OperationLog.user_id == user_id,
-            )
-        )
-        return result.scalar_one()
+        return await self.count_by_range(db, start, end, user_id=user_id)
 
 
 login_log = CRUDLoginLog(LoginLog)

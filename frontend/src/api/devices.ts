@@ -248,3 +248,22 @@ export function getDeviceOptions(params?: { status?: DeviceStatus }) {
     params: { page_size: 500, ...params },
   })
 }
+
+// ==================== 彻底删除 API ====================
+
+/** 彻底删除设备 */
+export function hardDeleteDevice(id: string) {
+  return request<ResponseBase<Record<string, unknown>>>({
+    url: `/devices/${id}/hard`,
+    method: 'delete',
+  })
+}
+
+/** 批量彻底删除设备 */
+export function batchHardDeleteDevices(ids: string[]) {
+  return request<ResponseBase<DeviceBatchResult>>({
+    url: '/devices/batch/hard',
+    method: 'delete',
+    data: { ids },
+  })
+}

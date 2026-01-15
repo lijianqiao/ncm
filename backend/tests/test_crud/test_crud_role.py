@@ -88,10 +88,11 @@ class TestCRUDRoleGet:
                 db_session,
                 obj_in=RoleCreate(name=f"Role {i}", code=f"role_{i}", description=None, sort=0),
             )
-        roles = await role_crud.get_multi(db_session, skip=0, limit=10)
+        roles, total = await role_crud.get_multi_paginated(db_session, page=1, page_size=10)
         # 注意：可能包含其他测试用例创建的数据，如果 fixture 隔离不够。
         # 但 function scope 通常意味着独立数据库状态（如果 rollback or drop_all）。
         # 我们的 fixture 先 create_all 后 drop_all，是隔离的。
+        assert total >= 3
         assert len(roles) >= 3
 
 
@@ -145,11 +146,14 @@ class TestCRUDRoleDelete:
         role_in = RoleCreate(name="Delete Role", code="delete_role", description=None, sort=0)
         role = await role_crud.create(db_session, obj_in=role_in)
 
-        deleted_role = await role_crud.remove(db_session, id=role.id)
-        assert deleted_role is not None
-        assert deleted_role.is_deleted is True
+        success_count, failed_ids = await role_crud.batch_remove(db_session, ids=[role.id])
+        assert success_count == 1
+        assert failed_ids == []
 
         # 普通 get 应该查不到
         assert await role_crud.get(db_session, id=role.id) is None
         # get_by_code 也查不到
         assert await role_crud.get_by_code(db_session, code="delete_role") is None
+
+        deleted_items, _ = await role_crud.get_multi_deleted_paginated(db_session, page=1, page_size=50)
+        assert any(x.id == role.id for x in deleted_items)

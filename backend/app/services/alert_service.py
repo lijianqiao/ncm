@@ -34,7 +34,7 @@ class AlertService:
         return alert
 
     async def list_alerts(self, query: AlertListQuery) -> tuple[list[Alert], int]:
-        return await self.alert_crud.get_multi_paginated_filtered(
+        return await self.alert_crud.get_multi_paginated(
             self.db,
             page=query.page,
             page_size=query.page_size,

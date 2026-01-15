@@ -586,13 +586,13 @@ class ScanService:
         result = CMDBCompareResult(compared_at=datetime.now())
 
         # 获取所有发现记录
-        discoveries, total_discovered = await self.discovery_crud.get_multi_paginated_filtered(
+        discoveries, total_discovered = await self.discovery_crud.get_multi_paginated(
             db, page=1, page_size=10000
         )
         result.total_discovered = total_discovered
 
         # 获取所有设备
-        devices, total_cmdb = await self.device_crud.get_multi_paginated_filtered(db, page=1, page_size=10000)
+        devices, total_cmdb = await self.device_crud.get_multi_paginated(db, page=1, page_size=10000)
         result.total_cmdb = total_cmdb
 
         # 构建设备 IP 索引
@@ -643,7 +643,7 @@ class ScanService:
         offline_devices: list[OfflineDevice] = []
 
         # 获取所有活跃设备
-        devices, _ = await self.device_crud.get_multi_paginated_filtered(
+        devices, _ = await self.device_crud.get_multi_paginated(
             db, page=1, page_size=10000, status=DeviceStatus.ACTIVE
         )
 
@@ -690,7 +690,7 @@ class ScanService:
         Returns:
             (discoveries, total): 发现记录列表和总数
         """
-        return await self.discovery_crud.get_multi_paginated_filtered(
+        return await self.discovery_crud.get_multi_paginated(
             db,
             page=page,
             page_size=page_size,

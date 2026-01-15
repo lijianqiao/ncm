@@ -11,7 +11,7 @@ from typing import Any
 from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import selectinload, with_loader_criteria
 
 from app.crud.base import CRUDBase
 from app.models.task import Task
@@ -45,14 +45,15 @@ class CRUDTask(CRUDBase[Task, TaskCreateSchema, TaskUpdateSchema]):
             selectinload(Task.submitter),
             selectinload(Task.template),
             selectinload(Task.approval_steps).selectinload(TaskApprovalStep.approver),
+            with_loader_criteria(TaskApprovalStep, TaskApprovalStep.is_deleted.is_(False), include_aliases=True),
         )
 
     async def get_with_related(self, db: AsyncSession, *, id) -> Task | None:
-        stmt = select(Task).where(Task.id == id)
+        stmt = select(Task).where(Task.id == id, Task.is_deleted.is_(False))
         stmt = self._with_related(stmt)
         return (await db.execute(stmt)).scalars().first()
 
-    async def get_multi_paginated_filtered(
+    async def get_multi_paginated(
         self,
         db: AsyncSession,
         *,
@@ -62,8 +63,10 @@ class CRUDTask(CRUDBase[Task, TaskCreateSchema, TaskUpdateSchema]):
         status: str | None = None,
         with_related: bool = False,
     ) -> tuple[list[Task], int]:
-        stmt = select(Task)
-        count_stmt = select(func.count(Task.id))
+        page, page_size = self._validate_pagination(page, page_size)
+
+        stmt = select(Task).where(Task.is_deleted.is_(False))
+        count_stmt = select(func.count(Task.id)).where(Task.is_deleted.is_(False))
 
         if task_type:
             stmt = stmt.where(Task.task_type == task_type)

@@ -55,10 +55,6 @@ def _normalize_key(key: str) -> bytes:
     Raises:
         EncryptionError: 密钥格式无效
     """
-    key = key.strip()
-    if (key.startswith('"') and key.endswith('"')) or (key.startswith("'") and key.endswith("'")):
-        key = key[1:-1].strip()
-
     # 尝试 hex 解码
     if len(key) == 64:
         try:

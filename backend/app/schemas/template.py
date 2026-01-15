@@ -115,3 +115,17 @@ class TemplateApproveRequest(BaseModel):
     level: int = Field(..., ge=1, le=3)
     approve: bool = Field(..., description="true=通过 false=拒绝")
     comment: str | None = None
+
+
+class TemplateBatchRequest(BaseModel):
+    """模板批量操作请求。"""
+
+    ids: list[UUID] = Field(..., min_length=1, description="模板ID列表")
+
+
+class TemplateBatchResult(BaseModel):
+    """模板批量操作结果。"""
+
+    success_count: int = Field(..., description="成功数量")
+    failed_count: int = Field(..., description="失败数量")
+    failed_ids: list[UUID] = Field(default_factory=list, description="失败的ID列表")

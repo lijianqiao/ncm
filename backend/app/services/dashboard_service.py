@@ -49,12 +49,14 @@ class DashboardService:
         today_end = today_start + timedelta(days=1)
 
         # 普通用户：个人维度
-        my_today_login_count = await self.login_log_crud.count_today_by_user(self.db, user_id=current_user.id)
-        my_today_operation_count = await self.operation_log_crud.count_by_range_and_user(
+        my_today_login_count = await self.login_log_crud.count_by_range(
             self.db, today_start, today_end, user_id=current_user.id
         )
-        my_login_trend = await self.login_log_crud.get_trend_by_user(self.db, user_id=current_user.id, days=7)
-        my_recent_logins_orm = await self.login_log_crud.get_recent_by_user(self.db, user_id=current_user.id, limit=10)
+        my_today_operation_count = await self.operation_log_crud.count_by_range(
+            self.db, today_start, today_end, user_id=current_user.id
+        )
+        my_login_trend = await self.login_log_crud.get_trend(self.db, days=7, user_id=current_user.id)
+        my_recent_logins_orm = await self.login_log_crud.get_recent(self.db, limit=10, user_id=current_user.id)
         my_recent_logins = [LoginLogSimple.model_validate(log) for log in my_recent_logins_orm]
 
         # 超级管理员：全局统计

@@ -6,6 +6,7 @@
 @Docs: 模板库 API 接口。
 """
 
+from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query
@@ -16,6 +17,8 @@ from app.core.permissions import PermissionCode
 from app.schemas.common import PaginatedResponse, ResponseBase
 from app.schemas.template import (
     TemplateApproveRequest,
+    TemplateBatchRequest,
+    TemplateBatchResult,
     TemplateCreate,
     TemplateNewVersionRequest,
     TemplateResponse,
@@ -236,3 +239,133 @@ async def delete_template(template_id: UUID, service: TemplateServiceDep) -> Res
     """
     template = await service.delete_template(template_id)
     return ResponseBase(data=TemplateResponse.model_validate(template))
+
+
+@router.delete(
+    "/batch",
+    response_model=ResponseBase[TemplateBatchResult],
+    dependencies=[Depends(require_permissions([PermissionCode.TEMPLATE_DELETE.value]))],
+    summary="批量删除模板",
+)
+async def batch_delete_templates(
+    request: TemplateBatchRequest,
+    service: TemplateServiceDep,
+) -> Any:
+    """批量删除模板（软删除）。"""
+    success_count, failed_ids = await service.batch_delete_templates(request.ids)
+    return ResponseBase(
+        data=TemplateBatchResult(
+            success_count=success_count,
+            failed_count=len(failed_ids),
+            failed_ids=failed_ids,
+        ),
+        message=f"批量删除完成，成功 {success_count} 条",
+    )
+
+
+@router.get(
+    "/recycle-bin",
+    response_model=ResponseBase[PaginatedResponse[TemplateResponse]],
+    dependencies=[Depends(require_permissions([PermissionCode.TEMPLATE_LIST.value]))],
+    summary="获取回收站模板列表",
+)
+async def read_recycle_bin_templates(
+    service: TemplateServiceDep,
+    page: int = Query(1, ge=1, description="页码"),
+    page_size: int = Query(20, ge=1, le=500, description="每页数量"),
+    keyword: str | None = Query(None, description="关键字搜索"),
+) -> ResponseBase[PaginatedResponse[TemplateResponse]]:
+    """获取回收站模板列表（已删除的模板）。"""
+    items, total = await service.get_recycle_bin_paginated(
+        page=page,
+        page_size=page_size,
+        keyword=keyword,
+    )
+    return ResponseBase(
+        data=PaginatedResponse(
+            items=[TemplateResponse.model_validate(x) for x in items],
+            total=total,
+            page=page,
+            page_size=page_size,
+        )
+    )
+
+
+@router.post(
+    "/{template_id}/restore",
+    response_model=ResponseBase[TemplateResponse],
+    dependencies=[Depends(require_permissions([PermissionCode.TEMPLATE_DELETE.value]))],
+    summary="恢复模板",
+)
+async def restore_template(
+    template_id: UUID,
+    service: TemplateServiceDep,
+) -> Any:
+    """恢复已删除的模板。"""
+    template = await service.restore_template(template_id)
+    return ResponseBase(
+        data=TemplateResponse.model_validate(template),
+        message="模板已恢复",
+    )
+
+
+@router.post(
+    "/batch/restore",
+    response_model=ResponseBase[TemplateBatchResult],
+    dependencies=[Depends(require_permissions([PermissionCode.TEMPLATE_DELETE.value]))],
+    summary="批量恢复模板",
+)
+async def batch_restore_templates(
+    request: TemplateBatchRequest,
+    service: TemplateServiceDep,
+) -> Any:
+    """批量恢复已删除的模板。"""
+    success_count, failed_ids = await service.batch_restore_templates(request.ids)
+    return ResponseBase(
+        data=TemplateBatchResult(
+            success_count=success_count,
+            failed_count=len(failed_ids),
+            failed_ids=failed_ids,
+        ),
+        message=f"批量恢复完成，成功 {success_count} 条",
+    )
+
+
+@router.delete(
+    "/{template_id}/hard",
+    response_model=ResponseBase[dict],
+    dependencies=[Depends(require_permissions([PermissionCode.TEMPLATE_DELETE.value]))],
+    summary="彻底删除模板",
+)
+async def hard_delete_template(
+    template_id: UUID,
+    service: TemplateServiceDep,
+) -> Any:
+    """彻底删除模板（硬删除，不可恢复）。"""
+    await service.hard_delete_template(template_id)
+    return ResponseBase(
+        data={"message": "模板已彻底删除"},
+        message="模板已彻底删除",
+    )
+
+
+@router.delete(
+    "/batch/hard",
+    response_model=ResponseBase[TemplateBatchResult],
+    dependencies=[Depends(require_permissions([PermissionCode.TEMPLATE_DELETE.value]))],
+    summary="批量彻底删除模板",
+)
+async def batch_hard_delete_templates(
+    request: TemplateBatchRequest,
+    service: TemplateServiceDep,
+) -> Any:
+    """批量彻底删除模板（硬删除，不可恢复）。"""
+    success_count, failed_ids = await service.batch_hard_delete_templates(request.ids)
+    return ResponseBase(
+        data=TemplateBatchResult(
+            success_count=success_count,
+            failed_count=len(failed_ids),
+            failed_ids=failed_ids,
+        ),
+        message=f"批量彻底删除完成，成功 {success_count} 条",
+    )

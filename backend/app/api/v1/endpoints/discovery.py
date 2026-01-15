@@ -184,7 +184,7 @@ async def list_discoveries(
     Returns:
         ResponseBase[PaginatedResponse[DiscoveryResponse]]: 包含发现资产详情的分页响应。
     """
-    items, total = await discovery_crud.get_multi_paginated_filtered(
+    items, total = await discovery_crud.get_multi_paginated(
         db,
         page=page,
         page_size=page_size,

@@ -126,12 +126,13 @@ class TestCRUDDeptHelpers:
 @pytest.mark.asyncio
 async def test_soft_delete_excluded_by_default(db_session: AsyncSession):
     dept = await _create_dept(db_session, name="总部", code="HQ", leader="张三")
-    deleted = await dept_crud.remove(db_session, id=dept.id)
-    assert deleted is not None
-    assert deleted.is_deleted is True
+    success_count, failed_ids = await dept_crud.batch_remove(db_session, ids=[dept.id])
+    assert success_count == 1
+    assert failed_ids == []
 
     items, _ = await dept_crud.get_multi_paginated(db_session, page=1, page_size=50)
     assert not any(x.id == dept.id for x in items)
 
     items_deleted, _ = await dept_crud.get_multi_paginated(db_session, page=1, page_size=50, include_deleted=True)
     assert any(x.id == dept.id for x in items_deleted)
+    assert next(x for x in items_deleted if x.id == dept.id).is_deleted is True

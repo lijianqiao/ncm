@@ -12,6 +12,7 @@ from uuid import UUID
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
+from sqlalchemy.sql.elements import ColumnElement
 
 from app.crud.base import CRUDBase
 from app.models.backup import Backup
@@ -62,26 +63,17 @@ class CRUDBackup(CRUDBase[Backup, BackupCreate, BackupUpdate]):
         """
         page, page_size = self._validate_pagination(page, page_size, max_size=500, default_size=20)
 
-        # 基础查询
-        base_query = select(self.model).where(self.model.device_id == device_id).where(self.model.is_deleted.is_(False))
-
-        # 计算总数
-        count_query = select(func.count()).select_from(base_query.subquery())
-        total_result = await db.execute(count_query)
-        total = total_result.scalar() or 0
-
-        # 分页查询（按创建时间倒序）
-        skip = (page - 1) * page_size
-        items_query = (
-            base_query.options(selectinload(Backup.device), selectinload(Backup.operator))
+        where_clause = (self.model.device_id == device_id) & (self.model.is_deleted.is_(False))
+        count_stmt = select(func.count(Backup.id)).where(where_clause)
+        stmt = (
+            select(self.model)
+            .options(selectinload(Backup.device), selectinload(Backup.operator))
+            .where(where_clause)
             .order_by(self.model.created_at.desc())
-            .offset(skip)
-            .limit(page_size)
         )
-        items_result = await db.execute(items_query)
-        items = list(items_result.scalars().all())
-
-        return items, total
+        return await self.paginate(
+            db, stmt=stmt, count_stmt=count_stmt, page=page, page_size=page_size, max_size=500, default_size=20
+        )
 
     async def get_latest_by_device(self, db: AsyncSession, device_id: UUID) -> Backup | None:
         """
@@ -131,7 +123,7 @@ class CRUDBackup(CRUDBase[Backup, BackupCreate, BackupUpdate]):
         result = await db.execute(query)
         return result.scalar()
 
-    async def get_multi_paginated_filtered(
+    async def get_multi_paginated(
         self,
         db: AsyncSession,
         *,
@@ -161,46 +153,31 @@ class CRUDBackup(CRUDBase[Backup, BackupCreate, BackupUpdate]):
         """
         page, page_size = self._validate_pagination(page, page_size, max_size=500, default_size=20)
 
-        # 基础查询
-        base_query = select(self.model).where(self.model.is_deleted.is_(False))
-
-        # 设备筛选
+        conditions: list[ColumnElement[bool]] = [self.model.is_deleted.is_(False)]
         if device_id:
-            base_query = base_query.where(self.model.device_id == device_id)
-
-        # 备份类型筛选
+            conditions.append(self.model.device_id == device_id)
         if backup_type:
-            base_query = base_query.where(self.model.backup_type == backup_type)
-
-        # 状态筛选
+            conditions.append(self.model.backup_type == backup_type)
         if status:
-            base_query = base_query.where(self.model.status == status)
-
-        # 时间范围筛选
+            conditions.append(self.model.status == status)
         if start_date:
-            base_query = base_query.where(self.model.created_at >= start_date)
+            conditions.append(self.model.created_at >= start_date)
         if end_date:
-            base_query = base_query.where(self.model.created_at <= end_date)
+            conditions.append(self.model.created_at <= end_date)
 
-        # 计算总数
-        count_query = select(func.count()).select_from(base_query.subquery())
-        total_result = await db.execute(count_query)
-        total = total_result.scalar() or 0
-
-        # 分页查询
-        skip = (page - 1) * page_size
-        items_query = (
-            base_query.options(selectinload(Backup.device), selectinload(Backup.operator))
+        where_clause = self._and_where(conditions)
+        count_stmt = select(func.count(Backup.id)).where(where_clause)
+        stmt = (
+            select(self.model)
+            .options(selectinload(Backup.device), selectinload(Backup.operator))
+            .where(where_clause)
             .order_by(self.model.created_at.desc())
-            .offset(skip)
-            .limit(page_size)
         )
-        items_result = await db.execute(items_query)
-        items = list(items_result.scalars().all())
+        return await self.paginate(
+            db, stmt=stmt, count_stmt=count_stmt, page=page, page_size=page_size, max_size=500, default_size=20
+        )
 
-        return items, total
-
-    async def get_multi_paginated_deleted_filtered(
+    async def get_multi_deleted_paginated(
         self,
         db: AsyncSession,
         *,
@@ -215,37 +192,29 @@ class CRUDBackup(CRUDBase[Backup, BackupCreate, BackupUpdate]):
         """获取回收站（已软删除）备份列表（分页过滤）。"""
         page, page_size = self._validate_pagination(page, page_size, max_size=500, default_size=20)
 
-        base_query = select(self.model).where(self.model.is_deleted.is_(True))
-
+        conditions: list[ColumnElement[bool]] = [self.model.is_deleted.is_(True)]
         if device_id:
-            base_query = base_query.where(self.model.device_id == device_id)
-
+            conditions.append(self.model.device_id == device_id)
         if backup_type:
-            base_query = base_query.where(self.model.backup_type == backup_type)
-
+            conditions.append(self.model.backup_type == backup_type)
         if status:
-            base_query = base_query.where(self.model.status == status)
-
+            conditions.append(self.model.status == status)
         if start_date:
-            base_query = base_query.where(self.model.created_at >= start_date)
+            conditions.append(self.model.created_at >= start_date)
         if end_date:
-            base_query = base_query.where(self.model.created_at <= end_date)
+            conditions.append(self.model.created_at <= end_date)
 
-        count_query = select(func.count()).select_from(base_query.subquery())
-        total_result = await db.execute(count_query)
-        total = total_result.scalar() or 0
-
-        skip = (page - 1) * page_size
-        items_query = (
-            base_query.options(selectinload(Backup.device), selectinload(Backup.operator))
+        where_clause = self._and_where(conditions)
+        count_stmt = select(func.count(Backup.id)).where(where_clause)
+        stmt = (
+            select(self.model)
+            .options(selectinload(Backup.device), selectinload(Backup.operator))
+            .where(where_clause)
             .order_by(self.model.created_at.desc())
-            .offset(skip)
-            .limit(page_size)
         )
-        items_result = await db.execute(items_query)
-        items = list(items_result.scalars().all())
-
-        return items, total
+        return await self.paginate(
+            db, stmt=stmt, count_stmt=count_stmt, page=page, page_size=page_size, max_size=500, default_size=20
+        )
 
     async def count_by_device(self, db: AsyncSession, device_id: UUID) -> int:
         """

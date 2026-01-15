@@ -31,7 +31,7 @@ class InventoryAuditService:
         return audit
 
     async def list_paginated(self, *, page: int = 1, page_size: int = 20, status: str | None = None):
-        return await self.inventory_audit_crud.get_multi_paginated_filtered(
+        return await self.inventory_audit_crud.get_multi_paginated(
             self.db, page=page, page_size=page_size, status=status
         )
 

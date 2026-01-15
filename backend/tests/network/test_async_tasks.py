@@ -9,8 +9,16 @@
 """
 
 import asyncio
+import os
 import time
 from typing import Any
+
+import pytest
+
+pytestmark = pytest.mark.skipif(
+    os.getenv("NCM_RUN_NETWORK_TESTS") != "1",
+    reason="网络集成测试默认跳过；设置 NCM_RUN_NETWORK_TESTS=1 才运行",
+)
 
 
 # 测试用的模拟 Host 对象

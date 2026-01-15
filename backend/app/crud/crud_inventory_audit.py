@@ -15,7 +15,7 @@ from app.schemas.inventory_audit import InventoryAuditCreate
 
 
 class CRUDInventoryAudit(CRUDBase[InventoryAudit, InventoryAuditCreate, InventoryAuditCreate]):
-    async def get_multi_paginated_filtered(
+    async def get_multi_paginated(
         self,
         db: AsyncSession,
         *,

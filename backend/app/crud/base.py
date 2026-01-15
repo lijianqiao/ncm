@@ -6,12 +6,14 @@
 @Docs: 通用 CRUD 仓库基类 (Generic CRUD Repository) - 支持软删除和批量操作。
 """
 
-from typing import Any, TypeVar
+from collections.abc import Iterable, Sequence
+from typing import Any, TypeVar, cast
 from uuid import UUID
 
 from pydantic import BaseModel
-from sqlalchemy import func, select
+from sqlalchemy import and_, delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql.elements import ColumnElement
 
 from app.models.base import Base, SoftDeleteMixin
 
@@ -38,6 +40,7 @@ class CRUDBase[ModelType: Base, CreateSchemaType: BaseModel, UpdateSchemaType: B
             model (Type[ModelType]): SQLAlchemy 模型类。
         """
         self.model = model
+        self._supports_soft_delete = issubclass(model, SoftDeleteMixin)
 
     @staticmethod
     def _normalize_keyword(keyword: str | None) -> str | None:
@@ -79,14 +82,87 @@ class CRUDBase[ModelType: Base, CreateSchemaType: BaseModel, UpdateSchemaType: B
         """
         return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
+    @classmethod
+    def _ilike_contains(cls, column, keyword: str) -> ColumnElement[bool]:
+        kw = cls._normalize_keyword(keyword)
+        if not kw:
+            raise ValueError("keyword 不能为空")
+        escaped = cls._escape_like(kw)
+        return column.ilike(f"%{escaped}%", escape="\\")
+
+    @classmethod
+    def _or_ilike_contains(cls, keyword: str | None, columns: Sequence[Any]) -> ColumnElement[bool] | None:
+        kw = cls._normalize_keyword(keyword)
+        if not kw:
+            return None
+        escaped = cls._escape_like(kw)
+        pattern = f"%{escaped}%"
+        return or_(*(col.ilike(pattern, escape="\\") for col in columns))
+
+    @staticmethod
+    def _and_where(conditions: Iterable[ColumnElement[bool]]) -> ColumnElement[bool]:
+        conds = list(conditions)
+        return and_(*conds) if conds else and_(True)  # type: ignore[arg-type]
+
+    @classmethod
+    def _parse_bool_keyword(
+        cls,
+        keyword: str | None,
+        *,
+        true_values: set[str] | None = None,
+        false_values: set[str] | None = None,
+    ) -> bool | None:
+        kw = cls._normalize_keyword(keyword)
+        if not kw:
+            return None
+        normalized = kw.strip().lower()
+        t = true_values or {"true", "1", "yes", "y", "是", "对", "开启", "启用", "显示", "hidden"}
+        f = false_values or {"false", "0", "no", "n", "否", "错", "关闭", "禁用", "隐藏", "visible"}
+        if normalized in {x.lower() for x in t} or kw in t:
+            return True
+        if normalized in {x.lower() for x in f} or kw in f:
+            return False
+        return None
+
+    @classmethod
+    def _bool_clause_from_keyword(
+        cls,
+        keyword: str | None,
+        column,
+        *,
+        true_values: set[str] | None = None,
+        false_values: set[str] | None = None,
+    ) -> ColumnElement[bool] | None:
+        value = cls._parse_bool_keyword(keyword, true_values=true_values, false_values=false_values)
+        if value is None:
+            return None
+        return column.is_(value)
+
+    async def paginate(
+        self,
+        db: AsyncSession,
+        *,
+        stmt,
+        count_stmt,
+        page: int = 1,
+        page_size: int = 20,
+        max_size: int = 100,
+        default_size: int = 20,
+    ) -> tuple[list[ModelType], int]:
+        page, page_size = self._validate_pagination(page, page_size, max_size=max_size, default_size=default_size)
+        total = await db.scalar(count_stmt) or 0
+        items = (await db.execute(stmt.offset((page - 1) * page_size).limit(page_size))).scalars().all()
+        return list(items), int(total)
+
     async def get(self, db: AsyncSession, id: UUID) -> ModelType | None:
         """
         通过 ID 获取单个记录。
         """
         query = select(self.model).where(self.model.id == id)  # pyright: ignore[reportAttributeAccessIssue]
 
-        if issubclass(self.model, SoftDeleteMixin):
-            query = query.where(self.model.is_deleted.is_(False))
+        if self._supports_soft_delete:
+            soft_model = cast(type[SoftDeleteMixin], self.model)
+            query = query.where(soft_model.is_deleted.is_(False))
 
         result = await db.execute(query)
         return result.scalars().first()
@@ -97,8 +173,9 @@ class CRUDBase[ModelType: Base, CreateSchemaType: BaseModel, UpdateSchemaType: B
         """
         query = select(func.count()).select_from(self.model)
 
-        if issubclass(self.model, SoftDeleteMixin):
-            query = query.where(self.model.is_deleted.is_(False))
+        if self._supports_soft_delete:
+            soft_model = cast(type[SoftDeleteMixin], self.model)
+            query = query.where(soft_model.is_deleted.is_(False))
 
         result = await db.execute(query)
         return result.scalar() or 0
@@ -123,8 +200,9 @@ class CRUDBase[ModelType: Base, CreateSchemaType: BaseModel, UpdateSchemaType: B
 
         # 内联查询逻辑（原 get_multi）
         query = select(self.model)
-        if issubclass(self.model, SoftDeleteMixin):
-            query = query.where(self.model.is_deleted.is_(False))
+        if self._supports_soft_delete:
+            soft_model = cast(type[SoftDeleteMixin], self.model)
+            query = query.where(soft_model.is_deleted.is_(False))
         query = query.offset(skip).limit(page_size)
         result = await db.execute(query)
         items = list(result.scalars().all())
@@ -172,65 +250,37 @@ class CRUDBase[ModelType: Base, CreateSchemaType: BaseModel, UpdateSchemaType: B
         Returns:
             (success_count, failed_ids): 成功数量和失败的 ID 列表
         """
-        success_count = 0
-        failed_ids: list[UUID] = []
-
-        # 空列表早返回
         if not ids:
-            return success_count, failed_ids
+            return 0, []
 
-        # 去重
-        unique_ids = list(dict.fromkeys(ids))
+        unique_ids = list[UUID](dict.fromkeys(ids))
 
-        # 批量查询所有记录（解决 N+1 问题）
-        if hard_delete:
-            # 硬删除：包含已软删除的记录
-            query = select(self.model).where(
-                self.model.id.in_(unique_ids)  # pyright: ignore[reportAttributeAccessIssue]
-            )
+        existing_stmt = select(self.model.id).where(  # pyright: ignore[reportAttributeAccessIssue]
+            self.model.id.in_(unique_ids)  # pyright: ignore[reportAttributeAccessIssue]
+        )
+        if not hard_delete and self._supports_soft_delete:
+            soft_model = cast(type[SoftDeleteMixin], self.model)
+            existing_stmt = existing_stmt.where(soft_model.is_deleted.is_(False))
+
+        existing_ids = set((await db.execute(existing_stmt)).scalars().all())
+        failed_ids = [id_ for id_ in unique_ids if id_ not in existing_ids]
+        if not existing_ids:
+            return 0, failed_ids
+
+        id_list = list(existing_ids)
+        if hard_delete or not self._supports_soft_delete:
+            stmt = delete(self.model).where(self.model.id.in_(id_list))  # pyright: ignore[reportAttributeAccessIssue]
         else:
-            # 软删除：仅查询未删除的记录
-            query = select(self.model).where(
-                self.model.id.in_(unique_ids)  # pyright: ignore[reportAttributeAccessIssue]
+            stmt = (
+                update(self.model)  # pyright: ignore[reportAttributeAccessIssue]
+                .where(self.model.id.in_(id_list))  # pyright: ignore[reportAttributeAccessIssue]
+                .values(is_deleted=True)
             )
-            if issubclass(self.model, SoftDeleteMixin):
-                query = query.where(self.model.is_deleted.is_(False))
 
-        result = await db.execute(query)
-        objects_map: dict[UUID, ModelType] = {obj.id: obj for obj in result.scalars().all()}  # pyright: ignore[reportAttributeAccessIssue]
-
-        # 处理每条记录
-        for id_ in unique_ids:
-            obj = objects_map.get(id_)
-
-            if not obj:
-                failed_ids.append(id_)
-                continue
-
-            try:
-                if hard_delete:
-                    await db.delete(obj)
-                elif isinstance(obj, SoftDeleteMixin):
-                    obj.is_deleted = True
-                    db.add(obj)
-                else:
-                    await db.delete(obj)
-
-                success_count += 1
-            except Exception as e:
-                from app.core.logger import logger
-
-                logger.warning(
-                    "批量删除记录失败",
-                    record_id=str(id_),
-                    model=self.model.__name__,
-                    error_type=type(e).__name__,
-                    error_message=str(e),
-                )
-                failed_ids.append(id_)
-
+        result = await db.execute(stmt)
         await db.flush()
-        return success_count, failed_ids
+        rowcount = getattr(result, "rowcount", None)
+        return int(rowcount or 0), failed_ids
 
     async def batch_restore(self, db: AsyncSession, *, ids: list[UUID]) -> tuple[int, list[UUID]]:
         """
@@ -243,49 +293,33 @@ class CRUDBase[ModelType: Base, CreateSchemaType: BaseModel, UpdateSchemaType: B
         Returns:
             成功恢复数量和失败 ID 列表
         """
-        success_count = 0
-        failed_ids: list[UUID] = []
-
         if not ids:
-            return success_count, failed_ids
+            return 0, []
 
-        # 去重
         unique_ids = list(dict.fromkeys(ids))
+        if not self._supports_soft_delete:
+            return 0, unique_ids
 
-        # 批量查询所有记录（包括已删除的）
-        query = select(self.model).where(
+        soft_model = cast(type[SoftDeleteMixin], self.model)
+        stmt = select(soft_model.id, soft_model.is_deleted).where(  # pyright: ignore[reportAttributeAccessIssue]
             self.model.id.in_(unique_ids)  # pyright: ignore[reportAttributeAccessIssue]
         )
-        result = await db.execute(query)
-        objects_map: dict[UUID, ModelType] = {
-            obj.id: obj  # pyright: ignore[reportAttributeAccessIssue]
-            for obj in result.scalars().all()  # pyright: ignore[reportAttributeAccessIssue]
-        }
+        rows = (await db.execute(stmt)).all()
 
-        # 处理每条记录
-        for id_ in unique_ids:
-            obj = objects_map.get(id_)
+        existing_map: dict[UUID, bool] = {row[0]: bool(row[1]) for row in rows}
+        existing_ids = set(existing_map.keys())
+        failed_ids = [id_ for id_ in unique_ids if id_ not in existing_ids]
 
-            if not obj:
-                failed_ids.append(id_)
-                continue
-
-            try:
-                if isinstance(obj, SoftDeleteMixin) and obj.is_deleted:
-                    obj.is_deleted = False
-                    db.add(obj)
-                    success_count += 1
-                elif isinstance(obj, SoftDeleteMixin) and not obj.is_deleted:
-                    # 记录未被删除，视为成功（幂等操作）
-                    success_count += 1
-                else:
-                    # 非软删除模型，无法恢复
-                    failed_ids.append(id_)
-            except Exception:
-                failed_ids.append(id_)
+        to_restore = [id_ for id_, is_deleted in existing_map.items() if is_deleted]
+        if to_restore:
+            await db.execute(
+                update(self.model)  # pyright: ignore[reportAttributeAccessIssue]
+                .where(self.model.id.in_(to_restore))  # pyright: ignore[reportAttributeAccessIssue]
+                .values(is_deleted=False)
+            )
 
         await db.flush()
-        return success_count, failed_ids
+        return len(existing_ids), failed_ids
 
     async def _count_deleted(self, db: AsyncSession) -> int:
         """
@@ -294,12 +328,11 @@ class CRUDBase[ModelType: Base, CreateSchemaType: BaseModel, UpdateSchemaType: B
         Returns:
             已删除记录总数，非软删除模型返回 0
         """
-        if not issubclass(self.model, SoftDeleteMixin):
+        if not self._supports_soft_delete:
             return 0
 
-        result = await db.execute(
-            select(func.count()).select_from(self.model).where(self.model.is_deleted.is_(True))
-        )
+        soft_model = cast(type[SoftDeleteMixin], self.model)
+        result = await db.execute(select(func.count()).select_from(self.model).where(soft_model.is_deleted.is_(True)))
         return result.scalar() or 0
 
     async def get_multi_by_ids(self, db: AsyncSession, *, ids: list[UUID]) -> list[ModelType]:
@@ -320,8 +353,9 @@ class CRUDBase[ModelType: Base, CreateSchemaType: BaseModel, UpdateSchemaType: B
             self.model.id.in_(ids)  # pyright: ignore[reportAttributeAccessIssue]
         )
 
-        if issubclass(self.model, SoftDeleteMixin):
-            query = query.where(self.model.is_deleted.is_(False))
+        if self._supports_soft_delete:
+            soft_model = cast(type[SoftDeleteMixin], self.model)
+            query = query.where(soft_model.is_deleted.is_(False))
 
         result = await db.execute(query)
         return list(result.scalars().all())
@@ -340,7 +374,7 @@ class CRUDBase[ModelType: Base, CreateSchemaType: BaseModel, UpdateSchemaType: B
         Returns:
             (items, total): 已删除记录列表和总数
         """
-        if not issubclass(self.model, SoftDeleteMixin):
+        if not self._supports_soft_delete:
             return [], 0
 
         page, page_size = self._validate_pagination(page, page_size)
@@ -350,11 +384,7 @@ class CRUDBase[ModelType: Base, CreateSchemaType: BaseModel, UpdateSchemaType: B
 
         # 分页查询
         skip = (page - 1) * page_size
-        query = (
-            select(self.model)
-            .where(self.model.is_deleted.is_(True))
-            .offset(skip)
-            .limit(page_size)
-        )
+        soft_model = cast(type[SoftDeleteMixin], self.model)
+        query = select(self.model).where(soft_model.is_deleted.is_(True)).offset(skip).limit(page_size)
         result = await db.execute(query)
         return list(result.scalars().all()), total

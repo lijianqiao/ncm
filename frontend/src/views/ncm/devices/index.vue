@@ -27,6 +27,8 @@ import {
   getRecycleBinDevices,
   restoreDevice,
   batchRestoreDevices,
+  hardDeleteDevice,
+  batchHardDeleteDevices,
   transitionDeviceStatus,
   batchTransitionDeviceStatus,
   getDeviceLifecycleStats,
@@ -55,6 +57,7 @@ import {
 import { getDeptTree, type Dept } from '@/api/depts'
 import { formatDateTime } from '@/utils/date'
 import ProTable, { type FilterConfig } from '@/components/common/ProTable.vue'
+import RecycleBinModal from '@/components/common/RecycleBinModal.vue'
 import { DeviceStatistics } from './components'
 
 defineOptions({
@@ -63,8 +66,6 @@ defineOptions({
 
 const dialog = useDialog()
 const tableRef = ref()
-const recycleBinTableRef = ref()
-const checkedRowKeys = ref<Array<string | number>>([])
 
 // ==================== 常量定义（使用统一枚举） ====================
 
@@ -452,14 +453,33 @@ const submitBatchTransition = async () => {
 // ==================== 回收站 ====================
 
 const showRecycleBin = ref(false)
-const checkedRecycleBinRowKeys = ref<Array<string | number>>([])
+const recycleBinRef = ref()
 
-const handleRecycleBin = () => {
-  showRecycleBin.value = true
-  checkedRecycleBinRowKeys.value = []
-}
+const recycleBinColumns: DataTableColumns<Device> = [
+  { type: 'selection', fixed: 'left' },
+  { title: '设备名称', key: 'name', width: 150, ellipsis: { tooltip: true } },
+  { title: 'IP 地址', key: 'ip_address', width: 140 },
+  {
+    title: '厂商',
+    key: 'vendor',
+    width: 100,
+    render: (row) => (row.vendor ? vendorLabelMap[row.vendor] : '-'),
+  },
+  {
+    title: '设备分组',
+    key: 'device_group',
+    width: 100,
+    render: (row) => (row.device_group ? groupLabelMap[row.device_group] : '-'),
+  },
+  {
+    title: '删除时间',
+    key: 'updated_at',
+    width: 180,
+    render: (row) => formatDateTime(row.updated_at),
+  },
+]
 
-const recycleBinRequest = async (params: DeviceSearchParams) => {
+const loadRecycleBinData = async (params: { page?: number; page_size?: number; keyword?: string }) => {
   const res = await getRecycleBinDevices(params)
   return {
     data: res.data.items,
@@ -467,31 +487,45 @@ const recycleBinRequest = async (params: DeviceSearchParams) => {
   }
 }
 
-const recycleBinContextMenuOptions: DropdownOption[] = [{ label: '恢复', key: 'restore' }]
-
-const handleRecycleBinContextMenuSelect = async (key: string | number, row: Device) => {
-  if (key === 'restore') {
-    try {
-      await restoreDevice(row.id)
-      $alert.success('设备已恢复')
-      recycleBinTableRef.value?.reload()
-      tableRef.value?.reload()
-      fetchLifecycleStats()
-    } catch {
-      // Error handled
-    }
+const handleRestore = async (row: Device) => {
+  try {
+    await restoreDevice(row.id)
+    $alert.success('设备已恢复')
+    recycleBinRef.value?.reload()
+    tableRef.value?.reload()
+    fetchLifecycleStats()
+  } catch {
+    // Error handled
   }
 }
 
-const handleBatchRestore = async () => {
-  if (checkedRecycleBinRowKeys.value.length === 0) return
+const handleBatchRestore = async (ids: Array<string | number>) => {
   try {
-    await batchRestoreDevices(checkedRecycleBinRowKeys.value as string[])
+    await batchRestoreDevices(ids as string[])
     $alert.success('批量恢复成功')
-    checkedRecycleBinRowKeys.value = []
-    recycleBinTableRef.value?.reload()
+    recycleBinRef.value?.reload()
     tableRef.value?.reload()
     fetchLifecycleStats()
+  } catch {
+    // Error handled
+  }
+}
+
+const handleHardDelete = async (row: Device) => {
+  try {
+    await hardDeleteDevice(row.id)
+    $alert.success('设备已彻底删除')
+    recycleBinRef.value?.reload()
+  } catch {
+    // Error handled
+  }
+}
+
+const handleBatchHardDelete = async (ids: Array<string | number>) => {
+  try {
+    await batchHardDeleteDevices(ids as string[])
+    $alert.success('批量彻底删除成功')
+    recycleBinRef.value?.reload()
   } catch {
     // Error handled
   }
@@ -520,58 +554,35 @@ const handleBatchRestore = async () => {
       search-placeholder="搜索设备名称/IP/序列号"
       :search-filters="searchFilters"
       @add="handleCreate"
+      @batch-delete="handleBatchDelete"
       @context-menu-select="handleContextMenuSelect"
-      @recycle-bin="handleRecycleBin"
       show-add
-      show-recycle-bin
-      v-model:checked-row-keys="checkedRowKeys"
+      show-batch-delete
       :scroll-x="1800"
     >
       <template #toolbar-left>
-        <n-space>
-          <n-button
-            type="error"
-            :disabled="checkedRowKeys.length === 0"
-            @click="handleBatchDelete(checkedRowKeys)"
-          >
-            批量删除
-          </n-button>
-          <n-button type="info" :disabled="checkedRowKeys.length === 0" @click="handleBatchTransition">
-            批量状态流转
-          </n-button>
-        </n-space>
+        <n-button type="info" @click="handleBatchTransition"> 批量状态流转 </n-button>
+      </template>
+      <template #toolbar>
+        <n-button @click="showRecycleBin = true">回收站</n-button>
       </template>
     </ProTable>
 
     <!-- 回收站 Modal -->
-    <n-modal
+    <RecycleBinModal
+      ref="recycleBinRef"
       v-model:show="showRecycleBin"
-      preset="card"
       title="回收站 (已删除设备)"
-      style="width: 900px"
-    >
-      <ProTable
-        ref="recycleBinTableRef"
-        :columns="columns"
-        :request="recycleBinRequest"
-        :row-key="(row: Device) => row.id"
-        search-placeholder="搜索已删除设备..."
-        :context-menu-options="recycleBinContextMenuOptions"
-        @context-menu-select="handleRecycleBinContextMenuSelect"
-        v-model:checked-row-keys="checkedRecycleBinRowKeys"
-        :scroll-x="1800"
-      >
-        <template #toolbar-left>
-          <n-button
-            type="success"
-            :disabled="checkedRecycleBinRowKeys.length === 0"
-            @click="handleBatchRestore"
-          >
-            批量恢复
-          </n-button>
-        </template>
-      </ProTable>
-    </n-modal>
+      :columns="recycleBinColumns"
+      :request="loadRecycleBinData"
+      :row-key="(row: Device) => row.id"
+      search-placeholder="搜索已删除设备..."
+      :scroll-x="900"
+      @restore="handleRestore"
+      @batch-restore="handleBatchRestore"
+      @hard-delete="handleHardDelete"
+      @batch-hard-delete="handleBatchHardDelete"
+    />
 
     <!-- 创建/编辑设备 Modal -->
     <n-modal

@@ -27,6 +27,8 @@ from app.schemas.credential import DeviceCredential
 OTP_CACHE_PREFIX = "ncm:otp"
 OTP_CACHE_TTL = 60  # 60 秒
 
+redis_client = None
+
 
 class OTPService:
     """
@@ -114,14 +116,15 @@ class OTPService:
             - TTL: 60 秒
             - 同一部门下不同设备分组的 OTP 相互隔离
         """
-        if cache_module.redis_client is None:
+        client = redis_client or cache_module.redis_client
+        if client is None:
             logger.warning("Redis 未连接，OTP 缓存功能不可用")
             return 0
 
         cache_key = self._get_cache_key(dept_id, device_group)
 
         try:
-            await cache_module.redis_client.setex(cache_key, self.cache_ttl, otp_code)
+            await client.setex(cache_key, self.cache_ttl, otp_code)
             logger.info(f"OTP 已缓存: {cache_key}, TTL={self.cache_ttl}s")
             return self.cache_ttl
         except Exception as e:
@@ -139,13 +142,14 @@ class OTPService:
         Returns:
             缓存的 OTP 验证码，不存在或过期返回 None
         """
-        if cache_module.redis_client is None:
+        client = redis_client or cache_module.redis_client
+        if client is None:
             return None
 
         cache_key = self._get_cache_key(dept_id, device_group)
 
         try:
-            otp_code = await cache_module.redis_client.get(cache_key)
+            otp_code = await client.get(cache_key)
             if otp_code:
                 logger.debug(f"OTP 缓存命中: {cache_key}")
             return otp_code
@@ -164,13 +168,14 @@ class OTPService:
         Returns:
             剩余秒数，不存在返回 -2，无过期时间返回 -1
         """
-        if cache_module.redis_client is None:
+        client = redis_client or cache_module.redis_client
+        if client is None:
             return -2
 
         cache_key = self._get_cache_key(dept_id, device_group)
 
         try:
-            ttl = await cache_module.redis_client.ttl(cache_key)
+            ttl = await client.ttl(cache_key)
             return ttl
         except Exception as e:
             logger.error(f"获取 OTP TTL 失败: {e}")
@@ -187,13 +192,14 @@ class OTPService:
         Returns:
             是否成功删除
         """
-        if cache_module.redis_client is None:
+        client = redis_client or cache_module.redis_client
+        if client is None:
             return False
 
         cache_key = self._get_cache_key(dept_id, device_group)
 
         try:
-            deleted = await cache_module.redis_client.delete(cache_key)
+            deleted = await client.delete(cache_key)
             if deleted:
                 logger.info(f"OTP 缓存已失效: {cache_key}")
             return bool(deleted)

@@ -37,12 +37,18 @@ class TaskApprovalStepUpdateSchema(BaseModel):
 
 class CRUDTaskApprovalStep(CRUDBase[TaskApprovalStep, TaskApprovalStepCreateSchema, TaskApprovalStepUpdateSchema]):
     async def get_by_task_and_level(self, db: AsyncSession, *, task_id, level: int) -> TaskApprovalStep | None:
-        stmt = select(TaskApprovalStep).where(TaskApprovalStep.task_id == task_id, TaskApprovalStep.level == level)
+        stmt = select(TaskApprovalStep).where(
+            TaskApprovalStep.task_id == task_id,
+            TaskApprovalStep.level == level,
+            TaskApprovalStep.is_deleted.is_(False),
+        )
         return (await db.execute(stmt)).scalars().first()
 
     async def list_by_task(self, db: AsyncSession, *, task_id) -> list[TaskApprovalStep]:
         stmt = (
-            select(TaskApprovalStep).where(TaskApprovalStep.task_id == task_id).order_by(TaskApprovalStep.level.asc())
+            select(TaskApprovalStep)
+            .where(TaskApprovalStep.task_id == task_id, TaskApprovalStep.is_deleted.is_(False))
+            .order_by(TaskApprovalStep.level.asc())
         )
         return list((await db.execute(stmt)).scalars().all())
 

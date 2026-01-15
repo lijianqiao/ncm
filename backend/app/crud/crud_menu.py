@@ -10,7 +10,7 @@ from uuid import UUID
 
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import selectinload, with_loader_criteria
 
 from app.core.enums import MenuType
 from app.crud.base import CRUDBase
@@ -30,32 +30,37 @@ class CRUDMenu(CRUDBase[Menu, MenuCreate, MenuUpdate]):
         current = loader
         for _ in range(depth - 1):
             current = current.selectinload(Menu.children)
-        return loader
+        return current
 
     async def get_affected_user_ids(self, db: AsyncSession, *, menu_id: UUID) -> list[UUID]:
         stmt = (
             select(UserRole.user_id)
+            .distinct()
             .join(RoleMenu, RoleMenu.role_id == UserRole.role_id)
             .where(RoleMenu.menu_id == menu_id)
         )
         result = await db.execute(stmt)
-        return list(set(result.scalars().all()))
+        return list(result.scalars().all())
 
     async def get_affected_user_ids_by_menu_ids(self, db: AsyncSession, *, menu_ids: list[UUID]) -> list[UUID]:
         if not menu_ids:
             return []
         stmt = (
             select(UserRole.user_id)
+            .distinct()
             .join(RoleMenu, RoleMenu.role_id == UserRole.role_id)
             .where(RoleMenu.menu_id.in_(menu_ids))
         )
         result = await db.execute(stmt)
-        return list(set(result.scalars().all()))
+        return list(result.scalars().all())
 
     async def get_tree(self, db: AsyncSession) -> list[Menu]:
         result = await db.execute(
             select(Menu)
-            .options(self._children_selectinload(depth=5))
+            .options(
+                self._children_selectinload(depth=5),
+                with_loader_criteria(Menu, Menu.is_deleted.is_(False), include_aliases=True),
+            )
             .where(Menu.is_deleted.is_(False))
             .order_by(Menu.sort)
         )
@@ -67,7 +72,10 @@ class CRUDMenu(CRUDBase[Menu, MenuCreate, MenuUpdate]):
 
         result = await db.execute(
             select(Menu)
-            .options(self._children_selectinload(depth=5))
+            .options(
+                self._children_selectinload(depth=5),
+                with_loader_criteria(Menu, Menu.is_deleted.is_(False), include_aliases=True),
+            )
             .where(Menu.is_deleted.is_(False), Menu.parent_id.is_(None))
             .order_by(Menu.sort)
         )
@@ -115,30 +123,28 @@ class CRUDMenu(CRUDBase[Menu, MenuCreate, MenuUpdate]):
         clauses = []
 
         # 文本字段：标题、名称、路径、权限
-        pattern = f"%{kw}%"
-        clauses.append(
-            or_(
-                Menu.title.ilike(pattern),
-                Menu.name.ilike(pattern),
-                Menu.path.ilike(pattern),
-                Menu.permission.ilike(pattern),
-            )
-        )
+        text_clause = CRUDBase._or_ilike_contains(kw, [Menu.title, Menu.name, Menu.path, Menu.permission])
+        if text_clause is not None:
+            clauses.append(text_clause)
 
         # 隐藏（隐藏/显示）
         hidden_true = {"隐藏", "hidden", "true", "是", "1"}
         hidden_false = {"显示", "visible", "false", "否", "0"}
-        if kw.lower() in hidden_true or kw in hidden_true:
-            clauses.append(Menu.is_hidden.is_(True))
-        elif kw.lower() in hidden_false or kw in hidden_false:
-            clauses.append(Menu.is_hidden.is_(False))
+        hidden_clause = CRUDBase._bool_clause_from_keyword(
+            kw, Menu.is_hidden, true_values=hidden_true, false_values=hidden_false
+        )
+        if hidden_clause is not None:
+            clauses.append(hidden_clause)
 
         return stmt.where(or_(*clauses))
 
     async def get_multi(self, db: AsyncSession, *, skip: int = 0, limit: int = 100) -> list[Menu]:
         result = await db.execute(
             select(Menu)
-            .options(self._children_selectinload(depth=5))
+            .options(
+                self._children_selectinload(depth=5),
+                with_loader_criteria(Menu, Menu.is_deleted.is_(False), include_aliases=True),
+            )
             .where(Menu.is_deleted.is_(False))
             .order_by(Menu.sort)
             .offset(skip)
@@ -170,7 +176,10 @@ class CRUDMenu(CRUDBase[Menu, MenuCreate, MenuUpdate]):
         total = (await db.execute(count_stmt)).scalar_one()
         stmt = (
             select(Menu)
-            .options(self._children_selectinload(depth=5))
+            .options(
+                self._children_selectinload(depth=5),
+                with_loader_criteria(Menu, Menu.is_deleted.is_(False), include_aliases=True),
+            )
             .where(Menu.is_deleted.is_(False))
             .order_by(Menu.sort)
             .offset((page - 1) * page_size)

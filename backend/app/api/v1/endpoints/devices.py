@@ -299,6 +299,54 @@ async def restore_device(
     return ResponseBase(data=DeviceResponse.model_validate(device), message="设备恢复成功")
 
 
+@router.delete("/{device_id}/hard", response_model=ResponseBase[dict], summary="彻底删除设备")
+async def hard_delete_device(
+    device_id: UUID,
+    device_service: deps.DeviceServiceDep,
+    current_user: deps.CurrentUser,
+    _: deps.User = Depends(deps.require_permissions([PermissionCode.DEVICE_DELETE.value])),
+) -> Any:
+    """彻底删除设备（硬删除，不可恢复）。
+
+    Args:
+        device_id (UUID): 设备 ID。
+        device_service (DeviceService): 设备服务依赖。
+        current_user (User): 当前登录用户。
+
+    Returns:
+        ResponseBase[dict]: 删除结果。
+    """
+    await device_service.hard_delete_device(device_id)
+    return ResponseBase(
+        data={"message": "设备已彻底删除"},
+        message="设备已彻底删除",
+    )
+
+
+@router.delete("/batch/hard", response_model=ResponseBase[DeviceBatchResult], summary="批量彻底删除设备")
+async def batch_hard_delete_devices(
+    obj_in: DeviceBatchDeleteRequest,
+    device_service: deps.DeviceServiceDep,
+    current_user: deps.CurrentUser,
+    _: deps.User = Depends(deps.require_permissions([PermissionCode.DEVICE_DELETE.value])),
+) -> Any:
+    """批量彻底删除设备（硬删除，不可恢复）。
+
+    Args:
+        obj_in (DeviceBatchDeleteRequest): 包含目标设备 ID 列表。
+        device_service (DeviceService): 设备服务依赖。
+        current_user (User): 当前登录用户。
+
+    Returns:
+        ResponseBase[DeviceBatchResult]: 批量彻底删除操作的结果报告。
+    """
+    result = await device_service.batch_hard_delete_devices(obj_in.ids)
+    return ResponseBase(
+        data=result,
+        message=f"批量彻底删除完成：成功 {result.success_count}，失败 {result.failed_count}",
+    )
+
+
 @router.post(
     "/{device_id}/status/transition",
     response_model=ResponseBase[DeviceResponse],

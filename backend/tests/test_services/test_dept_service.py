@@ -48,8 +48,9 @@ class TestDeptServiceTree:
         c3 = await _create_dept_via_service(service, name="已删", code="DEL", leader="X", parent_id=root.id, sort=3)
 
         # 手动软删除一个子部门
-        deleted = await dept_crud.remove(db_session, id=c3.id)
-        assert deleted is not None
+        success_count, failed_ids = await dept_crud.batch_remove(db_session, ids=[c3.id])
+        assert success_count == 1
+        assert failed_ids == []
 
         tree = await service.get_dept_tree()
         assert len(tree) == 1

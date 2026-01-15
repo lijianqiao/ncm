@@ -102,7 +102,7 @@ class RoleService(PermissionCacheMixin):
         if not role:
             raise NotFoundException(message="角色不存在")
 
-        affected_user_ids = await self.role_crud.get_user_ids_by_role(self.db, role_id=role_id)
+        affected_user_ids = await self.role_crud.get_user_ids_by_roles(self.db, role_ids=[role_id])
 
         unique_menu_ids = list(dict.fromkeys(menu_ids))
         menus = await self.menu_crud.get_multi_by_ids(self.db, ids=unique_menu_ids)
@@ -121,7 +121,7 @@ class RoleService(PermissionCacheMixin):
         if not role:
             raise NotFoundException(message="角色不存在")
 
-        affected_user_ids = await self.role_crud.get_user_ids_by_role(self.db, role_id=id)
+        affected_user_ids = await self.role_crud.get_user_ids_by_roles(self.db, role_ids=[id])
 
         if obj_in.code:
             existing_role = await self.role_crud.get_by_code(self.db, code=obj_in.code)
@@ -138,15 +138,7 @@ class RoleService(PermissionCacheMixin):
         if not role:
             raise NotFoundException(message="角色不存在")
 
-        affected_user_ids = await self.role_crud.get_user_ids_by_role(self.db, role_id=id)
-
-        success_count, _ = await self.role_crud.batch_remove(self.db, ids=[id])
-        if success_count == 0:
-            raise NotFoundException(message="角色删除失败")
-
-        self._invalidate_permissions_cache_after_commit(affected_user_ids)
-
-        return RoleResponse(
+        resp = RoleResponse(
             id=role.id,
             name=role.name,
             code=role.code,
@@ -157,6 +149,15 @@ class RoleService(PermissionCacheMixin):
             created_at=role.created_at,
             updated_at=role.updated_at,
         )
+
+        affected_user_ids = await self.role_crud.get_user_ids_by_roles(self.db, role_ids=[id])
+
+        success_count, _ = await self.role_crud.batch_remove(self.db, ids=[id])
+        if success_count == 0:
+            raise NotFoundException(message="角色删除失败")
+
+        self._invalidate_permissions_cache_after_commit(affected_user_ids)
+        return resp
 
     @transactional()
     async def batch_delete_roles(self, ids: list[UUID], hard_delete: bool = False) -> tuple[int, list[UUID]]:
@@ -173,7 +174,7 @@ class RoleService(PermissionCacheMixin):
         """
         恢复已删除角色。
         """
-        affected_user_ids = await self.role_crud.get_user_ids_by_role(self.db, role_id=id)
+        affected_user_ids = await self.role_crud.get_user_ids_by_roles(self.db, role_ids=[id])
         success_count, _ = await self.role_crud.batch_restore(self.db, ids=[id])
         if success_count == 0:
             raise NotFoundException(message="角色不存在")

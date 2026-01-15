@@ -87,3 +87,63 @@ export function deleteSnmpCredential(id: string) {
   })
 }
 
+// ==================== 批量操作和回收站 API ====================
+
+/** 批量操作结果 */
+export interface SnmpCredentialBatchResult {
+  success_count: number
+  failed_count: number
+  failed_ids: string[]
+}
+
+/** 批量删除 SNMP 凭据 */
+export function batchDeleteSnmpCredentials(ids: string[]) {
+  return request<ResponseBase<SnmpCredentialBatchResult>>({
+    url: '/snmp_credentials/batch',
+    method: 'delete',
+    data: { ids },
+  })
+}
+
+/** 获取回收站 SNMP 凭据列表 */
+export function getRecycleBinSnmpCredentials(params?: { page?: number; page_size?: number; keyword?: string }) {
+  return request<ResponseBase<PaginatedResponse<DeptSnmpCredential>>>({
+    url: '/snmp_credentials/recycle-bin',
+    method: 'get',
+    params,
+  })
+}
+
+/** 恢复 SNMP 凭据 */
+export function restoreSnmpCredential(id: string) {
+  return request<ResponseBase<DeptSnmpCredential>>({
+    url: `/snmp_credentials/${id}/restore`,
+    method: 'post',
+  })
+}
+
+/** 批量恢复 SNMP 凭据 */
+export function batchRestoreSnmpCredentials(ids: string[]) {
+  return request<ResponseBase<SnmpCredentialBatchResult>>({
+    url: '/snmp_credentials/batch/restore',
+    method: 'post',
+    data: { ids },
+  })
+}
+
+/** 彻底删除 SNMP 凭据 */
+export function hardDeleteSnmpCredential(id: string) {
+  return request<ResponseBase<Record<string, unknown>>>({
+    url: `/snmp_credentials/${id}/hard`,
+    method: 'delete',
+  })
+}
+
+/** 批量彻底删除 SNMP 凭据 */
+export function batchHardDeleteSnmpCredentials(ids: string[]) {
+  return request<ResponseBase<SnmpCredentialBatchResult>>({
+    url: '/snmp_credentials/batch/hard',
+    method: 'delete',
+    data: { ids },
+  })
+}
