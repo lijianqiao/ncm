@@ -109,6 +109,8 @@ class PermissionCode(str, Enum):
     DISCOVERY_LIST = "discovery:list"
     DISCOVERY_ADOPT = "discovery:adopt"
     DISCOVERY_DELETE = "discovery:delete"
+    DISCOVERY_RECYCLE = "discovery:recycle"
+    DISCOVERY_RESTORE = "discovery:restore"
 
     # NCM 拓扑权限
     TOPOLOGY_VIEW = "topology:view"
@@ -135,10 +137,16 @@ class PermissionCode(str, Enum):
     DEPLOY_APPROVE = "deploy:approve"
     DEPLOY_EXECUTE = "deploy:execute"
     DEPLOY_ROLLBACK = "deploy:rollback"
+    DEPLOY_DELETE = "deploy:delete"
+    DEPLOY_RECYCLE = "deploy:recycle"
+    DEPLOY_RESTORE = "deploy:restore"
 
     # Phase 5: 资产盘点
     INVENTORY_AUDIT_CREATE = "inventory_audit:create"
     INVENTORY_AUDIT_VIEW = "inventory_audit:view"
+    INVENTORY_AUDIT_DELETE = "inventory_audit:delete"
+    INVENTORY_AUDIT_RECYCLE = "inventory_audit:recycle"
+    INVENTORY_AUDIT_RESTORE = "inventory_audit:restore"
 
 
 @dataclass(frozen=True, slots=True)
@@ -200,8 +208,6 @@ PERMISSION_DEFS: tuple[PermissionDef, ...] = (
     PermissionDef(PermissionCode.PRESET_RECYCLE, "预设模板-回收站"),
     PermissionDef(PermissionCode.PRESET_RESTORE, "预设模板-恢复"),
     PermissionDef(PermissionCode.PRESET_EXECUTE, "预设模板-执行", "执行预设模板快捷操作"),
-    PermissionDef(PermissionCode.PRESET_EXECUTE, "预设模板-执行", "执行预设模板快捷操作"),
-    PermissionDef(PermissionCode.PRESET_EXECUTE, "预设模板-执行", "执行预设模板快捷操作"),
     # NCM 凭据权限
     PermissionDef(PermissionCode.CREDENTIAL_LIST, "凭据-列表"),
     PermissionDef(PermissionCode.CREDENTIAL_CREATE, "凭据-创建"),
@@ -231,6 +237,8 @@ PERMISSION_DEFS: tuple[PermissionDef, ...] = (
     PermissionDef(PermissionCode.DISCOVERY_LIST, "发现-列表", "查看发现记录"),
     PermissionDef(PermissionCode.DISCOVERY_ADOPT, "发现-纳管", "将发现设备纳管到 CMDB"),
     PermissionDef(PermissionCode.DISCOVERY_DELETE, "发现-删除", "删除发现记录"),
+    PermissionDef(PermissionCode.DISCOVERY_RECYCLE, "发现-回收站", "查看发现记录回收站"),
+    PermissionDef(PermissionCode.DISCOVERY_RESTORE, "发现-恢复", "恢复已删除的发现记录"),
     # NCM 拓扑权限
     PermissionDef(PermissionCode.TOPOLOGY_VIEW, "拓扑-查看", "查看网络拓扑"),
     PermissionDef(PermissionCode.TOPOLOGY_REFRESH, "拓扑-刷新", "刷新拓扑数据"),
@@ -252,9 +260,15 @@ PERMISSION_DEFS: tuple[PermissionDef, ...] = (
     PermissionDef(PermissionCode.DEPLOY_APPROVE, "下发-审批", "审批下发任务"),
     PermissionDef(PermissionCode.DEPLOY_EXECUTE, "下发-执行", "执行下发任务"),
     PermissionDef(PermissionCode.DEPLOY_ROLLBACK, "下发-回滚", "回滚下发任务"),
+    PermissionDef(PermissionCode.DEPLOY_DELETE, "下发-删除", "删除下发任务（软删除）"),
+    PermissionDef(PermissionCode.DEPLOY_RECYCLE, "下发-回收站", "查看下发任务回收站"),
+    PermissionDef(PermissionCode.DEPLOY_RESTORE, "下发-恢复", "恢复已删除下发任务"),
     # Phase 5: 资产盘点
     PermissionDef(PermissionCode.INVENTORY_AUDIT_CREATE, "盘点-创建", "创建资产盘点任务"),
     PermissionDef(PermissionCode.INVENTORY_AUDIT_VIEW, "盘点-查看", "查看资产盘点任务与报告"),
+    PermissionDef(PermissionCode.INVENTORY_AUDIT_DELETE, "盘点-删除", "删除资产盘点任务（软删除）"),
+    PermissionDef(PermissionCode.INVENTORY_AUDIT_RECYCLE, "盘点-回收站", "查看资产盘点任务回收站"),
+    PermissionDef(PermissionCode.INVENTORY_AUDIT_RESTORE, "盘点-恢复", "恢复已删除资产盘点任务"),
 )
 
 

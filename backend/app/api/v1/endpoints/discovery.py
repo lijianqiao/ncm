@@ -16,16 +16,23 @@ from fastapi import APIRouter, Depends, Query
 
 from app.api.deps import (
     CurrentUser,
-    ScanServiceDep,
+    DiscoveryServiceDep,
     SessionDep,
+    get_current_active_superuser,
+    get_scan_service,
     require_permissions,
 )
 from app.celery.tasks.discovery import compare_cmdb, scan_subnet, scan_subnets_batch
 from app.core.enums import DiscoveryStatus
 from app.core.exceptions import NotFoundException
 from app.core.permissions import PermissionCode
-from app.crud.crud_discovery import discovery_crud
-from app.schemas.common import PaginatedResponse, ResponseBase
+from app.schemas.common import (
+    BatchDeleteRequest,
+    BatchOperationResult,
+    BatchRestoreRequest,
+    PaginatedResponse,
+    ResponseBase,
+)
 from app.schemas.discovery import (
     AdoptDeviceRequest,
     AdoptResponse,
@@ -38,6 +45,7 @@ from app.schemas.discovery import (
     ScanTaskResponse,
     ScanTaskStatus,
 )
+from app.services.scan_service import ScanService
 
 router = APIRouter(tags=["设备发现"])
 
@@ -162,7 +170,7 @@ async def get_scan_task_status(task_id: str) -> ResponseBase[ScanTaskStatus]:
     dependencies=[Depends(require_permissions([PermissionCode.DISCOVERY_LIST.value]))],
 )
 async def list_discoveries(
-    db: SessionDep,
+    service: DiscoveryServiceDep,
     page: int = Query(1, ge=1, description="页码"),
     page_size: int = Query(20, ge=1, le=500, description="每页数量"),
     status: DiscoveryStatus | None = Query(None, description="状态筛选"),
@@ -184,8 +192,7 @@ async def list_discoveries(
     Returns:
         ResponseBase[PaginatedResponse[DiscoveryResponse]]: 包含发现资产详情的分页响应。
     """
-    items, total = await discovery_crud.get_multi_paginated(
-        db,
+    items, total = await service.get_discoveries_paginated(
         page=page,
         page_size=page_size,
         status=status,
@@ -250,8 +257,8 @@ async def list_discoveries(
     dependencies=[Depends(require_permissions([PermissionCode.DISCOVERY_LIST.value]))],
 )
 async def get_discovery(
-    db: SessionDep,
     discovery_id: UUID,
+    service: DiscoveryServiceDep,
 ) -> ResponseBase[DiscoveryResponse]:
     """获取单个扫描发现记录的完整属性。
 
@@ -262,9 +269,7 @@ async def get_discovery(
     Returns:
         ResponseBase[DiscoveryResponse]: 发现资产及 CMDB 匹配关联信息。
     """
-    item = await discovery_crud.get(db, id=discovery_id)
-    if not item:
-        raise NotFoundException(message="发现记录不存在")
+    item = await service.get_discovery(discovery_id=discovery_id)
 
     response = DiscoveryResponse(
         id=item.id,
@@ -306,9 +311,9 @@ async def get_discovery(
     dependencies=[Depends(require_permissions([PermissionCode.DISCOVERY_DELETE.value]))],
 )
 async def delete_discovery(
-    db: SessionDep,
     discovery_id: UUID,
     current_user: CurrentUser,
+    service: DiscoveryServiceDep,
 ) -> ResponseBase[DeleteResponse]:
     """物理删除或隐藏特定的扫描发现结果。
 
@@ -320,12 +325,210 @@ async def delete_discovery(
     Returns:
         ResponseBase[DeleteResponse]: 确认删除的消息。
     """
-    success_count, _ = await discovery_crud.batch_remove(db, ids=[discovery_id])
-    if success_count == 0:
-        raise NotFoundException(message="发现记录不存在")
-
-    await db.commit()
+    await service.delete_discovery(discovery_id=discovery_id)
     return ResponseBase(data=DeleteResponse(message="删除成功"))
+
+
+@router.get(
+    "/recycle-bin",
+    summary="获取发现记录回收站列表",
+    response_model=ResponseBase[PaginatedResponse[DiscoveryResponse]],
+    dependencies=[
+        Depends(get_current_active_superuser),
+        Depends(require_permissions([PermissionCode.DISCOVERY_RECYCLE.value])),
+    ],
+)
+async def list_discoveries_recycle_bin(
+    service: DiscoveryServiceDep,
+    page: int = Query(1, ge=1, description="页码"),
+    page_size: int = Query(20, ge=1, le=500, description="每页数量"),
+    status: DiscoveryStatus | None = Query(None, description="状态筛选"),
+    keyword: str | None = Query(None, description="关键词搜索"),
+    scan_source: str | None = Query(None, description="扫描来源"),
+    sort_by: str | None = Query(None, description="排序字段"),
+    sort_order: str | None = Query(None, description="排序方向 (asc/desc)"),
+) -> ResponseBase[PaginatedResponse[DiscoveryResponse]]:
+    items, total = await service.get_deleted_discoveries_paginated(
+        page=page,
+        page_size=page_size,
+        status=status,
+        keyword=keyword,
+        scan_source=scan_source,
+        sort_by=sort_by,
+        sort_order=sort_order,
+    )
+
+    responses: list[DiscoveryResponse] = []
+    for item in items:
+        snmp_sysname = getattr(item, "snmp_sysname", None)
+        hostname = snmp_sysname or item.hostname
+        response = DiscoveryResponse(
+            id=item.id,
+            ip_address=item.ip_address,
+            mac_address=item.mac_address,
+            vendor=item.vendor,
+            device_type=item.device_type,
+            hostname=hostname,
+            os_info=item.os_info,
+            serial_number=getattr(item, "serial_number", None),
+            open_ports=item.open_ports,
+            ssh_banner=item.ssh_banner,
+            dept_id=getattr(item, "dept_id", None),
+            snmp_sysname=snmp_sysname,
+            snmp_sysdescr=getattr(item, "snmp_sysdescr", None),
+            snmp_ok=getattr(item, "snmp_ok", None),
+            snmp_error=getattr(item, "snmp_error", None),
+            first_seen_at=item.first_seen_at,
+            last_seen_at=item.last_seen_at,
+            offline_days=item.offline_days,
+            status=item.status,
+            matched_device_id=item.matched_device_id,
+            scan_source=item.scan_source,
+            created_at=item.created_at,
+            updated_at=item.updated_at,
+        )
+        if item.matched_device:
+            response.matched_device_name = item.matched_device.name
+            response.matched_device_ip = item.matched_device.ip_address
+        responses.append(response)
+
+    return ResponseBase(
+        data=PaginatedResponse(
+            items=responses,
+            total=total,
+            page=page,
+            page_size=page_size,
+        )
+    )
+
+
+@router.delete(
+    "/batch",
+    summary="批量删除发现记录",
+    response_model=ResponseBase[BatchOperationResult],
+    dependencies=[Depends(require_permissions([PermissionCode.DISCOVERY_DELETE.value]))],
+)
+async def batch_delete_discoveries(
+    request: BatchDeleteRequest,
+    service: DiscoveryServiceDep,
+    current_user: CurrentUser,
+) -> ResponseBase[BatchOperationResult]:
+    success_count, failed_ids = await service.batch_delete_discoveries(ids=request.ids)
+    return ResponseBase(
+        data=BatchOperationResult(
+            success_count=success_count,
+            failed_ids=failed_ids,
+            message=f"成功删除 {success_count} 条发现记录" if not failed_ids else "部分删除成功",
+        )
+    )
+
+
+@router.post(
+    "/batch/restore",
+    summary="批量恢复发现记录",
+    response_model=ResponseBase[BatchOperationResult],
+    dependencies=[
+        Depends(get_current_active_superuser),
+        Depends(require_permissions([PermissionCode.DISCOVERY_RESTORE.value])),
+    ],
+)
+async def batch_restore_discoveries(
+    request: BatchRestoreRequest,
+    service: DiscoveryServiceDep,
+) -> ResponseBase[BatchOperationResult]:
+    success_count, failed_ids = await service.batch_restore_discoveries(ids=request.ids)
+    return ResponseBase(
+        data=BatchOperationResult(
+            success_count=success_count,
+            failed_ids=failed_ids,
+            message=f"成功恢复 {success_count} 条发现记录" if not failed_ids else "部分恢复成功",
+        )
+    )
+
+
+@router.post(
+    "/{discovery_id:uuid}/restore",
+    summary="恢复已删除发现记录",
+    response_model=ResponseBase[DiscoveryResponse],
+    dependencies=[
+        Depends(get_current_active_superuser),
+        Depends(require_permissions([PermissionCode.DISCOVERY_RESTORE.value])),
+    ],
+)
+async def restore_discovery(
+    discovery_id: UUID,
+    service: DiscoveryServiceDep,
+) -> ResponseBase[DiscoveryResponse]:
+    item = await service.restore_discovery(discovery_id=discovery_id)
+    response = DiscoveryResponse(
+        id=item.id,
+        ip_address=item.ip_address,
+        mac_address=item.mac_address,
+        vendor=item.vendor,
+        device_type=item.device_type,
+        hostname=(getattr(item, "snmp_sysname", None) or item.hostname),
+        os_info=item.os_info,
+        serial_number=getattr(item, "serial_number", None),
+        open_ports=item.open_ports,
+        ssh_banner=item.ssh_banner,
+        dept_id=getattr(item, "dept_id", None),
+        snmp_sysname=getattr(item, "snmp_sysname", None),
+        snmp_sysdescr=getattr(item, "snmp_sysdescr", None),
+        snmp_ok=getattr(item, "snmp_ok", None),
+        snmp_error=getattr(item, "snmp_error", None),
+        first_seen_at=item.first_seen_at,
+        last_seen_at=item.last_seen_at,
+        offline_days=item.offline_days,
+        status=item.status,
+        matched_device_id=item.matched_device_id,
+        scan_source=item.scan_source,
+        created_at=item.created_at,
+        updated_at=item.updated_at,
+    )
+    if item.matched_device:
+        response.matched_device_name = item.matched_device.name
+        response.matched_device_ip = item.matched_device.ip_address
+    return ResponseBase(data=response, message="恢复成功")
+
+
+@router.delete(
+    "/{discovery_id:uuid}/hard",
+    summary="彻底删除发现记录",
+    response_model=ResponseBase[dict],
+    dependencies=[
+        Depends(get_current_active_superuser),
+        Depends(require_permissions([PermissionCode.DISCOVERY_DELETE.value])),
+    ],
+)
+async def hard_delete_discovery(
+    discovery_id: UUID,
+    service: DiscoveryServiceDep,
+) -> ResponseBase[dict]:
+    await service.hard_delete_discovery(discovery_id=discovery_id)
+    return ResponseBase(data={"message": "发现记录已彻底删除"}, message="发现记录已彻底删除")
+
+
+@router.delete(
+    "/batch/hard",
+    summary="批量彻底删除发现记录",
+    response_model=ResponseBase[BatchOperationResult],
+    dependencies=[
+        Depends(get_current_active_superuser),
+        Depends(require_permissions([PermissionCode.DISCOVERY_DELETE.value])),
+    ],
+)
+async def batch_hard_delete_discoveries(
+    request: BatchDeleteRequest,
+    service: DiscoveryServiceDep,
+) -> ResponseBase[BatchOperationResult]:
+    success_count, failed_ids = await service.batch_hard_delete_discoveries(ids=request.ids)
+    return ResponseBase(
+        data=BatchOperationResult(
+            success_count=success_count,
+            failed_ids=failed_ids,
+            message=f"成功彻底删除 {success_count} 条发现记录" if not failed_ids else "部分彻底删除成功",
+        )
+    )
 
 
 # ===== 设备纳管 =====
@@ -341,8 +544,8 @@ async def adopt_device(
     db: SessionDep,
     discovery_id: UUID,
     request: AdoptDeviceRequest,
-    scan_service: ScanServiceDep,
     current_user: CurrentUser,
+    scan_service: ScanService = Depends(get_scan_service),
 ) -> ResponseBase[AdoptResponse]:
     """将扫描结果中的在线资产直接录入为系统正式管理的设备。
 
@@ -394,7 +597,7 @@ async def adopt_device(
 )
 async def list_shadow_assets(
     db: SessionDep,
-    scan_service: ScanServiceDep,
+    scan_service: ScanService = Depends(get_scan_service),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=500),
 ) -> ResponseBase[PaginatedResponse[DiscoveryResponse]]:
@@ -458,7 +661,7 @@ async def list_shadow_assets(
 )
 async def list_offline_devices(
     db: SessionDep,
-    scan_service: ScanServiceDep,
+    scan_service: ScanService = Depends(get_scan_service),
     days_threshold: int = Query(7, ge=1, description="离线天数阈值"),
 ) -> ResponseBase[list[OfflineDevice]]:
     """获取由于长时间未能在扫描中发现而标记为离线的设备列表。

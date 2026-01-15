@@ -125,6 +125,13 @@ export interface OfflineDevice {
   offline_days: number
 }
 
+/** 批量操作结果 */
+export interface DiscoveryBatchResult {
+  success_count: number
+  failed_count: number
+  failed_ids: string[]
+}
+
 // ==================== API 函数 ====================
 
 /** 触发网络扫描 */
@@ -169,6 +176,49 @@ export function deleteDiscoveryRecord(id: string) {
   })
 }
 
+/** 获取发现记录回收站列表 */
+export function getRecycleBinDiscoveryRecords(params?: DiscoverySearchParams) {
+  return request<ResponseBase<PaginatedResponse<DiscoveryRecord>>>({
+    url: '/discovery/recycle-bin',
+    method: 'get',
+    params,
+  })
+}
+
+/** 恢复已删除发现记录 */
+export function restoreDiscoveryRecord(id: string) {
+  return request<ResponseBase<DiscoveryRecord>>({
+    url: `/discovery/${id}/restore`,
+    method: 'post',
+  })
+}
+
+/** 批量恢复发现记录 */
+export function batchRestoreDiscoveryRecords(ids: string[]) {
+  return request<ResponseBase<{ success_count: number; failed_ids: string[]; message?: string }>>({
+    url: '/discovery/batch/restore',
+    method: 'post',
+    data: { ids },
+  })
+}
+
+/** 彻底删除发现记录 */
+export function hardDeleteDiscoveryRecord(id: string) {
+  return request<ResponseBase<{ message: string }>>({
+    url: `/discovery/${id}/hard`,
+    method: 'delete',
+  })
+}
+
+/** 批量彻底删除发现记录 */
+export function batchHardDeleteDiscoveryRecords(ids: string[]) {
+  return request<ResponseBase<{ success_count: number; failed_ids: string[]; message?: string }>>({
+    url: '/discovery/batch/hard',
+    method: 'delete',
+    data: { ids },
+  })
+}
+
 /** 纳管设备 */
 export function adoptDevice(discoveryId: string, data: AdoptDeviceRequest) {
   return request<ResponseBase<{ message: string; device_id: string; device_name: string }>>({
@@ -203,4 +253,36 @@ export function compareCMDB(asyncMode: boolean = true) {
     method: 'post',
     params: { async_mode: asyncMode },
   })
+}
+
+/** 批量删除发现记录 */
+export async function batchDeleteDiscoveryRecords(ids: string[]) {
+  const uniqueIds = Array.from(new Set(ids)).filter(Boolean)
+  if (uniqueIds.length === 0) {
+    return {
+      code: 200,
+      message: 'Success',
+      data: {
+        success_count: 0,
+        failed_count: 0,
+        failed_ids: [],
+      },
+    } satisfies ResponseBase<DiscoveryBatchResult>
+  }
+
+  const res = await request<ResponseBase<{ success_count: number; failed_ids: string[] }>>({
+    url: '/discovery/batch',
+    method: 'delete',
+    data: { ids: uniqueIds },
+  })
+
+  return {
+    code: res.code,
+    message: res.message,
+    data: {
+      success_count: res.data.success_count,
+      failed_count: res.data.failed_ids.length,
+      failed_ids: res.data.failed_ids,
+    },
+  } satisfies ResponseBase<DiscoveryBatchResult>
 }

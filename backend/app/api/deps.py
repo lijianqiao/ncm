@@ -41,9 +41,16 @@ from app.crud.crud_discovery import CRUDDiscovery
 from app.crud.crud_discovery import discovery_crud as discovery_instance
 from app.crud.crud_inventory_audit import CRUDInventoryAudit
 from app.crud.crud_inventory_audit import inventory_audit_crud as inventory_audit_crud_instance
-from app.crud.crud_log import CRUDLoginLog, CRUDOperationLog
-from app.crud.crud_log import login_log as login_log_crud_global
-from app.crud.crud_log import operation_log as operation_log_crud_global
+from app.crud.crud_log import (
+    CRUDLoginLog,
+    CRUDOperationLog,
+)
+from app.crud.crud_log import (
+    login_log as login_log_crud_global,
+)
+from app.crud.crud_log import (
+    operation_log as operation_log_crud_global,
+)
 from app.crud.crud_menu import CRUDMenu
 from app.crud.crud_menu import menu as menu_crud_global
 from app.crud.crud_role import CRUDRole
@@ -54,8 +61,12 @@ from app.crud.crud_task_approval import CRUDTaskApprovalStep
 from app.crud.crud_task_approval import task_approval_crud as task_approval_crud_instance
 from app.crud.crud_template import CRUDTemplate
 from app.crud.crud_template import template as template_instance
-from app.crud.crud_template_approval import CRUDTemplateApprovalStep
-from app.crud.crud_template_approval import template_approval_crud as template_approval_crud_instance
+from app.crud.crud_template_approval import (
+    CRUDTemplateApprovalStep,
+)
+from app.crud.crud_template_approval import (
+    template_approval_crud as template_approval_crud_instance,
+)
 from app.crud.crud_topology import CRUDTopology
 from app.crud.crud_topology import topology_crud as topology_instance
 from app.crud.crud_user import CRUDUser
@@ -74,6 +85,7 @@ from app.services.deploy_service import DeployService
 from app.services.dept_service import DeptService
 from app.services.device_service import DeviceService
 from app.services.diff_service import DiffService
+from app.services.discovery_service import DiscoveryService
 from app.services.inventory_audit_service import InventoryAuditService
 from app.services.log_service import LogService
 from app.services.menu_service import MenuService
@@ -298,58 +310,176 @@ async def get_current_active_superuser(current_user: CurrentUser) -> User:
     return current_user
 
 
-# --- Repository Injectors ---
+# ==================== CRUD 依赖注入 ====================
 
 
-def get_user_crud() -> CRUDUser:
-    return user_crud_global
+def get_alert_crud() -> CRUDAlert:
+    return alert_instance
 
 
-def get_role_crud() -> CRUDRole:
-    return role_crud_global
+def get_backup_crud() -> CRUDBackup:
+    return backup_instance
 
 
-def get_menu_crud() -> CRUDMenu:
-    return menu_crud_global
+def get_credential_crud() -> CRUDCredential:
+    return credential_instance
+
+
+def get_dept_crud() -> CRUDDept:
+    return CRUDDept(Department)
+
+
+def get_device_crud() -> CRUDDevice:
+    return device_instance
+
+
+def get_discovery_crud() -> CRUDDiscovery:
+    return discovery_instance
+
+
+def get_inventory_audit_crud() -> CRUDInventoryAudit:
+    return inventory_audit_crud_instance
 
 
 def get_login_log_crud() -> CRUDLoginLog:
     return login_log_crud_global
 
 
+def get_menu_crud() -> CRUDMenu:
+    return menu_crud_global
+
+
 def get_operation_log_crud() -> CRUDOperationLog:
     return operation_log_crud_global
 
 
-# --- Service Injectors ---
-# 使用 Depends 注入 Service 和 Repositories
+def get_role_crud() -> CRUDRole:
+    return role_crud_global
 
 
-def get_user_service(
+def get_task_approval_crud() -> CRUDTaskApprovalStep:
+    return task_approval_crud_instance
+
+
+def get_task_crud() -> CRUDTask:
+    return task_crud_instance
+
+
+def get_template_approval_crud() -> CRUDTemplateApprovalStep:
+    return template_approval_crud_instance
+
+
+def get_template_crud() -> CRUDTemplate:
+    return template_instance
+
+
+def get_topology_crud() -> CRUDTopology:
+    return topology_instance
+
+
+def get_user_crud() -> CRUDUser:
+    return user_crud_global
+
+
+AlertCRUDDep = Annotated[CRUDAlert, Depends(get_alert_crud)]
+BackupCRUDDep = Annotated[CRUDBackup, Depends(get_backup_crud)]
+CredentialCRUDDep = Annotated[CRUDCredential, Depends(get_credential_crud)]
+DeptCRUDDep = Annotated[CRUDDept, Depends(get_dept_crud)]
+DeviceCRUDDep = Annotated[CRUDDevice, Depends(get_device_crud)]
+DiscoveryCRUDDep = Annotated[CRUDDiscovery, Depends(get_discovery_crud)]
+InventoryAuditCRUDDep = Annotated[CRUDInventoryAudit, Depends(get_inventory_audit_crud)]
+LoginLogCRUDDep = Annotated[CRUDLoginLog, Depends(get_login_log_crud)]
+MenuCRUDDep = Annotated[CRUDMenu, Depends(get_menu_crud)]
+OperationLogCRUDDep = Annotated[CRUDOperationLog, Depends(get_operation_log_crud)]
+RoleCRUDDep = Annotated[CRUDRole, Depends(get_role_crud)]
+TaskApprovalCRUDDep = Annotated[CRUDTaskApprovalStep, Depends(get_task_approval_crud)]
+TaskCRUDDep = Annotated[CRUDTask, Depends(get_task_crud)]
+TemplateApprovalCRUDDep = Annotated[CRUDTemplateApprovalStep, Depends(get_template_approval_crud)]
+TemplateCRUDDep = Annotated[CRUDTemplate, Depends(get_template_crud)]
+TopologyCRUDDep = Annotated[CRUDTopology, Depends(get_topology_crud)]
+UserCRUDDep = Annotated[CRUDUser, Depends(get_user_crud)]
+
+
+# ==================== Service 依赖注入 ====================
+
+
+def get_alert_service(db: SessionDep, alert_crud: AlertCRUDDep) -> AlertService:
+    return AlertService(db, alert_crud)
+
+
+def get_backup_service(
     db: SessionDep,
-    user_crud: Annotated[CRUDUser, Depends(get_user_crud)],
-    role_crud: Annotated[CRUDRole, Depends(get_role_crud)],
-) -> UserService:
-    return UserService(db, user_crud, role_crud)
+    backup_crud: BackupCRUDDep,
+    device_crud: DeviceCRUDDep,
+    credential_crud: CredentialCRUDDep,
+) -> BackupService:
+    return BackupService(db, backup_crud, device_crud, credential_crud)
+
+
+def get_collect_service(
+    db: SessionDep,
+    device_crud: DeviceCRUDDep,
+    credential_crud: CredentialCRUDDep,
+) -> CollectService:
+    return CollectService(db, device_crud, credential_crud)
+
+
+def get_credential_service(db: SessionDep, credential_crud: CredentialCRUDDep) -> CredentialService:
+    return CredentialService(db, credential_crud)
+
+
+def get_dashboard_service(
+    db: SessionDep,
+    user_crud: UserCRUDDep,
+    role_crud: RoleCRUDDep,
+    menu_crud: MenuCRUDDep,
+    login_log_crud: LoginLogCRUDDep,
+    operation_log_crud: OperationLogCRUDDep,
+) -> DashboardService:
+    return DashboardService(db, user_crud, role_crud, menu_crud, login_log_crud, operation_log_crud)
+
+
+def get_deploy_service(
+    db: SessionDep,
+    task_crud: TaskCRUDDep,
+    task_approval_crud: TaskApprovalCRUDDep,
+    device_crud: DeviceCRUDDep,
+    credential_crud: CredentialCRUDDep,
+) -> DeployService:
+    return DeployService(db, task_crud, task_approval_crud, device_crud, credential_crud)
+
+
+def get_dept_service(db: SessionDep, dept_crud: DeptCRUDDep) -> DeptService:
+    return DeptService(db, dept_crud)
+
+
+def get_device_service(db: SessionDep, device_crud: DeviceCRUDDep, credential_crud: CredentialCRUDDep) -> DeviceService:
+    return DeviceService(db, device_crud, credential_crud)
+
+
+def get_diff_service(db: SessionDep, backup_crud: BackupCRUDDep) -> DiffService:
+    return DiffService(db, backup_crud)
+
+
+def get_inventory_audit_service(db: SessionDep, inventory_audit_crud: InventoryAuditCRUDDep) -> InventoryAuditService:
+    return InventoryAuditService(db, inventory_audit_crud)
 
 
 def get_log_service(
-    db: SessionDep,
-    login_log_crud: Annotated[CRUDLoginLog, Depends(get_login_log_crud)],
-    operation_log_crud: Annotated[CRUDOperationLog, Depends(get_operation_log_crud)],
+    db: SessionDep, login_log_crud: LoginLogCRUDDep, operation_log_crud: OperationLogCRUDDep
 ) -> LogService:
     return LogService(db, login_log_crud, operation_log_crud)
 
 
-def get_role_service(
+def get_auth_service(
     db: SessionDep,
-    role_crud: Annotated[CRUDRole, Depends(get_role_crud)],
-    menu_crud: Annotated[CRUDMenu, Depends(get_menu_crud)],
-) -> RoleService:
-    return RoleService(db, role_crud, menu_crud)
+    log_service: Annotated[LogService, Depends(get_log_service)],
+    user_crud: UserCRUDDep,
+) -> AuthService:
+    return AuthService(db, log_service, user_crud)
 
 
-def get_menu_service(db: SessionDep, menu_crud: Annotated[CRUDMenu, Depends(get_menu_crud)]) -> MenuService:
+def get_menu_service(db: SessionDep, menu_crud: MenuCRUDDep) -> MenuService:
     return MenuService(db, menu_crud)
 
 
@@ -357,191 +487,33 @@ def get_permission_service() -> PermissionService:
     return PermissionService()
 
 
-def get_auth_service(
-    db: SessionDep,
-    log_service: Annotated[LogService, Depends(get_log_service)],
-    user_crud: Annotated[CRUDUser, Depends(get_user_crud)],
-) -> AuthService:
-    return AuthService(db, log_service, user_crud)
-
-
-def get_dashboard_service(
-    db: SessionDep,
-    user_crud: Annotated[CRUDUser, Depends(get_user_crud)],
-    role_crud: Annotated[CRUDRole, Depends(get_role_crud)],
-    menu_crud: Annotated[CRUDMenu, Depends(get_menu_crud)],
-    login_log_crud: Annotated[CRUDLoginLog, Depends(get_login_log_crud)],
-    operation_log_crud: Annotated[CRUDOperationLog, Depends(get_operation_log_crud)],
-) -> DashboardService:
-    return DashboardService(db, user_crud, role_crud, menu_crud, login_log_crud, operation_log_crud)
-
-
-def get_session_service(
-    db: SessionDep,
-    user_crud: Annotated[CRUDUser, Depends(get_user_crud)],
-) -> SessionService:
-    return SessionService(db, user_crud)
-
-
-UserServiceDep = Annotated[UserService, Depends(get_user_service)]
-LogServiceDep = Annotated[LogService, Depends(get_log_service)]
-RoleServiceDep = Annotated[RoleService, Depends(get_role_service)]
-MenuServiceDep = Annotated[MenuService, Depends(get_menu_service)]
-PermissionServiceDep = Annotated[PermissionService, Depends(get_permission_service)]
-AuthServiceDep = Annotated[AuthService, Depends(get_auth_service)]
-DashboardServiceDep = Annotated[DashboardService, Depends(get_dashboard_service)]
-SessionServiceDep = Annotated[SessionService, Depends(get_session_service)]
-
-
-# ----- 部门依赖 -----
-
-
-def get_dept_crud(db: SessionDep) -> CRUDDept:
-    return CRUDDept(Department)
-
-
-def get_dept_service(
-    db: SessionDep,
-    dept_crud: Annotated[CRUDDept, Depends(get_dept_crud)],
-) -> DeptService:
-    return DeptService(db, dept_crud)
-
-
-DeptServiceDep = Annotated[DeptService, Depends(get_dept_service)]
-
-
-def get_device_crud() -> CRUDDevice:
-    return device_instance
-
-
-def get_credential_crud() -> CRUDCredential:
-    return credential_instance
-
-
-DeviceCRUDDep = Annotated[CRUDDevice, Depends(get_device_crud)]
-
-
-def get_device_service(
-    db: SessionDep,
-    device_crud: Annotated[CRUDDevice, Depends(get_device_crud)],
-    credential_crud: Annotated[CRUDCredential, Depends(get_credential_crud)],
-) -> DeviceService:
-    return DeviceService(db, device_crud, credential_crud)
-
-
-def get_credential_service(
-    db: SessionDep,
-    credential_crud: Annotated[CRUDCredential, Depends(get_credential_crud)],
-) -> CredentialService:
-    return CredentialService(db, credential_crud)
-
-
-def get_template_crud() -> CRUDTemplate:
-    return template_instance
-
-
-def get_template_approval_crud() -> CRUDTemplateApprovalStep:
-    return template_approval_crud_instance
-
-
-def get_template_service(
-    db: SessionDep,
-    template_crud: Annotated[CRUDTemplate, Depends(get_template_crud)],
-    template_approval_crud: Annotated[CRUDTemplateApprovalStep, Depends(get_template_approval_crud)],
-) -> TemplateService:
-    return TemplateService(db, template_crud, template_approval_crud)
+def get_preset_service(db: SessionDep, device_crud: DeviceCRUDDep, credential_crud: CredentialCRUDDep) -> PresetService:
+    return PresetService(db, device_crud, credential_crud)
 
 
 def get_render_service() -> RenderService:
     return RenderService()
 
 
-def get_task_crud() -> CRUDTask:
-    return task_crud_instance
+def get_role_service(db: SessionDep, role_crud: RoleCRUDDep, menu_crud: MenuCRUDDep) -> RoleService:
+    return RoleService(db, role_crud, menu_crud)
 
 
-def get_task_approval_crud() -> CRUDTaskApprovalStep:
-    return task_approval_crud_instance
-
-
-def get_deploy_service(
-    db: SessionDep,
-    task_crud: Annotated[CRUDTask, Depends(get_task_crud)],
-    task_approval_crud: Annotated[CRUDTaskApprovalStep, Depends(get_task_approval_crud)],
-    device_crud: Annotated[CRUDDevice, Depends(get_device_crud)],
-    credential_crud: Annotated[CRUDCredential, Depends(get_credential_crud)],
-) -> DeployService:
-    return DeployService(db, task_crud, task_approval_crud, device_crud, credential_crud)
-
-
-def get_inventory_audit_crud() -> CRUDInventoryAudit:
-    return inventory_audit_crud_instance
-
-
-def get_inventory_audit_service(
-    db: SessionDep,
-    inventory_audit_crud: Annotated[CRUDInventoryAudit, Depends(get_inventory_audit_crud)],
-) -> InventoryAuditService:
-    return InventoryAuditService(db, inventory_audit_crud)
-
-
-DeviceServiceDep = Annotated[DeviceService, Depends(get_device_service)]
-CredentialServiceDep = Annotated[CredentialService, Depends(get_credential_service)]
-TemplateServiceDep = Annotated[TemplateService, Depends(get_template_service)]
-RenderServiceDep = Annotated[RenderService, Depends(get_render_service)]
-DeployServiceDep = Annotated[DeployService, Depends(get_deploy_service)]
-InventoryAuditServiceDep = Annotated[InventoryAuditService, Depends(get_inventory_audit_service)]
-
-
-# ----- 备份依赖 -----
-
-
-def get_backup_crud() -> CRUDBackup:
-    return backup_instance
-
-
-def get_backup_service(
-    db: SessionDep,
-    backup_crud: Annotated[CRUDBackup, Depends(get_backup_crud)],
-    device_crud: Annotated[CRUDDevice, Depends(get_device_crud)],
-    credential_crud: Annotated[CRUDCredential, Depends(get_credential_crud)],
-) -> BackupService:
-    return BackupService(db, backup_crud, device_crud, credential_crud)
-
-
-BackupServiceDep = Annotated[BackupService, Depends(get_backup_service)]
-
-
-# ----- 设备发现依赖 -----
-
-
-def get_discovery_crud() -> CRUDDiscovery:
-    return discovery_instance
-
-
-def get_scan_service(
-    db: SessionDep,
-    discovery_crud: Annotated[CRUDDiscovery, Depends(get_discovery_crud)],
-    device_crud: Annotated[CRUDDevice, Depends(get_device_crud)],
-) -> ScanService:
+def get_scan_service(discovery_crud: DiscoveryCRUDDep, device_crud: DeviceCRUDDep) -> ScanService:
     return ScanService(discovery_crud=discovery_crud, device_crud=device_crud)
 
 
-ScanServiceDep = Annotated[ScanService, Depends(get_scan_service)]
+def get_session_service(db: SessionDep, user_crud: UserCRUDDep) -> SessionService:
+    return SessionService(db, user_crud)
 
 
-# ----- 网络拓扑依赖 -----
+def get_template_service(
+    db: SessionDep, template_crud: TemplateCRUDDep, template_approval_crud: TemplateApprovalCRUDDep
+) -> TemplateService:
+    return TemplateService(db, template_crud, template_approval_crud)
 
 
-def get_topology_crud() -> CRUDTopology:
-    return topology_instance
-
-
-def get_topology_service(
-    db: SessionDep,
-    topology_crud: Annotated[CRUDTopology, Depends(get_topology_crud)],
-    device_crud: Annotated[CRUDDevice, Depends(get_device_crud)],
-) -> TopologyService:
+def get_topology_service(topology_crud: TopologyCRUDDep, device_crud: DeviceCRUDDep) -> TopologyService:
     return TopologyService(
         topology_crud=topology_crud,
         device_crud=device_crud,
@@ -549,59 +521,34 @@ def get_topology_service(
     )
 
 
-TopologyServiceDep = Annotated[TopologyService, Depends(get_topology_service)]
+def get_user_service(db: SessionDep, user_crud: UserCRUDDep, role_crud: RoleCRUDDep) -> UserService:
+    return UserService(db, user_crud, role_crud)
 
 
-# ----- 差异与告警依赖（Phase 3）-----
-
-
-def get_alert_crud() -> CRUDAlert:
-    return alert_instance
-
-
-def get_alert_service(
-    db: SessionDep,
-    alert_crud: Annotated[CRUDAlert, Depends(get_alert_crud)],
-) -> AlertService:
-    return AlertService(db, alert_crud)
+def get_discovery_service(db: SessionDep, discovery_crud: DiscoveryCRUDDep) -> DiscoveryService:
+    return DiscoveryService(db, discovery_crud)
 
 
 AlertServiceDep = Annotated[AlertService, Depends(get_alert_service)]
-
-
-def get_diff_service(
-    db: SessionDep,
-    backup_crud: Annotated[CRUDBackup, Depends(get_backup_crud)],
-) -> DiffService:
-    return DiffService(db, backup_crud)
-
-
-DiffServiceDep = Annotated[DiffService, Depends(get_diff_service)]
-
-
-# ----- ARP/MAC采集依赖 -----
-
-
-def get_collect_service(
-    db: SessionDep,
-    device_crud: Annotated[CRUDDevice, Depends(get_device_crud)],
-    credential_crud: Annotated[CRUDCredential, Depends(get_credential_crud)],
-) -> CollectService:
-    return CollectService(db, device_crud, credential_crud)
-
-
+AuthServiceDep = Annotated[AuthService, Depends(get_auth_service)]
+BackupServiceDep = Annotated[BackupService, Depends(get_backup_service)]
 CollectServiceDep = Annotated[CollectService, Depends(get_collect_service)]
-
-
-# ----- 预设模板依赖 -----
-
-
-def get_preset_service(
-    db: SessionDep,
-    device_crud: Annotated[CRUDDevice, Depends(get_device_crud)],
-    credential_crud: Annotated[CRUDCredential, Depends(get_credential_crud)],
-) -> PresetService:
-    return PresetService(db, device_crud, credential_crud)
-
-
+CredentialServiceDep = Annotated[CredentialService, Depends(get_credential_service)]
+DashboardServiceDep = Annotated[DashboardService, Depends(get_dashboard_service)]
+DeployServiceDep = Annotated[DeployService, Depends(get_deploy_service)]
+DeptServiceDep = Annotated[DeptService, Depends(get_dept_service)]
+DeviceServiceDep = Annotated[DeviceService, Depends(get_device_service)]
+DiffServiceDep = Annotated[DiffService, Depends(get_diff_service)]
+DiscoveryServiceDep = Annotated[DiscoveryService, Depends(get_discovery_service)]
+InventoryAuditServiceDep = Annotated[InventoryAuditService, Depends(get_inventory_audit_service)]
+LogServiceDep = Annotated[LogService, Depends(get_log_service)]
+MenuServiceDep = Annotated[MenuService, Depends(get_menu_service)]
+PermissionServiceDep = Annotated[PermissionService, Depends(get_permission_service)]
 PresetServiceDep = Annotated[PresetService, Depends(get_preset_service)]
+RenderServiceDep = Annotated[RenderService, Depends(get_render_service)]
+RoleServiceDep = Annotated[RoleService, Depends(get_role_service)]
+ScanServiceDep = Annotated[ScanService, Depends(get_scan_service)]
+SessionServiceDep = Annotated[SessionService, Depends(get_session_service)]
+TemplateServiceDep = Annotated[TemplateService, Depends(get_template_service)]
+TopologyServiceDep = Annotated[TopologyService, Depends(get_topology_service)]
+UserServiceDep = Annotated[UserService, Depends(get_user_service)]

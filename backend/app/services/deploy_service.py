@@ -9,6 +9,7 @@
 from datetime import UTC, datetime
 from uuid import UUID
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.decorator import transactional
@@ -55,7 +56,79 @@ class DeployService:
         task = await self.task_crud.get_with_related(self.db, id=task_id)
         if not task:
             raise NotFoundException("任务不存在")
+        if task.task_type != TaskType.DEPLOY.value:
+            raise NotFoundException("任务类型不匹配")
         return task
+
+    async def list_tasks_paginated(self, *, page: int = 1, page_size: int = 20) -> tuple[list[Task], int]:
+        return await self.task_crud.get_multi_paginated(
+            self.db,
+            page=page,
+            page_size=page_size,
+            task_type=TaskType.DEPLOY.value,
+            with_related=True,
+        )
+
+    async def list_deleted_tasks_paginated(self, *, page: int = 1, page_size: int = 20) -> tuple[list[Task], int]:
+        return await self.task_crud.get_multi_deleted_paginated(
+            self.db,
+            page=page,
+            page_size=page_size,
+            task_type=TaskType.DEPLOY.value,
+            with_related=True,
+        )
+
+    async def _get_deploy_task_ids(self, *, ids: list[UUID]) -> list[UUID]:
+        if not ids:
+            return []
+        stmt = select(Task.id).where(Task.id.in_(ids), Task.task_type == TaskType.DEPLOY.value)
+        result = await self.db.execute(stmt)
+        return list(result.scalars().all())
+
+    @transactional()
+    async def batch_delete_tasks(self, *, ids: list[UUID], hard_delete: bool = False) -> tuple[int, list[UUID]]:
+        allowed_ids = await self._get_deploy_task_ids(ids=ids)
+        allowed_set = set(allowed_ids)
+        success_count, failed_ids = await self.task_crud.batch_remove(self.db, ids=allowed_ids, hard_delete=hard_delete)
+        for id_ in ids:
+            if id_ not in allowed_set and id_ not in failed_ids:
+                failed_ids.append(id_)
+        return success_count, failed_ids
+
+    @transactional()
+    async def delete_task(self, *, task_id: UUID) -> Task:
+        task = await self.get_task(task_id)
+        success_count, failed_ids = await self.batch_delete_tasks(ids=[task_id], hard_delete=False)
+        if success_count == 0 or failed_ids:
+            raise NotFoundException("删除失败")
+        return task
+
+    @transactional()
+    async def batch_restore_tasks(self, *, ids: list[UUID]) -> tuple[int, list[UUID]]:
+        allowed_ids = await self._get_deploy_task_ids(ids=ids)
+        allowed_set = set(allowed_ids)
+        success_count, failed_ids = await self.task_crud.batch_restore(self.db, ids=allowed_ids)
+        for id_ in ids:
+            if id_ not in allowed_set and id_ not in failed_ids:
+                failed_ids.append(id_)
+        return success_count, failed_ids
+
+    @transactional()
+    async def restore_task(self, *, task_id: UUID) -> Task:
+        success_count, failed_ids = await self.batch_restore_tasks(ids=[task_id])
+        if success_count == 0 or failed_ids:
+            raise NotFoundException("任务不存在或未被删除")
+        return await self.get_task(task_id)
+
+    @transactional()
+    async def hard_delete_task(self, *, task_id: UUID) -> None:
+        stmt = select(Task.id).where(Task.id == task_id, Task.task_type == TaskType.DEPLOY.value, Task.is_deleted.is_(True))
+        exists = (await self.db.execute(stmt)).scalars().first()
+        if exists is None:
+            raise NotFoundException("任务不存在或未被软删除")
+        success_count, failed_ids = await self.batch_delete_tasks(ids=[task_id], hard_delete=True)
+        if success_count == 0 or failed_ids:
+            raise NotFoundException("彻底删除失败")
 
     async def get_device_results(self, task: Task) -> list[DeviceDeployResult]:
         """获取设备维度的执行结果列表（补充设备名称）。"""

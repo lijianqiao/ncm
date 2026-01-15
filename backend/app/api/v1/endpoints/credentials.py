@@ -76,7 +76,7 @@ async def read_credentials(
 
 
 @router.get(
-    "/{credential_id}",
+    "/{credential_id:uuid}",
     response_model=ResponseBase[DeviceGroupCredentialResponse],
     summary="获取凭据详情",
 )
@@ -131,7 +131,7 @@ async def create_credential(
 
 
 @router.put(
-    "/{credential_id}",
+    "/{credential_id:uuid}",
     response_model=ResponseBase[DeviceGroupCredentialResponse],
     summary="更新凭据",
 )
@@ -163,7 +163,7 @@ async def update_credential(
 
 
 @router.delete(
-    "/{credential_id}",
+    "/{credential_id:uuid}",
     response_model=ResponseBase[DeviceGroupCredentialResponse],
     summary="删除凭据",
 )
@@ -292,7 +292,7 @@ async def read_recycle_bin_credentials(
 
 
 @router.post(
-    "/{credential_id}/restore",
+    "/{credential_id:uuid}/restore",
     response_model=ResponseBase[DeviceGroupCredentialResponse],
     summary="恢复凭据",
 )
@@ -352,7 +352,7 @@ async def batch_restore_credentials(
 
 
 @router.delete(
-    "/{credential_id}/hard",
+    "/{credential_id:uuid}/hard",
     response_model=ResponseBase[dict],
     summary="彻底删除凭据",
 )

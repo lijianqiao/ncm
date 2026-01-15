@@ -14,6 +14,7 @@ import {
   NTabs,
   NTabPane,
   NTreeSelect,
+  useDialog,
   type DropdownOption,
 } from 'naive-ui'
 import { $alert } from '@/utils/alert'
@@ -22,6 +23,12 @@ import {
   createInventoryAudit,
   getInventoryAudit,
   exportInventoryAudit,
+  getRecycleBinInventoryAudits,
+  batchDeleteInventoryAudits,
+  restoreInventoryAudit,
+  batchRestoreInventoryAudits,
+  hardDeleteInventoryAudit,
+  batchHardDeleteInventoryAudits,
   type InventoryAudit,
   type InventoryAuditSearchParams,
   type InventoryAuditStatus,
@@ -30,12 +37,16 @@ import {
 import { getDeptTree, type Dept } from '@/api/depts'
 import { formatDateTime } from '@/utils/date'
 import ProTable, { type FilterConfig } from '@/components/common/ProTable.vue'
+import RecycleBinModal from '@/components/common/RecycleBinModal.vue'
 
 defineOptions({
   name: 'InventoryManagement',
 })
 
+const dialog = useDialog()
 const tableRef = ref()
+const recycleBinRef = ref()
+const showRecycleBin = ref(false)
 
 // ==================== 常量定义 ====================
 
@@ -168,6 +179,80 @@ const loadData = async (params: InventoryAuditSearchParams) => {
   }
 }
 
+const recycleBinRequest = async (params: InventoryAuditSearchParams) => {
+  const res = await getRecycleBinInventoryAudits(params)
+  return {
+    data: res.data.items,
+    total: res.data.total,
+  }
+}
+
+const handleRecycleBin = () => {
+  showRecycleBin.value = true
+  recycleBinRef.value?.reload()
+}
+
+const handleBatchDelete = async (ids: Array<string | number>) => {
+  if (ids.length === 0) return
+  dialog.warning({
+    title: '确认批量删除',
+    content: `确定要删除选中的 ${ids.length} 个盘点任务吗？`,
+    positiveText: '确认删除',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      try {
+        const res = await batchDeleteInventoryAudits(ids.map(String))
+        $alert.success(`成功删除 ${res.data.success_count} 个盘点任务`)
+        tableRef.value?.reload()
+      } catch {
+        // Error handled
+      }
+    },
+  })
+}
+
+const handleRecycleBinRestore = async (row: InventoryAudit) => {
+  try {
+    await restoreInventoryAudit(row.id)
+    $alert.success('恢复成功')
+    recycleBinRef.value?.reload()
+    tableRef.value?.reload()
+  } catch {
+    // Error handled
+  }
+}
+
+const handleRecycleBinBatchRestore = async (ids: Array<string | number>) => {
+  try {
+    const res = await batchRestoreInventoryAudits(ids.map(String))
+    $alert.success(`成功恢复 ${res.data.success_count} 个盘点任务`)
+    recycleBinRef.value?.reload()
+    tableRef.value?.reload()
+  } catch {
+    // Error handled
+  }
+}
+
+const handleRecycleBinHardDelete = async (row: InventoryAudit) => {
+  try {
+    await hardDeleteInventoryAudit(row.id)
+    $alert.success('彻底删除成功')
+    recycleBinRef.value?.reload()
+  } catch {
+    // Error handled
+  }
+}
+
+const handleRecycleBinBatchHardDelete = async (ids: Array<string | number>) => {
+  try {
+    const res = await batchHardDeleteInventoryAudits(ids.map(String))
+    $alert.success(`成功彻底删除 ${res.data.success_count} 个盘点任务`)
+    recycleBinRef.value?.reload()
+  } catch {
+    // Error handled
+  }
+}
+
 // ==================== 右键菜单 ====================
 
 const contextMenuOptions: DropdownOption[] = [
@@ -296,8 +381,27 @@ const submitCreate = async () => {
       :search-filters="searchFilters"
       @add="handleCreate"
       @context-menu-select="handleContextMenuSelect"
+      @recycle-bin="handleRecycleBin"
+      @batch-delete="handleBatchDelete"
       show-add
+      show-recycle-bin
+      show-batch-delete
       :scroll-x="1400"
+    />
+
+    <RecycleBinModal
+      ref="recycleBinRef"
+      v-model:show="showRecycleBin"
+      title="回收站 (已删除盘点任务)"
+      :columns="columns"
+      :request="recycleBinRequest"
+      :row-key="(row: InventoryAudit) => row.id"
+      search-placeholder="搜索已删除任务..."
+      :scroll-x="1400"
+      @restore="handleRecycleBinRestore"
+      @batch-restore="handleRecycleBinBatchRestore"
+      @hard-delete="handleRecycleBinHardDelete"
+      @batch-hard-delete="handleRecycleBinBatchHardDelete"
     />
 
     <!-- 查看详情 Modal -->
@@ -311,9 +415,15 @@ const submitCreate = async () => {
               {{ statusLabelMap[viewData.status] }}
             </n-tag>
           </n-descriptions-item>
-          <n-descriptions-item label="创建人">{{ viewData.created_by_name || '-' }}</n-descriptions-item>
-          <n-descriptions-item label="创建时间">{{ formatDateTime(viewData.created_at) }}</n-descriptions-item>
-          <n-descriptions-item label="完成时间">{{ formatDateTime(viewData.completed_at) }}</n-descriptions-item>
+          <n-descriptions-item label="创建人">{{
+            viewData.created_by_name || '-'
+          }}</n-descriptions-item>
+          <n-descriptions-item label="创建时间">{{
+            formatDateTime(viewData.created_at)
+          }}</n-descriptions-item>
+          <n-descriptions-item label="完成时间">{{
+            formatDateTime(viewData.completed_at)
+          }}</n-descriptions-item>
           <n-descriptions-item label="扫描范围" :span="2">
             <template v-if="viewData.scope.subnets?.length">
               网段: {{ viewData.scope.subnets.join(', ') }}
@@ -326,12 +436,24 @@ const submitCreate = async () => {
         <template v-if="viewData.stats">
           <h4 style="margin-top: 16px">盘点统计</h4>
           <n-descriptions :column="3" label-placement="left" bordered>
-            <n-descriptions-item label="扫描总数">{{ viewData.stats.total_scanned }}</n-descriptions-item>
-            <n-descriptions-item label="在线设备">{{ viewData.stats.online_count }}</n-descriptions-item>
-            <n-descriptions-item label="离线设备">{{ viewData.stats.offline_count }}</n-descriptions-item>
-            <n-descriptions-item label="已匹配">{{ viewData.stats.matched_count }}</n-descriptions-item>
-            <n-descriptions-item label="影子资产">{{ viewData.stats.shadow_count }}</n-descriptions-item>
-            <n-descriptions-item label="配置差异">{{ viewData.stats.config_diff_count }}</n-descriptions-item>
+            <n-descriptions-item label="扫描总数">{{
+              viewData.stats.total_scanned
+            }}</n-descriptions-item>
+            <n-descriptions-item label="在线设备">{{
+              viewData.stats.online_count
+            }}</n-descriptions-item>
+            <n-descriptions-item label="离线设备">{{
+              viewData.stats.offline_count
+            }}</n-descriptions-item>
+            <n-descriptions-item label="已匹配">{{
+              viewData.stats.matched_count
+            }}</n-descriptions-item>
+            <n-descriptions-item label="影子资产">{{
+              viewData.stats.shadow_count
+            }}</n-descriptions-item>
+            <n-descriptions-item label="配置差异">{{
+              viewData.stats.config_diff_count
+            }}</n-descriptions-item>
           </n-descriptions>
         </template>
         <template v-if="viewData.error">
@@ -419,7 +541,10 @@ const submitCreate = async () => {
               </tbody>
             </n-table>
           </n-tab-pane>
-          <n-tab-pane name="config_diff" :tab="`配置差异 (${exportData.config_diff_devices.length})`">
+          <n-tab-pane
+            name="config_diff"
+            :tab="`配置差异 (${exportData.config_diff_devices.length})`"
+          >
             <n-table :bordered="false" :single-line="false">
               <thead>
                 <tr>
@@ -443,7 +568,12 @@ const submitCreate = async () => {
     </n-modal>
 
     <!-- 创建盘点任务 Modal -->
-    <n-modal v-model:show="showCreateModal" preset="dialog" title="创建盘点任务" style="width: 600px">
+    <n-modal
+      v-model:show="showCreateModal"
+      preset="dialog"
+      title="创建盘点任务"
+      style="width: 600px"
+    >
       <n-space vertical style="width: 100%">
         <n-form-item label="任务名称">
           <n-input v-model:value="createModel.name" placeholder="请输入任务名称" />

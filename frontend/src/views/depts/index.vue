@@ -32,6 +32,7 @@ import {
   getRecycleBinDepts,
   restoreDept,
   batchRestoreDepts,
+  batchHardDeleteDepts,
   type Dept,
   type DeptCreate,
   type DeptUpdate,
@@ -305,6 +306,25 @@ const handleBatchRestore = async (ids: Array<string | number>) => {
   }
 }
 
+const handleRecycleBinBatchHardDelete = async (ids: Array<string | number>) => {
+  if (ids.length === 0) return
+  dialog.warning({
+    title: '确认批量彻底删除',
+    content: `确定要彻底删除选中的 ${ids.length} 个部门吗？此操作不可恢复！`,
+    positiveText: '确认删除',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      try {
+        await batchHardDeleteDepts(ids.map(String))
+        $alert.success('批量彻底删除成功')
+        recycleBinTableRef.value?.refresh()
+      } catch {
+        // Error handled
+      }
+    },
+  })
+}
+
 // Data Fetching
 const fetchDeptTree = async () => {
   try {
@@ -464,6 +484,13 @@ const searchFilters: FilterConfig[] = [
             @click="handleBatchRestore(recycleBinCheckedKeys)"
           >
             批量恢复 ({{ recycleBinCheckedKeys.length }})
+          </NButton>
+          <NButton
+            v-if="hasRecycleBinSelection"
+            type="error"
+            @click="handleRecycleBinBatchHardDelete(recycleBinCheckedKeys)"
+          >
+            批量彻底删除 ({{ recycleBinCheckedKeys.length }})
           </NButton>
         </template>
       </ProTable>

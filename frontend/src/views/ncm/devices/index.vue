@@ -479,7 +479,11 @@ const recycleBinColumns: DataTableColumns<Device> = [
   },
 ]
 
-const loadRecycleBinData = async (params: { page?: number; page_size?: number; keyword?: string }) => {
+const loadRecycleBinData = async (params: {
+  page?: number
+  page_size?: number
+  keyword?: string
+}) => {
   const res = await getRecycleBinDevices(params)
   return {
     data: res.data.items,
@@ -530,6 +534,11 @@ const handleBatchHardDelete = async (ids: Array<string | number>) => {
     // Error handled
   }
 }
+
+const handleRecycleBin = () => {
+  showRecycleBin.value = true
+  recycleBinRef.value?.reload()
+}
 </script>
 
 <template>
@@ -556,15 +565,14 @@ const handleBatchHardDelete = async (ids: Array<string | number>) => {
       @add="handleCreate"
       @batch-delete="handleBatchDelete"
       @context-menu-select="handleContextMenuSelect"
+      @recycle-bin="handleRecycleBin"
       show-add
       show-batch-delete
+      show-recycle-bin
       :scroll-x="1800"
     >
       <template #toolbar-left>
         <n-button type="info" @click="handleBatchTransition"> 批量状态流转 </n-button>
-      </template>
-      <template #toolbar>
-        <n-button @click="showRecycleBin = true">回收站</n-button>
       </template>
     </ProTable>
 

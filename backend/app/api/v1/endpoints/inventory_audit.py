@@ -13,7 +13,13 @@ from fastapi import APIRouter, Depends, Query
 
 from app.api import deps
 from app.core.permissions import PermissionCode
-from app.schemas.common import PaginatedResponse, ResponseBase
+from app.schemas.common import (
+    BatchDeleteRequest,
+    BatchOperationResult,
+    BatchRestoreRequest,
+    PaginatedResponse,
+    ResponseBase,
+)
 from app.schemas.inventory_audit import InventoryAuditCreate, InventoryAuditResponse
 
 router = APIRouter()
@@ -83,6 +89,138 @@ async def list_inventory_audits(
             total=total,
             page=page,
             page_size=page_size,
+        )
+    )
+
+
+@router.get(
+    "/recycle-bin",
+    response_model=ResponseBase[PaginatedResponse[InventoryAuditResponse]],
+    summary="盘点任务回收站列表",
+)
+async def list_inventory_audits_recycle_bin(
+    service: deps.InventoryAuditServiceDep,
+    active_superuser: deps.User = Depends(deps.get_current_active_superuser),
+    _: deps.User = Depends(deps.require_permissions([PermissionCode.INVENTORY_AUDIT_RECYCLE.value])),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=500),
+    status: str | None = Query(default=None, description="状态筛选"),
+) -> ResponseBase[PaginatedResponse[InventoryAuditResponse]]:
+    items, total = await service.list_deleted_paginated(page=page, page_size=page_size, status=status)
+    return ResponseBase(
+        data=PaginatedResponse(
+            items=[InventoryAuditResponse.model_validate(x) for x in items],
+            total=total,
+            page=page,
+            page_size=page_size,
+        )
+    )
+
+
+@router.delete(
+    "/batch",
+    response_model=ResponseBase[BatchOperationResult],
+    summary="批量删除盘点任务",
+)
+async def batch_delete_inventory_audits(
+    request: BatchDeleteRequest,
+    service: deps.InventoryAuditServiceDep,
+    current_user: deps.CurrentUser,
+    _: deps.User = Depends(deps.require_permissions([PermissionCode.INVENTORY_AUDIT_DELETE.value])),
+) -> ResponseBase[BatchOperationResult]:
+    success_count, failed_ids = await service.batch_delete(ids=request.ids, hard_delete=request.hard_delete)
+    return ResponseBase(
+        data=BatchOperationResult(
+            success_count=success_count,
+            failed_ids=failed_ids,
+            message=f"成功删除 {success_count} 个盘点任务" if not failed_ids else "部分删除成功",
+        )
+    )
+
+
+@router.delete(
+    "/{audit_id}",
+    response_model=ResponseBase[InventoryAuditResponse],
+    summary="删除盘点任务",
+)
+async def delete_inventory_audit(
+    audit_id: UUID,
+    service: deps.InventoryAuditServiceDep,
+    current_user: deps.CurrentUser,
+    _: deps.User = Depends(deps.require_permissions([PermissionCode.INVENTORY_AUDIT_DELETE.value])),
+) -> ResponseBase[InventoryAuditResponse]:
+    audit = await service.delete(audit_id)
+    return ResponseBase(data=InventoryAuditResponse.model_validate(audit), message="盘点任务删除成功")
+
+
+@router.post(
+    "/batch/restore",
+    response_model=ResponseBase[BatchOperationResult],
+    summary="批量恢复盘点任务",
+)
+async def batch_restore_inventory_audits(
+    request: BatchRestoreRequest,
+    service: deps.InventoryAuditServiceDep,
+    active_superuser: deps.User = Depends(deps.get_current_active_superuser),
+    _: deps.User = Depends(deps.require_permissions([PermissionCode.INVENTORY_AUDIT_RESTORE.value])),
+) -> ResponseBase[BatchOperationResult]:
+    success_count, failed_ids = await service.batch_restore(ids=request.ids)
+    return ResponseBase(
+        data=BatchOperationResult(
+            success_count=success_count,
+            failed_ids=failed_ids,
+            message=f"成功恢复 {success_count} 个盘点任务" if not failed_ids else "部分恢复成功",
+        )
+    )
+
+
+@router.post(
+    "/{audit_id}/restore",
+    response_model=ResponseBase[InventoryAuditResponse],
+    summary="恢复已删除盘点任务",
+)
+async def restore_inventory_audit(
+    audit_id: UUID,
+    service: deps.InventoryAuditServiceDep,
+    active_superuser: deps.User = Depends(deps.get_current_active_superuser),
+    _: deps.User = Depends(deps.require_permissions([PermissionCode.INVENTORY_AUDIT_RESTORE.value])),
+) -> ResponseBase[InventoryAuditResponse]:
+    audit = await service.restore(audit_id)
+    return ResponseBase(data=InventoryAuditResponse.model_validate(audit), message="盘点任务恢复成功")
+
+
+@router.delete(
+    "/{audit_id}/hard",
+    response_model=ResponseBase[dict],
+    summary="彻底删除盘点任务",
+)
+async def hard_delete_inventory_audit(
+    audit_id: UUID,
+    service: deps.InventoryAuditServiceDep,
+    active_superuser: deps.User = Depends(deps.get_current_active_superuser),
+    _: deps.User = Depends(deps.require_permissions([PermissionCode.INVENTORY_AUDIT_DELETE.value])),
+) -> ResponseBase[dict]:
+    await service.hard_delete(audit_id)
+    return ResponseBase(data={"message": "盘点任务已彻底删除"}, message="盘点任务已彻底删除")
+
+
+@router.delete(
+    "/batch/hard",
+    response_model=ResponseBase[BatchOperationResult],
+    summary="批量彻底删除盘点任务",
+)
+async def batch_hard_delete_inventory_audits(
+    request: BatchDeleteRequest,
+    service: deps.InventoryAuditServiceDep,
+    active_superuser: deps.User = Depends(deps.get_current_active_superuser),
+    _: deps.User = Depends(deps.require_permissions([PermissionCode.INVENTORY_AUDIT_DELETE.value])),
+) -> ResponseBase[BatchOperationResult]:
+    success_count, failed_ids = await service.batch_delete(ids=request.ids, hard_delete=True)
+    return ResponseBase(
+        data=BatchOperationResult(
+            success_count=success_count,
+            failed_ids=failed_ids,
+            message=f"成功彻底删除 {success_count} 个盘点任务" if not failed_ids else "部分彻底删除成功",
         )
     )
 

@@ -23,8 +23,8 @@ class CRUDInventoryAudit(CRUDBase[InventoryAudit, InventoryAuditCreate, Inventor
         page_size: int = 20,
         status: str | None = None,
     ) -> tuple[list[InventoryAudit], int]:
-        stmt = select(InventoryAudit)
-        count_stmt = select(func.count(InventoryAudit.id))
+        stmt = select(InventoryAudit).where(InventoryAudit.is_deleted.is_(False))
+        count_stmt = select(func.count(InventoryAudit.id)).where(InventoryAudit.is_deleted.is_(False))
 
         if status:
             stmt = stmt.where(InventoryAudit.status == status)
@@ -35,6 +35,25 @@ class CRUDInventoryAudit(CRUDBase[InventoryAudit, InventoryAuditCreate, Inventor
         items = (await db.execute(stmt)).scalars().all()
         return list(items), int(total)
 
+    async def get_multi_deleted_paginated(
+        self,
+        db: AsyncSession,
+        *,
+        page: int = 1,
+        page_size: int = 20,
+        status: str | None = None,
+    ) -> tuple[list[InventoryAudit], int]:
+        stmt = select(InventoryAudit).where(InventoryAudit.is_deleted.is_(True))
+        count_stmt = select(func.count(InventoryAudit.id)).where(InventoryAudit.is_deleted.is_(True))
+
+        if status:
+            stmt = stmt.where(InventoryAudit.status == status)
+            count_stmt = count_stmt.where(InventoryAudit.status == status)
+
+        stmt = stmt.order_by(InventoryAudit.updated_at.desc()).offset((page - 1) * page_size).limit(page_size)
+        total = await db.scalar(count_stmt) or 0
+        items = (await db.execute(stmt)).scalars().all()
+        return list(items), int(total)
+
 
 inventory_audit_crud = CRUDInventoryAudit(InventoryAudit)
-

@@ -27,6 +27,7 @@ export interface Alert {
   status: AlertStatusType
   related_device_id: string | null
   related_device_name: string | null
+  related_device_ip: string | null
   acknowledged_by: string | null
   acknowledged_at: string | null
   closed_by: string | null

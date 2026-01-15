@@ -99,7 +99,7 @@ async def create_template(
 
 
 @router.get(
-    "/{template_id}",
+    "/{template_id:uuid}",
     response_model=ResponseBase[TemplateResponse],
     dependencies=[Depends(require_permissions([PermissionCode.TEMPLATE_LIST.value]))],
     summary="获取模板详情",
@@ -122,7 +122,7 @@ async def get_template(
 
 
 @router.put(
-    "/{template_id}",
+    "/{template_id:uuid}",
     response_model=ResponseBase[TemplateResponse],
     dependencies=[Depends(require_permissions([PermissionCode.TEMPLATE_UPDATE.value]))],
     summary="更新模板",
@@ -147,7 +147,7 @@ async def update_template(
 
 
 @router.post(
-    "/{template_id}/new-version",
+    "/{template_id:uuid}/new-version",
     response_model=ResponseBase[TemplateResponse],
     dependencies=[Depends(require_permissions([PermissionCode.TEMPLATE_CREATE.value]))],
     summary="创建新版本(草稿)",
@@ -172,7 +172,7 @@ async def new_version(
 
 
 @router.post(
-    "/{template_id}/submit",
+    "/{template_id:uuid}/submit",
     response_model=ResponseBase[TemplateResponse],
     dependencies=[Depends(require_permissions([PermissionCode.TEMPLATE_SUBMIT.value]))],
     summary="提交模板审批",
@@ -197,7 +197,7 @@ async def submit_template(
 
 
 @router.post(
-    "/{template_id}/approve",
+    "/{template_id:uuid}/approve",
     response_model=ResponseBase[TemplateResponse],
     dependencies=[Depends(require_permissions([PermissionCode.TEMPLATE_APPROVE.value]))],
     summary="审批模板(某一级)",
@@ -222,7 +222,7 @@ async def approve_template(
 
 
 @router.delete(
-    "/{template_id}",
+    "/{template_id:uuid}",
     response_model=ResponseBase[TemplateResponse],
     dependencies=[Depends(require_permissions([PermissionCode.TEMPLATE_DELETE.value]))],
     summary="删除模板",
@@ -292,7 +292,7 @@ async def read_recycle_bin_templates(
 
 
 @router.post(
-    "/{template_id}/restore",
+    "/{template_id:uuid}/restore",
     response_model=ResponseBase[TemplateResponse],
     dependencies=[Depends(require_permissions([PermissionCode.TEMPLATE_DELETE.value]))],
     summary="恢复模板",
@@ -332,7 +332,7 @@ async def batch_restore_templates(
 
 
 @router.delete(
-    "/{template_id}/hard",
+    "/{template_id:uuid}/hard",
     response_model=ResponseBase[dict],
     dependencies=[Depends(require_permissions([PermissionCode.TEMPLATE_DELETE.value]))],
     summary="彻底删除模板",

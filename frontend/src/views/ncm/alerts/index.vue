@@ -318,7 +318,7 @@ const handleBatchClose = () => {
       @context-menu-select="handleContextMenuSelect"
       :scroll-x="1200"
     >
-      <template #toolbar-left>
+      <template #search-right>
         <n-button type="info" @click="handleBatchAcknowledge">批量确认</n-button>
         <n-button type="warning" @click="handleBatchClose">批量关闭</n-button>
       </template>

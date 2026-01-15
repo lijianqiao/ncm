@@ -179,3 +179,69 @@ export function rollbackDeployTask(id: string) {
     method: 'post',
   })
 }
+
+export interface DeployBatchResult {
+  success_count: number
+  failed_ids: string[]
+  message?: string
+}
+
+/** 获取下发任务回收站列表 */
+export function getRecycleBinDeployTasks(params?: DeploySearchParams) {
+  return request<ResponseBase<PaginatedResponse<DeployTask>>>({
+    url: '/deploy/recycle-bin',
+    method: 'get',
+    params,
+  })
+}
+
+/** 删除下发任务（软删除） */
+export function deleteDeployTask(id: string) {
+  return request<ResponseBase<DeployTask>>({
+    url: `/deploy/${id}`,
+    method: 'delete',
+  })
+}
+
+/** 批量删除下发任务 */
+export function batchDeleteDeployTasks(ids: string[]) {
+  return request<ResponseBase<DeployBatchResult>>({
+    url: '/deploy/batch',
+    method: 'delete',
+    data: { ids },
+  })
+}
+
+/** 恢复已删除下发任务 */
+export function restoreDeployTask(id: string) {
+  return request<ResponseBase<DeployTask>>({
+    url: `/deploy/${id}/restore`,
+    method: 'post',
+  })
+}
+
+/** 批量恢复下发任务 */
+export function batchRestoreDeployTasks(ids: string[]) {
+  return request<ResponseBase<DeployBatchResult>>({
+    url: '/deploy/batch/restore',
+    method: 'post',
+    data: { ids },
+  })
+}
+
+/** 彻底删除下发任务 */
+export function hardDeleteDeployTask(id: string) {
+  return request<ResponseBase<{ message: string }>>({
+    url: `/deploy/${id}/hard`,
+    method: 'delete',
+  })
+}
+
+/** 批量彻底删除下发任务 */
+export function batchHardDeleteDeployTasks(ids: string[]) {
+  return request<ResponseBase<DeployBatchResult>>({
+    url: '/deploy/batch/hard',
+    method: 'delete',
+    data: { ids, hard_delete: true },
+  })
+}

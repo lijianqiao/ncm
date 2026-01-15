@@ -11,10 +11,17 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query
 
+from app.api import deps
 from app.api.deps import CurrentUser, DeployServiceDep, require_permissions
-from app.core.enums import TaskStatus, TaskType
+from app.core.enums import TaskStatus
 from app.core.permissions import PermissionCode
-from app.schemas.common import PaginatedResponse, ResponseBase
+from app.schemas.common import (
+    BatchDeleteRequest,
+    BatchOperationResult,
+    BatchRestoreRequest,
+    PaginatedResponse,
+    ResponseBase,
+)
 from app.schemas.deploy import (
     DeployApproveRequest,
     DeployCreateRequest,
@@ -159,20 +166,154 @@ async def list_deploy_tasks(
     Returns:
         ResponseBase[PaginatedResponse[DeployTaskResponse]]: 分页后的任务概览。
     """
-    # 临时：复用 CRUD 的分页过滤能力
-    items, total = await service.task_crud.get_multi_paginated(
-        service.db,
-        page=page,
-        page_size=page_size,
-        task_type=TaskType.DEPLOY.value,
-        with_related=True,
-    )
+    items, total = await service.list_tasks_paginated(page=page, page_size=page_size)
     return ResponseBase(
         data=PaginatedResponse(
             items=[DeployTaskResponse.model_validate(x) for x in items],
             total=total,
             page=page,
             page_size=page_size,
+        )
+    )
+
+
+@router.get(
+    "/recycle-bin",
+    response_model=ResponseBase[PaginatedResponse[DeployTaskResponse]],
+    dependencies=[
+        Depends(deps.get_current_active_superuser),
+        Depends(require_permissions([PermissionCode.DEPLOY_RECYCLE.value])),
+    ],
+    summary="下发任务回收站列表",
+)
+async def list_deploy_tasks_recycle_bin(
+    service: DeployServiceDep,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=500),
+) -> ResponseBase[PaginatedResponse[DeployTaskResponse]]:
+    items, total = await service.list_deleted_tasks_paginated(page=page, page_size=page_size)
+    return ResponseBase(
+        data=PaginatedResponse(
+            items=[DeployTaskResponse.model_validate(x) for x in items],
+            total=total,
+            page=page,
+            page_size=page_size,
+        )
+    )
+
+
+@router.delete(
+    "/batch",
+    response_model=ResponseBase[BatchOperationResult],
+    dependencies=[Depends(require_permissions([PermissionCode.DEPLOY_DELETE.value]))],
+    summary="批量删除下发任务",
+)
+async def batch_delete_deploy_tasks(
+    request: BatchDeleteRequest,
+    service: DeployServiceDep,
+    user: CurrentUser,
+) -> ResponseBase[BatchOperationResult]:
+    success_count, failed_ids = await service.batch_delete_tasks(ids=request.ids, hard_delete=request.hard_delete)
+    return ResponseBase(
+        data=BatchOperationResult(
+            success_count=success_count,
+            failed_ids=failed_ids,
+            message=f"成功删除 {success_count} 个下发任务" if not failed_ids else "部分删除成功",
+        )
+    )
+
+
+@router.delete(
+    "/{task_id}",
+    response_model=ResponseBase[DeployTaskResponse],
+    dependencies=[Depends(require_permissions([PermissionCode.DEPLOY_DELETE.value]))],
+    summary="删除下发任务",
+)
+async def delete_deploy_task(
+    task_id: UUID,
+    service: DeployServiceDep,
+    user: CurrentUser,
+) -> ResponseBase[DeployTaskResponse]:
+    task = await service.delete_task(task_id=task_id)
+    return ResponseBase(data=DeployTaskResponse.model_validate(task), message="下发任务删除成功")
+
+
+@router.post(
+    "/batch/restore",
+    response_model=ResponseBase[BatchOperationResult],
+    dependencies=[
+        Depends(deps.get_current_active_superuser),
+        Depends(require_permissions([PermissionCode.DEPLOY_RESTORE.value])),
+    ],
+    summary="批量恢复下发任务",
+)
+async def batch_restore_deploy_tasks(
+    request: BatchRestoreRequest,
+    service: DeployServiceDep,
+) -> ResponseBase[BatchOperationResult]:
+    success_count, failed_ids = await service.batch_restore_tasks(ids=request.ids)
+    return ResponseBase(
+        data=BatchOperationResult(
+            success_count=success_count,
+            failed_ids=failed_ids,
+            message=f"成功恢复 {success_count} 个下发任务" if not failed_ids else "部分恢复成功",
+        )
+    )
+
+
+@router.post(
+    "/{task_id}/restore",
+    response_model=ResponseBase[DeployTaskResponse],
+    dependencies=[
+        Depends(deps.get_current_active_superuser),
+        Depends(require_permissions([PermissionCode.DEPLOY_RESTORE.value])),
+    ],
+    summary="恢复已删除下发任务",
+)
+async def restore_deploy_task(
+    task_id: UUID,
+    service: DeployServiceDep,
+) -> ResponseBase[DeployTaskResponse]:
+    task = await service.restore_task(task_id=task_id)
+    return ResponseBase(data=DeployTaskResponse.model_validate(task), message="下发任务恢复成功")
+
+
+@router.delete(
+    "/{task_id}/hard",
+    response_model=ResponseBase[dict],
+    dependencies=[
+        Depends(deps.get_current_active_superuser),
+        Depends(require_permissions([PermissionCode.DEPLOY_DELETE.value])),
+    ],
+    summary="彻底删除下发任务",
+)
+async def hard_delete_deploy_task(
+    task_id: UUID,
+    service: DeployServiceDep,
+) -> ResponseBase[dict]:
+    await service.hard_delete_task(task_id=task_id)
+    return ResponseBase(data={"message": "下发任务已彻底删除"}, message="下发任务已彻底删除")
+
+
+@router.delete(
+    "/batch/hard",
+    response_model=ResponseBase[BatchOperationResult],
+    dependencies=[
+        Depends(deps.get_current_active_superuser),
+        Depends(require_permissions([PermissionCode.DEPLOY_DELETE.value])),
+    ],
+    summary="批量彻底删除下发任务",
+)
+async def batch_hard_delete_deploy_tasks(
+    request: BatchDeleteRequest,
+    service: DeployServiceDep,
+) -> ResponseBase[BatchOperationResult]:
+    success_count, failed_ids = await service.batch_delete_tasks(ids=request.ids, hard_delete=True)
+    return ResponseBase(
+        data=BatchOperationResult(
+            success_count=success_count,
+            failed_ids=failed_ids,
+            message=f"成功彻底删除 {success_count} 个下发任务" if not failed_ids else "部分彻底删除成功",
         )
     )
 

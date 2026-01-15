@@ -9,6 +9,7 @@
 from datetime import UTC, datetime
 from uuid import UUID
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.decorator import transactional
@@ -34,6 +35,47 @@ class InventoryAuditService:
         return await self.inventory_audit_crud.get_multi_paginated(
             self.db, page=page, page_size=page_size, status=status
         )
+
+    async def list_deleted_paginated(self, *, page: int = 1, page_size: int = 20, status: str | None = None):
+        return await self.inventory_audit_crud.get_multi_deleted_paginated(
+            self.db, page=page, page_size=page_size, status=status
+        )
+
+    @transactional()
+    async def delete(self, audit_id: UUID) -> InventoryAudit:
+        audit = await self.get(audit_id)
+        success_count, failed_ids = await self.inventory_audit_crud.batch_remove(self.db, ids=[audit_id], hard_delete=False)
+        if success_count == 0 or failed_ids:
+            raise NotFoundException(message="删除失败")
+        return audit
+
+    @transactional()
+    async def batch_delete(self, *, ids: list[UUID], hard_delete: bool = False) -> tuple[int, list[UUID]]:
+        return await self.inventory_audit_crud.batch_remove(self.db, ids=ids, hard_delete=hard_delete)
+
+    @transactional()
+    async def restore(self, audit_id: UUID) -> InventoryAudit:
+        success_count, failed_ids = await self.inventory_audit_crud.batch_restore(self.db, ids=[audit_id])
+        if success_count == 0 or failed_ids:
+            raise NotFoundException(message="盘点任务不存在或未被删除")
+        audit = await self.inventory_audit_crud.get(self.db, id=audit_id)
+        if not audit:
+            raise NotFoundException(message="恢复失败")
+        return audit
+
+    @transactional()
+    async def batch_restore(self, *, ids: list[UUID]) -> tuple[int, list[UUID]]:
+        return await self.inventory_audit_crud.batch_restore(self.db, ids=ids)
+
+    @transactional()
+    async def hard_delete(self, audit_id: UUID) -> None:
+        stmt = select(InventoryAudit.id).where(InventoryAudit.id == audit_id, InventoryAudit.is_deleted.is_(True))
+        exists = (await self.db.execute(stmt)).scalars().first()
+        if exists is None:
+            raise NotFoundException(message="盘点任务不存在或未被软删除")
+        success_count, failed_ids = await self.batch_delete(ids=[audit_id], hard_delete=True)
+        if success_count == 0 or failed_ids:
+            raise NotFoundException(message="彻底删除失败")
 
     @transactional()
     async def create(self, data: InventoryAuditCreate, *, operator_id: UUID | None) -> InventoryAudit:

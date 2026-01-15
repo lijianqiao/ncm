@@ -114,7 +114,7 @@ name = "MenuMgmt"
 path = "/system/menus"
 component = "/views/menus/index.vue"
 icon = "MenuOutline"
-sort = 206
+sort = 204
 type = "MENU"
 is_hidden = false
 permission = ""
@@ -140,7 +140,7 @@ name = "LogMgmt"
 path = "/system/logs"
 component = ""
 icon = "DocumentTextOutline"
-sort = 205
+sort = 206
 type = "CATALOG"
 is_hidden = false
 permission = ""
@@ -153,7 +153,7 @@ name = "LoginLog"
 path = "/system/logs/login"
 component = "/views/logs/login/index.vue"
 icon = "LogInOutline"
-sort = 2051
+sort = 2061
 type = "MENU"
 is_hidden = false
 permission = ""
@@ -166,7 +166,7 @@ name = "OperationLog"
 path = "/system/logs/operation"
 component = "/views/logs/operation/index.vue"
 icon = "HammerOutline"
-sort = 2052
+sort = 2062
 type = "MENU"
 is_hidden = false
 permission = ""
@@ -179,7 +179,7 @@ name = "SessionMgmt"
 path = "/system/sessions"
 component = "/views/sessions/index.vue"
 icon = "PulseOutline"
-sort = 204
+sort = 205
 type = "MENU"
 is_hidden = false
 permission = ""
@@ -1725,22 +1725,14 @@ name = "审计员"
 code = "auditor"
 description = "仅查看日志"
 sort = 2
-permissions = [
-  "log:login:list",
-  "log:operation:list",
-]
+permissions = ["log:login:list", "log:operation:list"]
 
 [[roles]]
 name = "只读"
 code = "viewer"
 description = "仅查看菜单与角色以及日志"
 sort = 3
-permissions = [
-  "menu:list",
-  "role:list",
-  "log:login:list",
-  "log:operation:list",
-]
+permissions = ["menu:list", "role:list", "log:login:list", "log:operation:list"]
 
 [[roles]]
 name = "员工"

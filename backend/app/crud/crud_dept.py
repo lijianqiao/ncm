@@ -167,10 +167,19 @@ class CRUDDept(CRUDBase[Department, DeptCreate, DeptUpdate]):
                     )
                 )
 
-        stmt = select(Department).where(and_(*conditions)).order_by(Department.sort.asc(), Department.created_at.desc())
+        stmt = select(Department)
+        if conditions:
+            stmt = stmt.where(and_(*conditions))
+        stmt = stmt.order_by(Department.sort.asc(), Department.created_at.desc())
 
         result = await db.execute(stmt)
         return list(result.scalars().all())
+
+    async def get_deleted(self, db: AsyncSession, *, dept_id: UUID) -> Department | None:
+        """获取已软删除的部门记录。"""
+        stmt = select(Department).where(Department.id == dept_id, Department.is_deleted.is_(True))
+        result = await db.execute(stmt)
+        return result.scalars().first()
 
     async def get_children_ids(self, db: AsyncSession, *, dept_id: UUID) -> list[UUID]:
         """

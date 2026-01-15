@@ -26,6 +26,12 @@ import {
   approveDeployTask,
   executeDeployTask,
   rollbackDeployTask,
+  getRecycleBinDeployTasks,
+  batchDeleteDeployTasks,
+  restoreDeployTask,
+  batchRestoreDeployTasks,
+  hardDeleteDeployTask,
+  batchHardDeleteDeployTasks,
   type DeployTask,
   type DeploySearchParams,
   type DeployTaskStatus,
@@ -37,6 +43,7 @@ import { getUsers, type User } from '@/api/users'
 import { formatDateTime } from '@/utils/date'
 import { formatUserDisplayName } from '@/utils/user'
 import ProTable, { type FilterConfig } from '@/components/common/ProTable.vue'
+import RecycleBinModal from '@/components/common/RecycleBinModal.vue'
 import OtpModal from '@/components/common/OtpModal.vue'
 import type { DeviceGroupType } from '@/types/enums'
 import { useDeviceOptions } from '@/composables'
@@ -53,6 +60,8 @@ defineOptions({
 
 const dialog = useDialog()
 const tableRef = ref()
+const recycleBinRef = ref()
+const showRecycleBin = ref(false)
 
 // ==================== 常量定义 ====================
 
@@ -242,6 +251,80 @@ const loadData = async (params: DeploySearchParams) => {
   return {
     data: res.data.items,
     total: res.data.total,
+  }
+}
+
+const recycleBinRequest = async (params: DeploySearchParams) => {
+  const res = await getRecycleBinDeployTasks(params)
+  return {
+    data: res.data.items,
+    total: res.data.total,
+  }
+}
+
+const handleRecycleBin = () => {
+  showRecycleBin.value = true
+  recycleBinRef.value?.reload()
+}
+
+const handleBatchDelete = async (ids: Array<string | number>) => {
+  if (ids.length === 0) return
+  dialog.warning({
+    title: '确认批量删除',
+    content: `确定要删除选中的 ${ids.length} 个下发任务吗？`,
+    positiveText: '确认删除',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      try {
+        const res = await batchDeleteDeployTasks(ids.map(String))
+        $alert.success(`成功删除 ${res.data.success_count} 个下发任务`)
+        tableRef.value?.reload()
+      } catch {
+        // Error handled
+      }
+    },
+  })
+}
+
+const handleRecycleBinRestore = async (row: DeployTask) => {
+  try {
+    await restoreDeployTask(row.id)
+    $alert.success('恢复成功')
+    recycleBinRef.value?.reload()
+    tableRef.value?.reload()
+  } catch {
+    // Error handled
+  }
+}
+
+const handleRecycleBinBatchRestore = async (ids: Array<string | number>) => {
+  try {
+    const res = await batchRestoreDeployTasks(ids.map(String))
+    $alert.success(`成功恢复 ${res.data.success_count} 个下发任务`)
+    recycleBinRef.value?.reload()
+    tableRef.value?.reload()
+  } catch {
+    // Error handled
+  }
+}
+
+const handleRecycleBinHardDelete = async (row: DeployTask) => {
+  try {
+    await hardDeleteDeployTask(row.id)
+    $alert.success('彻底删除成功')
+    recycleBinRef.value?.reload()
+  } catch {
+    // Error handled
+  }
+}
+
+const handleRecycleBinBatchHardDelete = async (ids: Array<string | number>) => {
+  try {
+    const res = await batchHardDeleteDeployTasks(ids.map(String))
+    $alert.success(`成功彻底删除 ${res.data.success_count} 个下发任务`)
+    recycleBinRef.value?.reload()
+  } catch {
+    // Error handled
   }
 }
 
@@ -614,8 +697,27 @@ const handleRollback = (row: DeployTask) => {
       :search-filters="searchFilters"
       @add="handleCreate"
       @context-menu-select="handleContextMenuSelect"
+      @recycle-bin="handleRecycleBin"
+      @batch-delete="handleBatchDelete"
       show-add
+      show-recycle-bin
+      show-batch-delete
       :scroll-x="1500"
+    />
+
+    <RecycleBinModal
+      ref="recycleBinRef"
+      v-model:show="showRecycleBin"
+      title="回收站 (已删除下发任务)"
+      :columns="columns"
+      :request="recycleBinRequest"
+      :row-key="(row: DeployTask) => row.id"
+      search-placeholder="搜索已删除任务..."
+      :scroll-x="1500"
+      @restore="handleRecycleBinRestore"
+      @batch-restore="handleRecycleBinBatchRestore"
+      @hard-delete="handleRecycleBinHardDelete"
+      @batch-hard-delete="handleRecycleBinBatchHardDelete"
     />
 
     <!-- 查看详情 Modal -->

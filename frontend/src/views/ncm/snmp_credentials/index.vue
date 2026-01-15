@@ -78,7 +78,11 @@ const recycleBinColumns: DataTableColumns<DeptSnmpCredential> = [
   },
 ]
 
-const loadRecycleBinData = async (params: { page?: number; page_size?: number; keyword?: string }) => {
+const loadRecycleBinData = async (params: {
+  page?: number
+  page_size?: number
+  keyword?: string
+}) => {
   const res = await getRecycleBinSnmpCredentials(params)
   return {
     data: res.data.items,
@@ -97,9 +101,9 @@ const handleRestore = async (row: DeptSnmpCredential) => {
   }
 }
 
-const handleBatchRestore = async (ids: string[]) => {
+const handleBatchRestore = async (ids: Array<string | number>) => {
   try {
-    const res = await batchRestoreSnmpCredentials(ids)
+    const res = await batchRestoreSnmpCredentials(ids.map(String))
     $alert.success(`成功恢复 ${res.data.success_count} 条 SNMP 凭据`)
     recycleBinRef.value?.reload()
     tableRef.value?.reload()
@@ -118,9 +122,9 @@ const handleHardDelete = async (row: DeptSnmpCredential) => {
   }
 }
 
-const handleBatchHardDelete = async (ids: string[]) => {
+const handleBatchHardDelete = async (ids: Array<string | number>) => {
   try {
-    const res = await batchHardDeleteSnmpCredentials(ids)
+    const res = await batchHardDeleteSnmpCredentials(ids.map(String))
     $alert.success(`成功彻底删除 ${res.data.success_count} 条 SNMP 凭据`)
     recycleBinRef.value?.reload()
   } catch {
@@ -253,19 +257,19 @@ const handleContextMenuSelect = (key: string | number, row: DeptSnmpCredential) 
 
 // ==================== 批量删除 ====================
 
-const handleBatchDelete = () => {
-  if (selectedRowKeys.value.length === 0) {
+const handleBatchDelete = (ids: Array<string | number>) => {
+  if (ids.length === 0) {
     $alert.warning('请先选择要删除的 SNMP 凭据')
     return
   }
   dialog.warning({
     title: '确认批量删除',
-    content: `确定要删除选中的 ${selectedRowKeys.value.length} 条 SNMP 凭据吗？`,
+    content: `确定要删除选中的 ${ids.length} 条 SNMP 凭据吗？`,
     positiveText: '确认',
     negativeText: '取消',
     onPositiveClick: async () => {
       try {
-        const res = await batchDeleteSnmpCredentials(selectedRowKeys.value)
+        const res = await batchDeleteSnmpCredentials(ids.map(String))
         $alert.success(`成功删除 ${res.data.success_count} 条 SNMP 凭据`)
         selectedRowKeys.value = []
         tableRef.value?.reload()
@@ -274,6 +278,11 @@ const handleBatchDelete = () => {
       }
     },
   })
+}
+
+const handleRecycleBin = () => {
+  showRecycleBin.value = true
+  recycleBinRef.value?.reload()
 }
 
 const modalType = ref<'create' | 'edit'>('create')
@@ -422,21 +431,14 @@ const handleDelete = (row: DeptSnmpCredential) => {
       :search-filters="searchFilters"
       v-model:checked-row-keys="selectedRowKeys"
       @add="handleCreate"
+      @batch-delete="handleBatchDelete"
       @context-menu-select="handleContextMenuSelect"
+      @recycle-bin="handleRecycleBin"
       show-add
+      show-batch-delete
+      show-recycle-bin
       :scroll-x="1100"
-    >
-      <template #toolbar>
-        <n-button
-          type="error"
-          :disabled="selectedRowKeys.length === 0"
-          @click="handleBatchDelete"
-        >
-          批量删除
-        </n-button>
-        <n-button @click="showRecycleBin = true">回收站</n-button>
-      </template>
-    </ProTable>
+    />
 
     <!-- 回收站 Modal -->
     <RecycleBinModal

@@ -68,6 +68,12 @@ export interface InventoryAuditReport {
   config_diff_devices: Array<{ device_id: string; device_name: string; last_backup_at: string | null }>
 }
 
+export interface InventoryAuditBatchResult {
+  success_count: number
+  failed_ids: string[]
+  message?: string
+}
+
 // ==================== API 函数 ====================
 
 /** 创建盘点任务 */
@@ -101,5 +107,65 @@ export function exportInventoryAudit(id: string) {
   return request<ResponseBase<InventoryAuditReport>>({
     url: `/inventory_audit/${id}/export`,
     method: 'get',
+  })
+}
+
+/** 获取盘点任务回收站列表 */
+export function getRecycleBinInventoryAudits(params?: InventoryAuditSearchParams) {
+  return request<ResponseBase<PaginatedResponse<InventoryAudit>>>({
+    url: '/inventory_audit/recycle-bin',
+    method: 'get',
+    params,
+  })
+}
+
+/** 删除盘点任务（软删除） */
+export function deleteInventoryAudit(id: string) {
+  return request<ResponseBase<InventoryAudit>>({
+    url: `/inventory_audit/${id}`,
+    method: 'delete',
+  })
+}
+
+/** 批量删除盘点任务 */
+export function batchDeleteInventoryAudits(ids: string[]) {
+  return request<ResponseBase<InventoryAuditBatchResult>>({
+    url: '/inventory_audit/batch',
+    method: 'delete',
+    data: { ids },
+  })
+}
+
+/** 恢复已删除盘点任务 */
+export function restoreInventoryAudit(id: string) {
+  return request<ResponseBase<InventoryAudit>>({
+    url: `/inventory_audit/${id}/restore`,
+    method: 'post',
+  })
+}
+
+/** 批量恢复盘点任务 */
+export function batchRestoreInventoryAudits(ids: string[]) {
+  return request<ResponseBase<InventoryAuditBatchResult>>({
+    url: '/inventory_audit/batch/restore',
+    method: 'post',
+    data: { ids },
+  })
+}
+
+/** 彻底删除盘点任务 */
+export function hardDeleteInventoryAudit(id: string) {
+  return request<ResponseBase<{ message: string }>>({
+    url: `/inventory_audit/${id}/hard`,
+    method: 'delete',
+  })
+}
+
+/** 批量彻底删除盘点任务 */
+export function batchHardDeleteInventoryAudits(ids: string[]) {
+  return request<ResponseBase<InventoryAuditBatchResult>>({
+    url: '/inventory_audit/batch/hard',
+    method: 'delete',
+    data: { ids, hard_delete: true },
   })
 }

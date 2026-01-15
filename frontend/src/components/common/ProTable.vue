@@ -171,19 +171,20 @@ const initColumnConfig = () => {
       }
     }
   }
-  
+
   // 默认配置：所有列可见
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   columnConfig.value = props.columns
-    .filter((col) => (col as any).key && col.type !== 'selection')
-    .map((col, index) => ({
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      key: (col as any).key as string,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      title: ((col as any).title as string) || (col as any).key,
-      visible: true,
-      order: index,
-    }))
+    .filter((col) => {
+      if (col.type === 'selection') return false
+      const key = (col as unknown as { key?: unknown }).key
+      return typeof key === 'string' && key.length > 0
+    })
+    .map((col, index) => {
+      const key = (col as unknown as { key: string }).key
+      const titleValue = (col as unknown as { title?: unknown }).title
+      const title = typeof titleValue === 'string' && titleValue ? titleValue : key
+      return { key, title, visible: true, order: index }
+    })
 }
 
 // 保存列配置到 localStorage
@@ -191,7 +192,7 @@ const saveColumnConfig = () => {
   if (props.storageKey) {
     localStorage.setItem(
       `pro-table-columns-${props.storageKey}`,
-      JSON.stringify(columnConfig.value)
+      JSON.stringify(columnConfig.value),
     )
   }
 }
@@ -208,40 +209,47 @@ const toggleColumnVisibility = (key: string) => {
 
 // 重置列配置
 const resetColumnConfig = () => {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   columnConfig.value = props.columns
-    .filter((col) => (col as any).key && col.type !== 'selection')
-    .map((col, index) => ({
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      key: (col as any).key as string,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      title: ((col as any).title as string) || (col as any).key,
-      visible: true,
-      order: index,
-    }))
+    .filter((col) => {
+      if (col.type === 'selection') return false
+      const key = (col as unknown as { key?: unknown }).key
+      return typeof key === 'string' && key.length > 0
+    })
+    .map((col, index) => {
+      const key = (col as unknown as { key: string }).key
+      const titleValue = (col as unknown as { title?: unknown }).title
+      const title = typeof titleValue === 'string' && titleValue ? titleValue : key
+      return { key, title, visible: true, order: index }
+    })
   saveColumnConfig()
   updateDisplayColumns()
 }
 
 // 根据配置更新显示的列
 const updateDisplayColumns = () => {
-  const visibleKeys = new Set(
-    columnConfig.value.filter((c) => c.visible).map((c) => c.key)
-  )
-  
+  const baseColumns = [...props.columns] as unknown[]
+  const needsSelection = props.showBatchDelete === true
+  const hasSelection = baseColumns.some((c) => {
+    if (typeof c !== 'object' || c === null) return false
+    return (c as { type?: unknown }).type === 'selection'
+  })
+  const sourceColumns =
+    needsSelection && !hasSelection
+      ? ([{ type: 'selection', fixed: 'left' }, ...baseColumns] as unknown[])
+      : baseColumns
+
+  const visibleKeys = new Set(columnConfig.value.filter((c) => c.visible).map((c) => c.key))
+
   // 保留 selection 列和可见的列，并自动添加 resizable 属性
-  controlledColumns.value = props.columns
+  controlledColumns.value = (sourceColumns as typeof props.columns)
     .filter((col) => {
       if (col.type === 'selection') return true
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      return visibleKeys.has((col as any).key)
+      const key = (col as unknown as { key?: unknown }).key
+      return typeof key === 'string' && visibleKeys.has(key)
     })
     .map((col) => {
-      // 如果启用了 resizable，自动为所有非 selection 列添加 resizable: true
-      if (props.resizable && col.type !== 'selection') {
-        return { ...col, resizable: true }
-      }
-      return col
+      if (!props.resizable || col.type === 'selection') return col
+      return { ...col, resizable: true }
     })
 }
 
@@ -316,6 +324,13 @@ watch(
     updateDisplayColumns()
   },
   { deep: true },
+)
+
+watch(
+  () => props.showBatchDelete,
+  () => {
+    updateDisplayColumns()
+  },
 )
 
 // Filters State
@@ -438,10 +453,14 @@ const handleSearch = async () => {
     // 支持多列排序
     if (Array.isArray(sorterState.value) && sorterState.value.length > 0) {
       // 多列排序：传递数组格式
-      const validSorters = sorterState.value.filter((s: { columnKey: string; order: string | false }) => s.columnKey && s.order)
+      const validSorters = sorterState.value.filter(
+        (s: { columnKey: string; order: string | false }) => s.columnKey && s.order,
+      )
       if (validSorters.length > 0) {
         params.sort_by = validSorters.map((s: { columnKey: string }) => s.columnKey).join(',')
-        params.sort_order = validSorters.map((s: { order: string }) => s.order === 'ascend' ? 'asc' : 'desc').join(',')
+        params.sort_order = validSorters
+          .map((s: { order: string }) => (s.order === 'ascend' ? 'asc' : 'desc'))
+          .join(',')
       }
     } else if (sorterState.value && sorterState.value.columnKey && sorterState.value.order) {
       // 单列排序
@@ -476,7 +495,9 @@ const handleSorterChange = (sorter: any) => {
   // 支持多列排序：sorter 可能是数组或单个对象
   if (Array.isArray(sorter)) {
     // 多列排序
-    const sorterMap = new Map(sorter.map((s: { columnKey: string; order: string | false }) => [s.columnKey, s.order]))
+    const sorterMap = new Map(
+      sorter.map((s: { columnKey: string; order: string | false }) => [s.columnKey, s.order]),
+    )
     controlledColumns.value = controlledColumns.value.map((col) => {
       if (!col || !col.key) return col
       const order = sorterMap.get(col.key)
@@ -579,11 +600,7 @@ defineExpose({
 </script>
 
 <template>
-  <div
-    class="pro-table"
-    :class="{ 'pro-table--fullscreen': isFullscreen }"
-    @click="clickOutside"
-  >
+  <div class="pro-table" :class="{ 'pro-table--fullscreen': isFullscreen }" @click="clickOutside">
     <!-- Search Form Area -->
     <n-card class="search-card" :bordered="false" size="small">
       <div class="search-bar">
@@ -618,7 +635,8 @@ defineExpose({
           <n-button @click="handleResetClick">重置</n-button>
         </n-space>
 
-        <div style="margin-left: auto">
+        <div style="margin-left: auto; display: flex; align-items: center; gap: 12px">
+          <slot name="search-right"></slot>
           <n-button v-if="showRecycleBin" type="warning" ghost @click="$emit('recycle-bin')">
             <template #icon>
               <n-icon><TrashIcon /></n-icon>
@@ -639,18 +657,20 @@ defineExpose({
       <div class="toolbar">
         <div class="title">{{ title }}</div>
         <n-space>
-          <slot name="toolbar-left">
-            <n-button
-              v-if="checkedRowKeys.length > 0 && showBatchDelete"
-              type="error"
-              @click="$emit('batch-delete', checkedRowKeys)"
-            >
-              <template #icon>
-                <n-icon><TrashIcon /></n-icon>
-              </template>
-              批量删除
-            </n-button>
-          </slot>
+          <slot name="toolbar-left"></slot>
+
+          <n-button
+            v-if="checkedRowKeys.length > 0 && showBatchDelete"
+            type="error"
+            @click="$emit('batch-delete', checkedRowKeys)"
+          >
+            <template #icon>
+              <n-icon><TrashIcon /></n-icon>
+            </template>
+            批量删除
+          </n-button>
+
+          <slot name="toolbar"></slot>
 
           <!-- Create Button -->
           <n-button v-if="showAdd" type="primary" @click="$emit('add')">
@@ -708,11 +728,7 @@ defineExpose({
               </div>
               <n-divider style="margin: 8px 0" />
               <div class="column-config-list">
-                <div
-                  v-for="col in columnConfig"
-                  :key="col.key"
-                  class="column-config-item"
-                >
+                <div v-for="col in columnConfig" :key="col.key" class="column-config-item">
                   <n-checkbox
                     :checked="col.visible"
                     @update:checked="toggleColumnVisibility(col.key)"

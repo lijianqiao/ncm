@@ -326,14 +326,7 @@ class DeptService:
         Raises:
             NotFoundException: 部门不存在或未被软删除
         """
-        # 检查部门是否在回收站中
-        deleted_depts, _ = await self.dept_crud.get_multi_deleted_paginated(self.db, page=1, page_size=10000)
-        deleted_dept = None
-        for d in deleted_depts:
-            if d.id == dept_id:
-                deleted_dept = d
-                break
-
+        deleted_dept = await self.dept_crud.get_deleted(self.db, dept_id=dept_id)
         if not deleted_dept:
             raise NotFoundException(message="部门不存在或未被软删除")
 

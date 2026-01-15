@@ -5,7 +5,7 @@
  * @DateTime: 2026-01-15
  * @Docs: 通用回收站弹窗组件
  */
-import { ref, watch } from 'vue'
+import { ref, watch, computed } from 'vue'
 import { NModal, NButton, NSpace, useDialog, type DataTableColumns, type DropdownOption } from 'naive-ui'
 import ProTable from './ProTable.vue'
 
@@ -52,6 +52,16 @@ const emit = defineEmits<{
 const dialog = useDialog()
 const tableRef = ref()
 const checkedRowKeys = ref<Array<string | number>>([])
+
+const resolvedColumns = computed(() => {
+  const baseColumns = props.columns as unknown[]
+  const hasSelection = baseColumns.some((c) => {
+    if (typeof c !== 'object' || c === null) return false
+    return (c as { type?: unknown }).type === 'selection'
+  })
+  if (hasSelection) return props.columns
+  return [{ type: 'selection', fixed: 'left' }, ...(props.columns as unknown[])] as typeof props.columns
+})
 
 // 监听 show 变化，重置选中状态
 watch(
@@ -135,7 +145,7 @@ defineExpose({
   >
     <ProTable
       ref="tableRef"
-      :columns="columns"
+      :columns="resolvedColumns"
       :request="request"
       :row-key="rowKey"
       :search-placeholder="searchPlaceholder"

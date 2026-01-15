@@ -24,10 +24,16 @@ import {
   triggerScan,
   getScanTaskStatus,
   deleteDiscoveryRecord,
+  batchDeleteDiscoveryRecords,
   adoptDevice,
   getShadowAssets,
   getOfflineDevices,
   compareCMDB,
+  getRecycleBinDiscoveryRecords,
+  restoreDiscoveryRecord,
+  batchRestoreDiscoveryRecords,
+  hardDeleteDiscoveryRecord,
+  batchHardDeleteDiscoveryRecords,
   type DiscoveryRecord,
   type DiscoverySearchParams,
   type DiscoveryStatus,
@@ -38,6 +44,7 @@ import { type DeviceGroup } from '@/api/devices'
 import { getDeptTree, type Dept } from '@/api/depts'
 import { formatDateTime } from '@/utils/date'
 import ProTable, { type FilterConfig } from '@/components/common/ProTable.vue'
+import RecycleBinModal from '@/components/common/RecycleBinModal.vue'
 import { usePersistentTaskPolling } from '@/composables'
 
 defineOptions({
@@ -46,6 +53,8 @@ defineOptions({
 
 const dialog = useDialog()
 const tableRef = ref()
+const recycleBinRef = ref()
+const showRecycleBin = ref(false)
 
 // ==================== 常量定义 ====================
 
@@ -335,6 +344,80 @@ const loadData = async (params: DiscoverySearchParams) => {
   return {
     data: res.data.items,
     total: res.data.total,
+  }
+}
+
+const recycleBinRequest = async (params: DiscoverySearchParams) => {
+  const res = await getRecycleBinDiscoveryRecords(params)
+  return {
+    data: res.data.items,
+    total: res.data.total,
+  }
+}
+
+const handleRecycleBin = () => {
+  showRecycleBin.value = true
+  recycleBinRef.value?.reload()
+}
+
+const handleBatchDelete = async (ids: Array<string | number>) => {
+  if (ids.length === 0) return
+  dialog.warning({
+    title: '确认批量删除',
+    content: `确定要删除选中的 ${ids.length} 条发现记录吗？`,
+    positiveText: '确认删除',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      try {
+        const res = await batchDeleteDiscoveryRecords(ids.map(String))
+        $alert.success(`成功删除 ${res.data.success_count} 条记录`)
+        tableRef.value?.reload()
+      } catch {
+        // Error handled
+      }
+    },
+  })
+}
+
+const handleRecycleBinRestore = async (row: DiscoveryRecord) => {
+  try {
+    await restoreDiscoveryRecord(row.id)
+    $alert.success('恢复成功')
+    recycleBinRef.value?.reload()
+    tableRef.value?.reload()
+  } catch {
+    // Error handled
+  }
+}
+
+const handleRecycleBinBatchRestore = async (ids: Array<string | number>) => {
+  try {
+    const res = await batchRestoreDiscoveryRecords(ids.map(String))
+    $alert.success(`成功恢复 ${res.data.success_count} 条记录`)
+    recycleBinRef.value?.reload()
+    tableRef.value?.reload()
+  } catch {
+    // Error handled
+  }
+}
+
+const handleRecycleBinHardDelete = async (row: DiscoveryRecord) => {
+  try {
+    await hardDeleteDiscoveryRecord(row.id)
+    $alert.success('彻底删除成功')
+    recycleBinRef.value?.reload()
+  } catch {
+    // Error handled
+  }
+}
+
+const handleRecycleBinBatchHardDelete = async (ids: Array<string | number>) => {
+  try {
+    const res = await batchHardDeleteDiscoveryRecords(ids.map(String))
+    $alert.success(`成功彻底删除 ${res.data.success_count} 条记录`)
+    recycleBinRef.value?.reload()
+  } catch {
+    // Error handled
   }
 }
 
@@ -643,6 +726,10 @@ const handleCompareCMDB = () => {
       search-placeholder="搜索IP/MAC/主机名"
       :search-filters="searchFilters"
       @context-menu-select="handleContextMenuSelect"
+      @recycle-bin="handleRecycleBin"
+      @batch-delete="handleBatchDelete"
+      show-recycle-bin
+      show-batch-delete
       :scroll-x="2000"
     >
       <template #toolbar-left>
@@ -659,6 +746,21 @@ const handleCompareCMDB = () => {
         </n-space>
       </template>
     </ProTable>
+
+    <RecycleBinModal
+      ref="recycleBinRef"
+      v-model:show="showRecycleBin"
+      title="回收站 (已删除发现记录)"
+      :columns="columns"
+      :request="recycleBinRequest"
+      :row-key="(row: DiscoveryRecord) => row.id"
+      search-placeholder="搜索已删除记录..."
+      :scroll-x="2000"
+      @restore="handleRecycleBinRestore"
+      @batch-restore="handleRecycleBinBatchRestore"
+      @hard-delete="handleRecycleBinHardDelete"
+      @batch-hard-delete="handleRecycleBinBatchHardDelete"
+    />
 
     <!-- 触发扫描 Modal -->
     <n-modal

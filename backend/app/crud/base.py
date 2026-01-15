@@ -319,7 +319,7 @@ class CRUDBase[ModelType: Base, CreateSchemaType: BaseModel, UpdateSchemaType: B
             )
 
         await db.flush()
-        return len(existing_ids), failed_ids
+        return len(to_restore), failed_ids
 
     async def _count_deleted(self, db: AsyncSession) -> int:
         """

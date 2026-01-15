@@ -89,7 +89,11 @@ const recycleBinColumns: DataTableColumns<Credential> = [
   },
 ]
 
-const loadRecycleBinData = async (params: { page?: number; page_size?: number; keyword?: string }) => {
+const loadRecycleBinData = async (params: {
+  page?: number
+  page_size?: number
+  keyword?: string
+}) => {
   const res = await getRecycleBinCredentials(params)
   return {
     data: res.data.items,
@@ -108,9 +112,9 @@ const handleRestore = async (row: Credential) => {
   }
 }
 
-const handleBatchRestore = async (ids: string[]) => {
+const handleBatchRestore = async (ids: Array<string | number>) => {
   try {
-    const res = await batchRestoreCredentials(ids)
+    const res = await batchRestoreCredentials(ids.map(String))
     $alert.success(`成功恢复 ${res.data.success_count} 条凭据`)
     recycleBinRef.value?.reload()
     tableRef.value?.reload()
@@ -129,9 +133,9 @@ const handleHardDelete = async (row: Credential) => {
   }
 }
 
-const handleBatchHardDelete = async (ids: string[]) => {
+const handleBatchHardDelete = async (ids: Array<string | number>) => {
   try {
-    const res = await batchHardDeleteCredentials(ids)
+    const res = await batchHardDeleteCredentials(ids.map(String))
     $alert.success(`成功彻底删除 ${res.data.success_count} 条凭据`)
     recycleBinRef.value?.reload()
   } catch {
@@ -254,19 +258,19 @@ const handleContextMenuSelect = (key: string | number, row: Credential) => {
 
 // ==================== 批量删除 ====================
 
-const handleBatchDelete = () => {
-  if (selectedRowKeys.value.length === 0) {
+const handleBatchDelete = (ids: Array<string | number>) => {
+  if (ids.length === 0) {
     $alert.warning('请先选择要删除的凭据')
     return
   }
   dialog.warning({
     title: '确认批量删除',
-    content: `确定要删除选中的 ${selectedRowKeys.value.length} 条凭据吗？`,
+    content: `确定要删除选中的 ${ids.length} 条凭据吗？`,
     positiveText: '确认',
     negativeText: '取消',
     onPositiveClick: async () => {
       try {
-        const res = await batchDeleteCredentials(selectedRowKeys.value)
+        const res = await batchDeleteCredentials(ids.map(String))
         $alert.success(`成功删除 ${res.data.success_count} 条凭据`)
         selectedRowKeys.value = []
         tableRef.value?.reload()
@@ -275,6 +279,11 @@ const handleBatchDelete = () => {
       }
     },
   })
+}
+
+const handleRecycleBin = () => {
+  showRecycleBin.value = true
+  recycleBinRef.value?.reload()
 }
 
 // ==================== 创建/编辑凭据 ====================
@@ -437,21 +446,14 @@ const submitCacheOTP = async () => {
       :search-filters="searchFilters"
       v-model:checked-row-keys="selectedRowKeys"
       @add="handleCreate"
+      @batch-delete="handleBatchDelete"
       @context-menu-select="handleContextMenuSelect"
+      @recycle-bin="handleRecycleBin"
       show-add
+      show-batch-delete
+      show-recycle-bin
       :scroll-x="1200"
-    >
-      <template #toolbar>
-        <n-button
-          type="error"
-          :disabled="selectedRowKeys.length === 0"
-          @click="handleBatchDelete"
-        >
-          批量删除
-        </n-button>
-        <n-button @click="showRecycleBin = true">回收站</n-button>
-      </template>
-    </ProTable>
+    />
 
     <!-- 回收站 Modal -->
     <RecycleBinModal
@@ -535,7 +537,12 @@ const submitCacheOTP = async () => {
     </n-modal>
 
     <!-- 缓存 OTP Modal -->
-    <n-modal v-model:show="showOTPModal" preset="dialog" title="缓存 OTP 验证码" style="width: 400px">
+    <n-modal
+      v-model:show="showOTPModal"
+      preset="dialog"
+      title="缓存 OTP 验证码"
+      style="width: 400px"
+    >
       <div style="margin-bottom: 16px">
         <p>部门: {{ otpModel.dept_name }}</p>
         <p>设备分组: {{ groupLabelMap[otpModel.device_group] }}</p>
