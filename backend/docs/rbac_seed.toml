@@ -1363,6 +1363,45 @@ permission = "deploy:rollback"
 parent_key = "deploy"
 
 [[menus]]
+key = "perm_deploy_delete"
+title = "下发-删除"
+name = "PermDeployDelete"
+path = ""
+component = ""
+icon = "KeyOutline"
+sort = 1066
+type = "PERMISSION"
+is_hidden = true
+permission = "deploy:delete"
+parent_key = "deploy"
+
+[[menus]]
+key = "perm_deploy_recycle"
+title = "下发-回收站"
+name = "PermDeployRecycle"
+path = ""
+component = ""
+icon = "KeyOutline"
+sort = 1067
+type = "PERMISSION"
+is_hidden = true
+permission = "deploy:recycle"
+parent_key = "deploy"
+
+[[menus]]
+key = "perm_deploy_restore"
+title = "下发-恢复"
+name = "PermDeployRestore"
+path = ""
+component = ""
+icon = "KeyOutline"
+sort = 1068
+type = "PERMISSION"
+is_hidden = true
+permission = "deploy:restore"
+parent_key = "deploy"
+
+[[menus]]
 key = "perm_inventory_audit_create"
 title = "盘点-创建"
 name = "PermInventoryAuditCreate"
@@ -1386,6 +1425,45 @@ sort = 1072
 type = "PERMISSION"
 is_hidden = true
 permission = "inventory_audit:view"
+parent_key = "inventory_audit"
+
+[[menus]]
+key = "perm_inventory_audit_delete"
+title = "盘点-删除"
+name = "PermInventoryAuditDelete"
+path = ""
+component = ""
+icon = "KeyOutline"
+sort = 1073
+type = "PERMISSION"
+is_hidden = true
+permission = "inventory_audit:delete"
+parent_key = "inventory_audit"
+
+[[menus]]
+key = "perm_inventory_audit_recycle"
+title = "盘点-回收站"
+name = "PermInventoryAuditRecycle"
+path = ""
+component = ""
+icon = "KeyOutline"
+sort = 1074
+type = "PERMISSION"
+is_hidden = true
+permission = "inventory_audit:recycle"
+parent_key = "inventory_audit"
+
+[[menus]]
+key = "perm_inventory_audit_restore"
+title = "盘点-恢复"
+name = "PermInventoryAuditRestore"
+path = ""
+component = ""
+icon = "KeyOutline"
+sort = 1075
+type = "PERMISSION"
+is_hidden = true
+permission = "inventory_audit:restore"
 parent_key = "inventory_audit"
 
 # ---- 采集菜单（collect）----
@@ -1538,6 +1616,32 @@ sort = 1104
 type = "PERMISSION"
 is_hidden = true
 permission = "discovery:delete"
+parent_key = "discovery"
+
+[[menus]]
+key = "perm_discovery_recycle"
+title = "发现-回收站"
+name = "PermDiscoveryRecycle"
+path = ""
+component = ""
+icon = "KeyOutline"
+sort = 1105
+type = "PERMISSION"
+is_hidden = true
+permission = "discovery:recycle"
+parent_key = "discovery"
+
+[[menus]]
+key = "perm_discovery_restore"
+title = "发现-恢复"
+name = "PermDiscoveryRestore"
+path = ""
+component = ""
+icon = "KeyOutline"
+sort = 1106
+type = "PERMISSION"
+is_hidden = true
+permission = "discovery:restore"
 parent_key = "discovery"
 
 # ---- 网络拓扑权限点（topology:*）----
