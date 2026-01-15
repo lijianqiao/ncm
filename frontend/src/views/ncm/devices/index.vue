@@ -544,68 +544,29 @@ const handleRecycleBin = () => {
 <template>
   <div class="device-management p-4">
     <!-- 生命周期统计卡片 -->
-    <DeviceStatistics
-      :stock="lifecycleStats.stock"
-      :running="lifecycleStats.running"
-      :maintenance="lifecycleStats.maintenance"
-      :retired="lifecycleStats.retired"
-      :total="lifecycleStats.total"
-    />
+    <DeviceStatistics :stock="lifecycleStats.stock" :running="lifecycleStats.running"
+      :maintenance="lifecycleStats.maintenance" :retired="lifecycleStats.retired" :total="lifecycleStats.total" />
 
     <!-- 设备列表 -->
-    <ProTable
-      ref="tableRef"
-      title="设备列表"
-      :columns="columns"
-      :request="loadData"
-      :row-key="(row: Device) => row.id"
-      :context-menu-options="contextMenuOptions"
-      search-placeholder="搜索设备名称/IP/序列号"
-      :search-filters="searchFilters"
-      @add="handleCreate"
-      @batch-delete="handleBatchDelete"
-      @context-menu-select="handleContextMenuSelect"
-      @recycle-bin="handleRecycleBin"
-      show-add
-      show-batch-delete
-      show-recycle-bin
-      :scroll-x="1800"
-    >
+    <ProTable ref="tableRef" title="设备列表" :columns="columns" :request="loadData" :row-key="(row: Device) => row.id"
+      :context-menu-options="contextMenuOptions" search-placeholder="搜索设备名称/IP/序列号" :search-filters="searchFilters"
+      @add="handleCreate" @batch-delete="handleBatchDelete" @context-menu-select="handleContextMenuSelect"
+      @recycle-bin="handleRecycleBin" show-add show-batch-delete show-recycle-bin>
       <template #toolbar-left>
         <n-button type="info" @click="handleBatchTransition"> 批量状态流转 </n-button>
       </template>
     </ProTable>
 
     <!-- 回收站 Modal -->
-    <RecycleBinModal
-      ref="recycleBinRef"
-      v-model:show="showRecycleBin"
-      title="回收站 (已删除设备)"
-      :columns="recycleBinColumns"
-      :request="loadRecycleBinData"
-      :row-key="(row: Device) => row.id"
-      search-placeholder="搜索已删除设备..."
-      :scroll-x="900"
-      @restore="handleRestore"
-      @batch-restore="handleBatchRestore"
-      @hard-delete="handleHardDelete"
-      @batch-hard-delete="handleBatchHardDelete"
-    />
+    <RecycleBinModal ref="recycleBinRef" v-model:show="showRecycleBin" title="回收站 (已删除设备)" :columns="recycleBinColumns"
+      :request="loadRecycleBinData" :row-key="(row: Device) => row.id" search-placeholder="搜索已删除设备..."
+      @restore="handleRestore" @batch-restore="handleBatchRestore" @hard-delete="handleHardDelete"
+      @batch-hard-delete="handleBatchHardDelete" />
 
     <!-- 创建/编辑设备 Modal -->
-    <n-modal
-      v-model:show="showCreateModal"
-      preset="dialog"
-      :title="modalType === 'create' ? '新建设备' : '编辑设备'"
-      style="width: 700px"
-    >
-      <n-form
-        ref="createFormRef"
-        :model="createModel"
-        :rules="createRules"
-        label-placement="left"
-        label-width="100"
-      >
+    <n-modal v-model:show="showCreateModal" preset="dialog" :title="modalType === 'create' ? '新建设备' : '编辑设备'"
+      style="width: 700px">
+      <n-form ref="createFormRef" :model="createModel" :rules="createRules" label-placement="left" label-width="100">
         <n-grid :cols="2" :x-gap="16">
           <n-grid-item>
             <n-form-item label="设备名称" path="name">
@@ -619,12 +580,7 @@ const handleRecycleBin = () => {
           </n-grid-item>
           <n-grid-item>
             <n-form-item label="厂商">
-              <n-select
-                v-model:value="createModel.vendor"
-                :options="vendorOptions"
-                placeholder="请选择厂商"
-                clearable
-              />
+              <n-select v-model:value="createModel.vendor" :options="vendorOptions" placeholder="请选择厂商" clearable />
             </n-form-item>
           </n-grid-item>
           <n-grid-item>
@@ -634,43 +590,24 @@ const handleRecycleBin = () => {
           </n-grid-item>
           <n-grid-item>
             <n-form-item label="设备分组">
-              <n-select
-                v-model:value="createModel.device_group"
-                :options="deviceGroupOptions"
-                placeholder="请选择设备分组"
-                clearable
-              />
+              <n-select v-model:value="createModel.device_group" :options="deviceGroupOptions" placeholder="请选择设备分组"
+                clearable />
             </n-form-item>
           </n-grid-item>
           <n-grid-item>
             <n-form-item label="所属部门">
-              <n-tree-select
-                v-model:value="createModel.dept_id"
-                :options="deptTreeOptions"
-                placeholder="请选择部门"
-                clearable
-                key-field="key"
-                label-field="label"
-              />
+              <n-tree-select v-model:value="createModel.dept_id" :options="deptTreeOptions" placeholder="请选择部门"
+                clearable key-field="key" label-field="label" />
             </n-form-item>
           </n-grid-item>
           <n-grid-item>
             <n-form-item label="SSH 端口">
-              <n-input-number
-                v-model:value="createModel.ssh_port"
-                :min="1"
-                :max="65535"
-                style="width: 100%"
-              />
+              <n-input-number v-model:value="createModel.ssh_port" :min="1" :max="65535" style="width: 100%" />
             </n-form-item>
           </n-grid-item>
           <n-grid-item>
             <n-form-item label="认证类型">
-              <n-select
-                v-model:value="createModel.auth_type"
-                :options="authTypeOptions"
-                placeholder="请选择认证类型"
-              />
+              <n-select v-model:value="createModel.auth_type" :options="authTypeOptions" placeholder="请选择认证类型" />
             </n-form-item>
           </n-grid-item>
           <n-grid-item v-if="createModel.auth_type === 'static'">
@@ -680,12 +617,8 @@ const handleRecycleBin = () => {
           </n-grid-item>
           <n-grid-item v-if="createModel.auth_type === 'static'">
             <n-form-item label="密码">
-              <n-input
-                v-model:value="createModel.password"
-                type="password"
-                show-password-on="click"
-                placeholder="SSH 密码"
-              />
+              <n-input v-model:value="createModel.password" type="password" show-password-on="click"
+                placeholder="SSH 密码" />
             </n-form-item>
           </n-grid-item>
           <n-grid-item>
@@ -710,12 +643,7 @@ const handleRecycleBin = () => {
           </n-grid-item>
           <n-grid-item>
             <n-form-item label="入库时间">
-              <n-date-picker
-                v-model:value="createModel.stock_in_at"
-                type="date"
-                clearable
-                style="width: 100%"
-              />
+              <n-date-picker v-model:value="createModel.stock_in_at" type="date" clearable style="width: 100%" />
             </n-form-item>
           </n-grid-item>
           <n-grid-item>
@@ -725,12 +653,7 @@ const handleRecycleBin = () => {
           </n-grid-item>
           <n-grid-item :span="2">
             <n-form-item label="描述">
-              <n-input
-                v-model:value="createModel.description"
-                type="textarea"
-                placeholder="设备描述"
-                :rows="2"
-              />
+              <n-input v-model:value="createModel.description" type="textarea" placeholder="设备描述" :rows="2" />
             </n-form-item>
           </n-grid-item>
         </n-grid>
@@ -753,12 +676,7 @@ const handleRecycleBin = () => {
           <n-select v-model:value="transitionModel.toStatus" :options="statusOptions" />
         </n-form-item>
         <n-form-item label="变更原因">
-          <n-input
-            v-model:value="transitionModel.reason"
-            type="textarea"
-            placeholder="请输入变更原因（可选）"
-            :rows="2"
-          />
+          <n-input v-model:value="transitionModel.reason" type="textarea" placeholder="请输入变更原因（可选）" :rows="2" />
         </n-form-item>
       </n-form>
       <template #action>
@@ -777,12 +695,7 @@ const handleRecycleBin = () => {
           <n-select v-model:value="batchTransitionModel.toStatus" :options="statusOptions" />
         </n-form-item>
         <n-form-item label="变更原因">
-          <n-input
-            v-model:value="batchTransitionModel.reason"
-            type="textarea"
-            placeholder="请输入变更原因（可选）"
-            :rows="2"
-          />
+          <n-input v-model:value="batchTransitionModel.reason" type="textarea" placeholder="请输入变更原因（可选）" :rows="2" />
         </n-form-item>
       </n-form>
       <template #action>

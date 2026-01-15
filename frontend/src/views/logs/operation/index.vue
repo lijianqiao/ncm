@@ -21,9 +21,9 @@ const columns: DataTableColumns<OperationLog> = [
   { title: '用户名', key: 'username', width: 140, sorter: 'default' },
   { title: 'IP', key: 'ip', width: 140 },
   { title: '模块', key: 'module', width: 160, ellipsis: { tooltip: true } },
-  { title: '摘要', key: 'summary', minWidth: 220, ellipsis: { tooltip: true } },
+  { title: '摘要', key: 'summary', width: 220, ellipsis: { tooltip: true } },
   { title: '方法', key: 'method', width: 90 },
-  { title: '路径', key: 'path', minWidth: 220, ellipsis: { tooltip: true } },
+  { title: '路径', key: 'path', width: 220, ellipsis: { tooltip: true } },
   { title: '状态码', key: 'response_code', width: 100, sorter: 'default' },
   { title: '耗时(ms)', key: 'duration', width: 120, sorter: 'default' },
   {
@@ -79,7 +79,6 @@ const loadData = async (params: LogSearchParams) => {
       :row-key="(row: OperationLog) => row.id"
       :context-menu-options="contextMenuOptions"
       search-placeholder="搜索用户名/IP/模块/摘要/路径"
-      :scroll-x="1400"
       @context-menu-select="handleContextMenuSelect"
     />
 

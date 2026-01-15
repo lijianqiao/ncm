@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, reactive, onMounted, onUnmounted, nextTick, computed, watch } from 'vue'
+import { ref, reactive, onMounted, onUnmounted, nextTick, computed, watch, h } from 'vue'
 import {
   NDataTable,
   NCard,
@@ -52,6 +52,7 @@ export interface ColumnConfig {
 export type TableDensity = 'compact' | 'default' | 'loose'
 
 // Define props with defaults
+
 const props = withDefaults(
   defineProps<{
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -152,6 +153,22 @@ const sorterState = ref<any>(null)
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const controlledColumns = ref<any[]>([])
+
+const autoScrollX = computed(() => {
+  let columnsWidth = 0
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  controlledColumns.value.forEach((col: any) => {
+    if (col.type === 'selection') {
+      columnsWidth += 50
+    } else if (typeof col.width === 'number') {
+      columnsWidth += col.width
+    } else {
+      columnsWidth += 150 // 默认估算宽度
+    }
+  })
+  // 确保不小于传入的 scrollX，也不小于计算出的总宽
+  return Math.max(columnsWidth, props.scrollX || 1000)
+})
 
 // ==================== 列配置功能 ====================
 const columnConfig = ref<ColumnConfig[]>([])
@@ -257,9 +274,9 @@ const updateDisplayColumns = () => {
 const tableDensity = ref<TableDensity>('default')
 
 const densityMenuOptions: DropdownOption[] = [
-  { label: '紧凑', key: 'compact' },
-  { label: '默认', key: 'default' },
-  { label: '宽松', key: 'loose' },
+  { label: '紧凑', key: 'compact', icon: () => h(DensityIcon) },
+  { label: '默认', key: 'default', icon: () => h(DensityIcon) },
+  { label: '宽松', key: 'loose', icon: () => h(DensityIcon) },
 ]
 
 const handleDensityChange = (key: string | number) => {
@@ -605,29 +622,20 @@ defineExpose({
     <n-card class="search-card" :bordered="false" size="small">
       <div class="search-bar">
         <!-- Keyword Search -->
-        <n-input
-          v-model:value="keyword"
-          :placeholder="searchPlaceholder || '请输入关键字搜索...'"
-          @keydown.enter.prevent="handleSearchClick"
-          class="search-input"
-          clearable
-        >
+        <n-input v-model:value="keyword" :placeholder="searchPlaceholder || '请输入关键字搜索...'"
+          @keydown.enter.prevent="handleSearchClick" class="search-input" clearable>
           <template #prefix>
-            <n-icon><SearchIcon /></n-icon>
+            <n-icon>
+              <SearchIcon />
+            </n-icon>
           </template>
         </n-input>
 
         <!-- Dynamic Filters -->
         <template v-for="filter in searchFilters" :key="filter.key">
-          <n-select
-            v-model:value="filterState[filter.key]"
-            :placeholder="filter.placeholder || filter.label"
-            :options="filter.options"
-            :multiple="filter.multiple"
-            :style="{ width: (filter.width || 120) + 'px' }"
-            clearable
-            @update:value="handleFilterStateChange"
-          />
+          <n-select v-model:value="filterState[filter.key]" :placeholder="filter.placeholder || filter.label"
+            :options="filter.options" :multiple="filter.multiple" :style="{ width: (filter.width || 120) + 'px' }"
+            clearable @update:value="handleFilterStateChange" />
         </template>
 
         <n-space>
@@ -639,7 +647,9 @@ defineExpose({
           <slot name="search-right"></slot>
           <n-button v-if="showRecycleBin" type="warning" ghost @click="$emit('recycle-bin')">
             <template #icon>
-              <n-icon><TrashIcon /></n-icon>
+              <n-icon>
+                <TrashIcon />
+              </n-icon>
             </template>
             回收站
           </n-button>
@@ -659,13 +669,12 @@ defineExpose({
         <n-space>
           <slot name="toolbar-left"></slot>
 
-          <n-button
-            v-if="checkedRowKeys.length > 0 && showBatchDelete"
-            type="error"
-            @click="$emit('batch-delete', checkedRowKeys)"
-          >
+          <n-button v-if="checkedRowKeys.length > 0 && showBatchDelete" type="error"
+            @click="$emit('batch-delete', checkedRowKeys)">
             <template #icon>
-              <n-icon><TrashIcon /></n-icon>
+              <n-icon>
+                <TrashIcon />
+              </n-icon>
             </template>
             批量删除
           </n-button>
@@ -675,7 +684,9 @@ defineExpose({
           <!-- Create Button -->
           <n-button v-if="showAdd" type="primary" @click="$emit('add')">
             <template #icon>
-              <n-icon><AddIcon /></n-icon>
+              <n-icon>
+                <AddIcon />
+              </n-icon>
             </template>
             新建
           </n-button>
@@ -683,36 +694,32 @@ defineExpose({
           <!-- Export Button -->
           <n-button secondary @click="handleExport" title="导出 CSV">
             <template #icon>
-              <n-icon><DownloadIcon /></n-icon>
+              <n-icon>
+                <DownloadIcon />
+              </n-icon>
             </template>
           </n-button>
 
           <!-- Density Dropdown -->
-          <n-dropdown
-            v-if="densityOptions"
-            trigger="click"
-            :options="densityMenuOptions"
-            @select="handleDensityChange"
-          >
+          <n-dropdown v-if="densityOptions" trigger="click" :options="densityMenuOptions" @select="handleDensityChange">
             <n-button circle secondary title="表格密度">
               <template #icon>
-                <n-icon><DensityIcon /></n-icon>
+                <n-icon>
+                  <DensityIcon />
+                </n-icon>
               </template>
             </n-button>
           </n-dropdown>
 
           <!-- Column Config Popover -->
-          <n-popover
-            v-if="columnConfigurable"
-            trigger="click"
-            placement="bottom-end"
-            :show="showColumnConfig"
-            @update:show="showColumnConfig = $event"
-          >
+          <n-popover v-if="columnConfigurable" trigger="click" placement="bottom-end" :show="showColumnConfig"
+            @update:show="showColumnConfig = $event">
             <template #trigger>
               <n-button circle secondary title="列设置">
                 <template #icon>
-                  <n-icon><SettingsIcon /></n-icon>
+                  <n-icon>
+                    <SettingsIcon />
+                  </n-icon>
                 </template>
               </n-button>
             </template>
@@ -721,7 +728,9 @@ defineExpose({
                 <span>列设置</span>
                 <n-button text size="small" @click="resetColumnConfig">
                   <template #icon>
-                    <n-icon size="14"><ResetIcon /></n-icon>
+                    <n-icon size="14">
+                      <ResetIcon />
+                    </n-icon>
                   </template>
                   重置
                 </n-button>
@@ -729,10 +738,7 @@ defineExpose({
               <n-divider style="margin: 8px 0" />
               <div class="column-config-list">
                 <div v-for="col in columnConfig" :key="col.key" class="column-config-item">
-                  <n-checkbox
-                    :checked="col.visible"
-                    @update:checked="toggleColumnVisibility(col.key)"
-                  >
+                  <n-checkbox :checked="col.visible" @update:checked="toggleColumnVisibility(col.key)">
                     {{ col.title }}
                   </n-checkbox>
                 </div>
@@ -741,13 +747,8 @@ defineExpose({
           </n-popover>
 
           <!-- Fullscreen Toggle -->
-          <n-button
-            v-if="fullscreenEnabled"
-            circle
-            secondary
-            @click="toggleFullscreen"
-            :title="isFullscreen ? '退出全屏' : '全屏'"
-          >
+          <n-button v-if="fullscreenEnabled" circle secondary @click="toggleFullscreen"
+            :title="isFullscreen ? '退出全屏' : '全屏'">
             <template #icon>
               <n-icon>
                 <ContractIcon v-if="isFullscreen" />
@@ -759,46 +760,29 @@ defineExpose({
           <!-- Refresh Button -->
           <n-button circle secondary @click="handleRefresh" title="刷新">
             <template #icon>
-              <n-icon><RefreshIcon /></n-icon>
+              <n-icon>
+                <RefreshIcon />
+              </n-icon>
             </template>
           </n-button>
         </n-space>
       </div>
 
       <!-- Main Table -->
-      <n-data-table
-        :remote="true"
-        :loading="loading || tableLoading"
-        :columns="controlledColumns"
-        :data="data"
-        :pagination="disablePagination ? false : pagination"
-        :row-key="rowKey"
-        :row-props="rowProps"
-        :size="tableSize"
-        :resizable="resizable"
-        :multiple="multipleSort"
-        v-model:checked-row-keys="checkedRowKeys"
-        @update:checked-row-keys="handleCheck"
-        @update:filters="handleFiltersChange"
-        @update:sorter="handleSorterChange"
-        :scroll-x="scrollX"
-        :virtual-scroll="virtualScroll"
-        :max-height="virtualScroll ? maxHeight : undefined"
-        flex-height
-        style="height: 100%; min-height: 600px; flex: 1"
-      />
+      <div class="table-wrap">
+        <n-data-table :remote="true" :loading="loading || tableLoading" :columns="controlledColumns" :data="data"
+          :pagination="disablePagination ? false : pagination" :row-key="rowKey" :row-props="rowProps" :size="tableSize"
+          :resizable="resizable" :multiple="multipleSort" v-model:checked-row-keys="checkedRowKeys"
+          @update:checked-row-keys="handleCheck" @update:filters="handleFiltersChange"
+          @update:sorter="handleSorterChange" :scroll-x="autoScrollX" :virtual-scroll="virtualScroll"
+          :max-height="virtualScroll ? maxHeight : undefined" flex-height
+          style="height: 100%; min-height: 600px; flex: 1; min-width: 0" />
+      </div>
 
       <!-- Context Menu -->
-      <n-dropdown
-        placement="bottom-start"
-        trigger="manual"
-        :x="uniqueDropdownX"
-        :y="uniqueDropdownY"
-        :options="contextMenuOptions"
-        :show="showDropdown"
-        :on-clickoutside="clickOutside"
-        @select="handleContextMenuSelect"
-      />
+      <n-dropdown placement="bottom-start" trigger="manual" :x="uniqueDropdownX" :y="uniqueDropdownY"
+        :options="contextMenuOptions" :show="showDropdown" :on-clickoutside="clickOutside"
+        @select="handleContextMenuSelect" />
     </n-card>
   </div>
 </template>
@@ -809,6 +793,7 @@ defineExpose({
   flex-direction: column;
   gap: 16px;
   height: 100%;
+  min-width: 0;
 }
 
 .pro-table--fullscreen {
@@ -842,12 +827,15 @@ defineExpose({
   flex: 1;
   display: flex;
   flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
 }
 
 /* Fix table height for flex-height */
 :deep(.n-card__content) {
   display: flex;
   flex-direction: column;
+  min-width: 0;
 }
 
 .toolbar {
@@ -881,5 +869,10 @@ defineExpose({
 
 .column-config-item {
   padding: 4px 0;
+}
+
+.table-wrap {
+  flex: 1;
+  min-width: 0;
 }
 </style>

@@ -26,7 +26,7 @@ const columns: DataTableColumns<LoginLog> = [
       )
     },
   },
-  { title: '消息', key: 'msg', minWidth: 220, ellipsis: { tooltip: true } },
+  { title: '消息', key: 'msg', width: 220, ellipsis: { tooltip: true } },
   { title: '浏览器', key: 'browser', width: 160, ellipsis: { tooltip: true } },
   { title: '系统', key: 'os', width: 160, ellipsis: { tooltip: true } },
   { title: '设备', key: 'device', width: 140, ellipsis: { tooltip: true } },
@@ -72,7 +72,6 @@ const loadData = async (params: LogSearchParams) => {
       :row-key="(row: LoginLog) => row.id"
       :context-menu-options="contextMenuOptions"
       search-placeholder="搜索用户名/IP/消息"
-      :scroll-x="1200"
       @context-menu-select="handleContextMenuSelect"
     />
 

@@ -2,6 +2,8 @@
 import { ref, h, computed, onMounted } from 'vue'
 import {
   NButton,
+  NDescriptions,
+  NDescriptionsItem,
   NModal,
   NFormItem,
   NInput,
@@ -436,25 +438,50 @@ const handleContextMenuSelect = (key: string | number, row: DiscoveryRecord) => 
 }
 
 const handleShowSnmp = (row: DiscoveryRecord) => {
-  const items: Array<{ label: string; value: string }> = [
-    { label: 'IP', value: row.ip_address },
-    { label: 'SNMP', value: row.snmp_ok === true ? '成功' : row.snmp_ok === false ? '失败' : '-' },
-    { label: 'sysName', value: row.snmp_sysname || '-' },
-    { label: 'sysDescr', value: row.snmp_sysdescr || '-' },
-    { label: '错误', value: row.snmp_ok === false ? row.snmp_error || '-' : '-' },
-  ]
   dialog.info({
     title: 'SNMP 详情',
     content: () =>
       h(
-        'div',
-        { style: { lineHeight: '22px' } },
-        items.map((it) =>
-          h('div', { key: it.label }, [
-            h('span', { style: { color: 'var(--n-text-color-3)' } }, `${it.label}: `),
-            it.value,
-          ]),
-        ),
+        NDescriptions,
+        { bordered: true, column: 1, size: 'small', labelStyle: { width: '110px' } },
+        {
+          default: () => [
+            h(NDescriptionsItem, { label: 'IP' }, { default: () => row.ip_address }),
+            h(
+              NDescriptionsItem,
+              { label: 'SNMP' },
+              {
+                default: () =>
+                  row.snmp_ok === true ? '成功' : row.snmp_ok === false ? '失败' : '-',
+              },
+            ),
+            h(NDescriptionsItem, { label: 'sysName' }, { default: () => row.snmp_sysname || '-' }),
+            h(
+              NDescriptionsItem,
+              { label: 'sysDescr' },
+              {
+                default: () =>
+                  h(
+                    'div',
+                    { style: { whiteSpace: 'pre-wrap', wordBreak: 'break-word' } },
+                    row.snmp_sysdescr || '-',
+                  ),
+              },
+            ),
+            h(
+              NDescriptionsItem,
+              { label: '错误' },
+              {
+                default: () =>
+                  h(
+                    'div',
+                    { style: { whiteSpace: 'pre-wrap', wordBreak: 'break-word' } },
+                    row.snmp_ok === false ? row.snmp_error || '-' : '-',
+                  ),
+              },
+            ),
+          ],
+        },
       ),
     positiveText: '关闭',
   })
@@ -716,29 +743,14 @@ const handleCompareCMDB = () => {
 
 <template>
   <div class="discovery-management p-4">
-    <ProTable
-      ref="tableRef"
-      title="资产发现记录"
-      :columns="columns"
-      :request="loadData"
-      :row-key="(row: DiscoveryRecord) => row.id"
-      :context-menu-options="contextMenuOptions"
-      search-placeholder="搜索IP/MAC/主机名"
-      :search-filters="searchFilters"
-      @context-menu-select="handleContextMenuSelect"
-      @recycle-bin="handleRecycleBin"
-      @batch-delete="handleBatchDelete"
-      show-recycle-bin
-      show-batch-delete
-      :scroll-x="2000"
-    >
+    <ProTable ref="tableRef" title="资产发现记录" :columns="columns" :request="loadData"
+      :row-key="(row: DiscoveryRecord) => row.id" :context-menu-options="contextMenuOptions"
+      search-placeholder="搜索IP/MAC/主机名" :search-filters="searchFilters" @context-menu-select="handleContextMenuSelect"
+      @recycle-bin="handleRecycleBin" @batch-delete="handleBatchDelete" show-recycle-bin show-batch-delete>
       <template #toolbar-left>
         <n-space>
-          <n-button
-            :type="scanButtonType as any"
-            :loading="scanIsPolling"
-            @click="scanTaskStatus ? showScanStatusDetail() : handleTriggerScan()"
-          >
+          <n-button :type="scanButtonType as any" :loading="scanIsPolling"
+            @click="scanTaskStatus ? showScanStatusDetail() : handleTriggerScan()">
             {{ scanButtonText }}
           </n-button>
           <n-button type="info" @click="handleShowExtra">影子资产/离线设备</n-button>
@@ -747,47 +759,21 @@ const handleCompareCMDB = () => {
       </template>
     </ProTable>
 
-    <RecycleBinModal
-      ref="recycleBinRef"
-      v-model:show="showRecycleBin"
-      title="回收站 (已删除发现记录)"
-      :columns="columns"
-      :request="recycleBinRequest"
-      :row-key="(row: DiscoveryRecord) => row.id"
-      search-placeholder="搜索已删除记录..."
-      :scroll-x="2000"
-      @restore="handleRecycleBinRestore"
-      @batch-restore="handleRecycleBinBatchRestore"
-      @hard-delete="handleRecycleBinHardDelete"
-      @batch-hard-delete="handleRecycleBinBatchHardDelete"
-    />
+    <RecycleBinModal ref="recycleBinRef" v-model:show="showRecycleBin" title="回收站 (已删除发现记录)" :columns="columns"
+      :request="recycleBinRequest" :row-key="(row: DiscoveryRecord) => row.id" search-placeholder="搜索已删除记录..."
+      @restore="handleRecycleBinRestore" @batch-restore="handleRecycleBinBatchRestore"
+      @hard-delete="handleRecycleBinHardDelete" @batch-hard-delete="handleRecycleBinBatchHardDelete" />
 
     <!-- 触发扫描 Modal -->
-    <n-modal
-      v-model:show="showScanModal"
-      preset="card"
-      title="触发网络扫描"
-      style="width: 600px"
-      @close="closeScanModal"
-    >
+    <n-modal v-model:show="showScanModal" preset="card" title="触发网络扫描" style="width: 600px" @close="closeScanModal">
       <n-space vertical style="width: 100%">
         <n-form-item label="扫描网段 (每行一个或逗号分隔)">
-          <n-input
-            v-model:value="scanModel.subnets"
-            type="textarea"
-            placeholder="例如: 192.168.1.0/24, 10.0.0.0/24"
-            :rows="3"
-          />
+          <n-input v-model:value="scanModel.subnets" type="textarea" placeholder="例如: 192.168.1.0/24, 10.0.0.0/24"
+            :rows="3" />
         </n-form-item>
         <n-form-item label="所属部门（用于 SNMP 凭据匹配）">
-          <n-tree-select
-            v-model:value="scanModel.dept_id"
-            :options="deptTreeOptions"
-            placeholder="可选"
-            clearable
-            key-field="key"
-            label-field="label"
-          />
+          <n-tree-select v-model:value="scanModel.dept_id" :options="deptTreeOptions" placeholder="可选" clearable
+            key-field="key" label-field="label" />
         </n-form-item>
         <n-form-item label="扫描类型">
           <n-select v-model:value="scanModel.scan_type" :options="scanTypeOptions" />
@@ -817,33 +803,19 @@ const handleCompareCMDB = () => {
           <n-input v-model:value="adoptModel.vendor" placeholder="设备厂商" />
         </n-form-item>
         <n-form-item label="设备分组">
-          <n-select
-            v-model:value="adoptModel.device_group"
-            :options="deviceGroupOptions"
-            placeholder="请选择设备分组"
-            clearable
-          />
+          <n-select v-model:value="adoptModel.device_group" :options="deviceGroupOptions" placeholder="请选择设备分组"
+            clearable />
         </n-form-item>
         <n-form-item label="所属部门">
-          <n-tree-select
-            v-model:value="adoptModel.dept_id"
-            :options="deptTreeOptions"
-            placeholder="请选择部门"
-            clearable
-            key-field="key"
-            label-field="label"
-          />
+          <n-tree-select v-model:value="adoptModel.dept_id" :options="deptTreeOptions" placeholder="请选择部门" clearable
+            key-field="key" label-field="label" />
         </n-form-item>
         <n-form-item label="SSH 用户名">
           <n-input v-model:value="adoptModel.username" placeholder="SSH 用户名（可选）" />
         </n-form-item>
         <n-form-item label="SSH 密码">
-          <n-input
-            v-model:value="adoptModel.password"
-            type="password"
-            show-password-on="click"
-            placeholder="SSH 密码（可选）"
-          />
+          <n-input v-model:value="adoptModel.password" type="password" show-password-on="click"
+            placeholder="SSH 密码（可选）" />
         </n-form-item>
       </n-space>
       <template #action>
@@ -853,12 +825,7 @@ const handleCompareCMDB = () => {
     </n-modal>
 
     <!-- 影子资产 & 离线设备 Modal -->
-    <n-modal
-      v-model:show="showExtraModal"
-      preset="card"
-      title="影子资产 & 离线设备"
-      style="width: 900px"
-    >
+    <n-modal v-model:show="showExtraModal" preset="card" title="影子资产 & 离线设备" style="width: 900px">
       <div class="extra-modal-body">
         <n-tabs v-model:value="activeTab">
           <n-tab-pane name="shadow" tab="影子资产">

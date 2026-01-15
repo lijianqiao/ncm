@@ -417,7 +417,7 @@ const handleBatchDelete = (keys: Array<string | number>) => {
     onPositiveClick: async () => {
       try {
         const res = await batchDeleteBackups({ backup_ids: ids })
-        $alert.success(`已删除 ${res.data.success_count} 条`) 
+        $alert.success(`已删除 ${res.data.success_count} 条`)
         tableRef.value?.reload()
         checkedRowKeys.value = []
         if (showRecycleBin.value) recycleBinTableRef.value?.reload()
@@ -442,7 +442,7 @@ const handleBatchRestore = () => {
     onPositiveClick: async () => {
       try {
         const res = await batchRestoreBackups({ backup_ids: ids })
-        $alert.success(`已恢复 ${res.data.success_count} 条`) 
+        $alert.success(`已恢复 ${res.data.success_count} 条`)
         checkedRecycleBinRowKeys.value = []
         recycleBinTableRef.value?.reload()
         tableRef.value?.reload()
@@ -540,6 +540,9 @@ const submitManualBackup = async () => {
     return
   }
 
+  // 1. 设置 loading，防止用户重复点击
+  otpLoading.value = true
+
   try {
     await backupDevice(backupModel.value.device_id)
     $alert.success('备份任务已提交')
@@ -558,6 +561,10 @@ const submitManualBackup = async () => {
       pendingBackupDeviceId.value = backupModel.value.device_id
       showOTPModal.value = true
     }
+  } finally {
+    // 2. 无论成功还是失败（或者触发 OTP 流程），都应该恢复 loading 状态
+    // 如果触发了 OTP，loading 会在 submitOTP 中再次被置为 true
+    otpLoading.value = false
   }
 }
 
@@ -708,7 +715,12 @@ const submitBatchBackup = async () => {
     $alert.warning('请选择设备')
     return
   }
-  await submitBatchBackupInternal()
+  otpLoading.value = true
+  try {
+    await submitBatchBackupInternal()
+  } finally {
+    otpLoading.value = false
+  }
 }
 
 const submitBatchBackupInternal = async () => {
@@ -746,28 +758,13 @@ const closeBatchBackupModal = () => {
 
 <template>
   <div class="backup-management p-4">
-    <ProTable
-      ref="tableRef"
-      title="配置备份列表"
-      :columns="columns"
-      :request="loadData"
-      :row-key="(row: Backup) => row.id"
-      :context-menu-options="contextMenuOptions"
-      search-placeholder="搜索设备名称"
-      :search-filters="searchFilters"
-      @context-menu-select="handleContextMenuSelect"
-      @update:checked-row-keys="handleMainSelectionChange"
-      @recycle-bin="handleRecycleBin"
-      show-recycle-bin
-      :scroll-x="2200"
-    >
+    <ProTable ref="tableRef" title="配置备份列表" :columns="columns" :request="loadData" :row-key="(row: Backup) => row.id"
+      :context-menu-options="contextMenuOptions" search-placeholder="搜索设备名称" :search-filters="searchFilters"
+      @context-menu-select="handleContextMenuSelect" @update:checked-row-keys="handleMainSelectionChange"
+      @recycle-bin="handleRecycleBin" show-recycle-bin>
       <template #toolbar-left>
         <n-space>
-          <n-button
-            v-if="checkedRowKeys.length > 0"
-            type="error"
-            @click="handleBatchDelete(checkedRowKeys)"
-          >
+          <n-button v-if="checkedRowKeys.length > 0" type="error" @click="handleBatchDelete(checkedRowKeys)">
             批量删除
           </n-button>
           <n-button type="primary" @click="handleManualBackup">手动备份</n-button>
@@ -777,39 +774,18 @@ const closeBatchBackupModal = () => {
     </ProTable>
 
     <!-- 回收站 Modal -->
-    <n-modal
-      v-model:show="showRecycleBin"
-      preset="card"
-      title="回收站 (已删除备份)"
-      style="width: 900px"
-    >
-      <ProTable
-        ref="recycleBinTableRef"
-        title="已删除备份"
-        :columns="columns"
-        :request="recycleBinRequest"
-        :row-key="(row: Backup) => row.id"
-        :context-menu-options="recycleBinContextMenuOptions"
-        search-placeholder="搜索设备名称"
-        :search-filters="searchFilters"
+    <n-modal v-model:show="showRecycleBin" preset="card" title="回收站 (已删除备份)" style="width: 900px">
+      <ProTable ref="recycleBinTableRef" title="已删除备份" :columns="columns" :request="recycleBinRequest"
+        :row-key="(row: Backup) => row.id" :context-menu-options="recycleBinContextMenuOptions"
+        search-placeholder="搜索设备名称" :search-filters="searchFilters"
         @context-menu-select="handleRecycleBinContextMenuSelect"
-        @update:checked-row-keys="handleRecycleSelectionChange"
-        :scroll-x="2200"
-      >
+        @update:checked-row-keys="handleRecycleSelectionChange">
         <template #toolbar-left>
           <n-space>
-            <n-button
-              type="success"
-              :disabled="checkedRecycleBinRowKeys.length === 0"
-              @click="handleBatchRestore"
-            >
+            <n-button type="success" :disabled="checkedRecycleBinRowKeys.length === 0" @click="handleBatchRestore">
               批量恢复
             </n-button>
-            <n-button
-              type="error"
-              :disabled="checkedRecycleBinRowKeys.length === 0"
-              @click="handleBatchHardDelete"
-            >
+            <n-button type="error" :disabled="checkedRecycleBinRowKeys.length === 0" @click="handleBatchHardDelete">
               批量彻底删除
             </n-button>
           </n-space>
@@ -818,12 +794,7 @@ const closeBatchBackupModal = () => {
     </n-modal>
 
     <!-- 查看配置内容 Modal -->
-    <n-modal
-      v-model:show="showContentModal"
-      preset="card"
-      title="配置内容"
-      style="width: 900px; height: 80vh"
-    >
+    <n-modal v-model:show="showContentModal" preset="card" title="配置内容" style="width: 900px; height: 80vh">
       <div v-if="contentLoading" style="text-align: center; padding: 40px">加载中...</div>
       <template v-else>
         <div class="backup-modal-body">
@@ -838,21 +809,14 @@ const closeBatchBackupModal = () => {
             </n-space>
           </div>
           <div class="backup-modal-scroll">
-            <pre
-              class="backup-code"
-            ><code class="hljs" v-html="highlightedContentHtml"></code></pre>
+            <pre class="backup-code"><code class="hljs" v-html="highlightedContentHtml"></code></pre>
           </div>
         </div>
       </template>
     </n-modal>
 
     <!-- 配置差异 Modal -->
-    <n-modal
-      v-model:show="showDiffModal"
-      preset="card"
-      title="配置差异对比"
-      style="width: 900px; height: 80vh"
-    >
+    <n-modal v-model:show="showDiffModal" preset="card" title="配置差异对比" style="width: 900px; height: 80vh">
       <div v-if="diffLoading" style="text-align: center; padding: 40px">加载中...</div>
       <template v-else-if="diffData">
         <div class="backup-modal-body">
@@ -877,42 +841,25 @@ const closeBatchBackupModal = () => {
     <n-modal v-model:show="showBackupModal" preset="dialog" title="手动备份" style="width: 500px">
       <div v-if="deviceLoading" style="text-align: center; padding: 20px">加载设备列表...</div>
       <template v-else>
-        <n-select
-          v-model:value="backupModel.device_id"
-          :options="deviceOptions"
-          placeholder="请选择要备份的设备"
-          filterable
-        />
+        <n-select v-model:value="backupModel.device_id" :options="deviceOptions" placeholder="请选择要备份的设备" filterable />
       </template>
       <template #action>
         <n-button @click="showBackupModal = false">取消</n-button>
-        <n-button type="primary" @click="submitManualBackup">开始备份</n-button>
+        <n-button type="primary" :loading="otpLoading" :disabled="otpLoading"
+          @click="submitManualBackup">开始备份</n-button>
       </template>
     </n-modal>
 
     <!-- 批量备份 Modal -->
-    <n-modal
-      v-model:show="showBatchBackupModal"
-      preset="card"
-      title="批量备份"
-      style="width: 600px"
-      :closable="!batchTaskPolling"
-      :mask-closable="!batchTaskPolling"
-      @close="closeBatchBackupModal"
-    >
+    <n-modal v-model:show="showBatchBackupModal" preset="card" title="批量备份" style="width: 600px"
+      :closable="!batchTaskPolling" :mask-closable="!batchTaskPolling" @close="closeBatchBackupModal">
       <div v-if="deviceLoading" style="text-align: center; padding: 20px">加载设备列表...</div>
       <template v-else-if="!batchTaskStatus">
         <n-space vertical style="width: 100%">
           <div>
             <label style="display: block; margin-bottom: 8px">选择设备:</label>
-            <n-select
-              v-model:value="batchBackupModel.device_ids"
-              :options="deviceOptions"
-              placeholder="请选择要备份的设备"
-              filterable
-              multiple
-              max-tag-count="responsive"
-            />
+            <n-select v-model:value="batchBackupModel.device_ids" :options="deviceOptions" placeholder="请选择要备份的设备"
+              filterable multiple max-tag-count="responsive" />
           </div>
           <div>
             <label style="display: block; margin-bottom: 8px">备份类型:</label>
@@ -922,7 +869,8 @@ const closeBatchBackupModal = () => {
         <div style="margin-top: 20px; text-align: right">
           <n-space>
             <n-button @click="closeBatchBackupModal">取消</n-button>
-            <n-button type="primary" @click="submitBatchBackup">开始批量备份</n-button>
+            <n-button type="primary" :loading="otpLoading" :disabled="otpLoading"
+              @click="submitBatchBackup">开始批量备份</n-button>
           </n-space>
         </div>
       </template>
@@ -932,35 +880,30 @@ const closeBatchBackupModal = () => {
             <p>任务 ID: {{ batchTaskStatus.task_id }}</p>
             <p>
               状态:
-              <n-tag
-                :type="
-                  batchTaskStatus.status === 'success'
-                    ? 'success'
-                    : batchTaskStatus.status === 'failed'
-                      ? 'error'
-                      : 'info'
-                "
-              >
+              <n-tag :type="batchTaskStatus.status === 'success'
+                ? 'success'
+                : batchTaskStatus.status === 'failed'
+                  ? 'error'
+                  : 'info'
+                ">
                 {{ batchTaskStatus.status }}
               </n-tag>
             </p>
             <!-- 显示进度信息 -->
-            <p v-if="batchTaskStatus.progress && typeof batchTaskStatus.progress === 'object'" style="color: #666; font-size: 12px;">
-              {{ (batchTaskStatus.progress as Record<string, unknown>).message || (batchTaskStatus.progress as Record<string, unknown>).stage || '执行中...' }}
+            <p v-if="batchTaskStatus.progress && typeof batchTaskStatus.progress === 'object'"
+              style="color: #666; font-size: 12px;">
+              {{ (batchTaskStatus.progress as Record<string, unknown>).message ||
+                (batchTaskStatus.progress as Record<string, unknown>).stage || '执行中...' }}
             </p>
           </div>
-          <n-progress
-            type="line"
+          <n-progress type="line"
             :percentage="batchTaskStatus.status === 'success' ? 100 : batchTaskStatus.status === 'failed' ? 100 : 50"
-            :status="
-              batchTaskStatus.status === 'success'
-                ? 'success'
-                : batchTaskStatus.status === 'failed'
-                  ? 'error'
-                  : 'default'
-            "
-            :processing="batchTaskStatus.status === 'running' || batchTaskStatus.status === 'pending'"
-          />
+            :status="batchTaskStatus.status === 'success'
+              ? 'success'
+              : batchTaskStatus.status === 'failed'
+                ? 'error'
+                : 'default'
+              " :processing="batchTaskStatus.status === 'running' || batchTaskStatus.status === 'pending'" />
           <template v-if="batchTaskStatus.result">
             <div>
               <p>总数: {{ batchTaskStatus.result.total }}</p>
@@ -985,36 +928,25 @@ const closeBatchBackupModal = () => {
 
           <n-alert v-if="batchTaskStatus.error" type="error" :title="batchTaskStatus.error" />
         </n-space>
-        <div
-          v-if="batchTaskStatus.status === 'success' || batchTaskStatus.status === 'failed'"
-          style="margin-top: 20px; text-align: right"
-        >
+        <div v-if="batchTaskStatus.status === 'success' || batchTaskStatus.status === 'failed'"
+          style="margin-top: 20px; text-align: right">
           <n-button @click="closeBatchBackupModal">关闭</n-button>
         </div>
       </template>
     </n-modal>
 
     <!-- OTP 输入 Modal（通用组件） -->
-    <OtpModal
-      v-model:show="showOTPModal"
-      :loading="otpLoading"
-      title="需要 OTP 验证码"
-      alert-title="设备需要 OTP 认证"
-      alert-text="请输入当前有效的 OTP 验证码以继续操作。"
-      :info-items="
-        otpRequiredInfo
-          ? [
-              {
-                label: '设备分组',
-                value:
-                  deviceGroupLabels[otpRequiredInfo.device_group] || otpRequiredInfo.device_group,
-              },
-            ]
-          : []
-      "
-      confirm-text="确认"
-      @confirm="submitOTP"
-    />
+    <OtpModal v-model:show="showOTPModal" :loading="otpLoading" title="需要 OTP 验证码" alert-title="设备需要 OTP 认证"
+      alert-text="请输入当前有效的 OTP 验证码以继续操作。" :info-items="otpRequiredInfo
+        ? [
+          {
+            label: '设备分组',
+            value:
+              deviceGroupLabels[otpRequiredInfo.device_group] || otpRequiredInfo.device_group,
+          },
+        ]
+        : []
+        " confirm-text="确认" @confirm="submitOTP" />
   </div>
 </template>
 
