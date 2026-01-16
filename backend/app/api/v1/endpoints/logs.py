@@ -6,10 +6,15 @@
 @Docs: 日志 API 接口 (Logs API).
 """
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
+from fastapi.responses import FileResponse
+from starlette.background import BackgroundTask
 
 from app.api import deps
+from app.core.config import settings
 from app.core.permissions import PermissionCode
+from app.features.import_export.logs import export_login_logs_df, export_operation_logs_df
+from app.import_export import ImportExportService, delete_export_file
 from app.schemas.common import PaginatedResponse, ResponseBase
 from app.schemas.log import LoginLogResponse, OperationLogResponse
 
@@ -80,4 +85,44 @@ async def read_operation_logs(
             page_size=page_size,
             items=[OperationLogResponse.model_validate(log) for log in logs],
         )
+    )
+
+
+@router.get(
+    "/login/export",
+    summary="导出登录日志",
+)
+async def export_login_logs(
+    db: deps.SessionDep,
+    current_user: deps.CurrentUser,
+    _: deps.User = Depends(deps.require_permissions([PermissionCode.LOG_LOGIN_EXPORT.value])),
+    fmt: str = Query("csv", pattern="^(csv|xlsx)$", description="导出格式"),
+) -> FileResponse:
+    svc = ImportExportService(db=db, redis_client=None, base_dir=str(settings.IMPORT_EXPORT_TMP_DIR or "") or None)
+    result = await svc.export_table(fmt=fmt, filename_prefix="login_logs", df_fn=export_login_logs_df)
+    return FileResponse(
+        path=result.path,
+        filename=result.filename,
+        media_type=result.media_type,
+        background=BackgroundTask(delete_export_file, str(result.path)),
+    )
+
+
+@router.get(
+    "/operation/export",
+    summary="导出操作日志",
+)
+async def export_operation_logs(
+    db: deps.SessionDep,
+    current_user: deps.CurrentUser,
+    _: deps.User = Depends(deps.require_permissions([PermissionCode.LOG_OPERATION_EXPORT.value])),
+    fmt: str = Query("csv", pattern="^(csv|xlsx)$", description="导出格式"),
+) -> FileResponse:
+    svc = ImportExportService(db=db, redis_client=None, base_dir=str(settings.IMPORT_EXPORT_TMP_DIR or "") or None)
+    result = await svc.export_table(fmt=fmt, filename_prefix="operation_logs", df_fn=export_operation_logs_df)
+    return FileResponse(
+        path=result.path,
+        filename=result.filename,
+        media_type=result.media_type,
+        background=BackgroundTask(delete_export_file, str(result.path)),
     )

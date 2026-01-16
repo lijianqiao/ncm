@@ -13,6 +13,8 @@ from uuid import UUID
 
 from celery.result import AsyncResult
 from fastapi import APIRouter, Depends, Query
+from fastapi.responses import FileResponse
+from starlette.background import BackgroundTask
 
 from app.api.deps import (
     CurrentUser,
@@ -23,9 +25,12 @@ from app.api.deps import (
     require_permissions,
 )
 from app.celery.tasks.discovery import compare_cmdb, scan_subnet, scan_subnets_batch
+from app.core.config import settings
 from app.core.enums import DiscoveryStatus
 from app.core.exceptions import NotFoundException
 from app.core.permissions import PermissionCode
+from app.features.import_export.discovery import export_discovery_df
+from app.import_export import ImportExportService, delete_export_file
 from app.schemas.common import (
     BatchDeleteRequest,
     BatchOperationResult,
@@ -722,3 +727,23 @@ async def trigger_cmdb_compare(
                 message="CMDB 比对完成",
             )
         )
+
+
+@router.get(
+    "/export",
+    summary="导出发现记录",
+    dependencies=[Depends(require_permissions([PermissionCode.DISCOVERY_EXPORT.value]))],
+)
+async def export_discovery(
+    db: SessionDep,
+    current_user: CurrentUser,
+    fmt: str = Query("csv", pattern="^(csv|xlsx)$", description="导出格式"),
+) -> FileResponse:
+    svc = ImportExportService(db=db, redis_client=None, base_dir=str(settings.IMPORT_EXPORT_TMP_DIR or "") or None)
+    result = await svc.export_table(fmt=fmt, filename_prefix="discovery", df_fn=export_discovery_df)
+    return FileResponse(
+        path=result.path,
+        filename=result.filename,
+        media_type=result.media_type,
+        background=BackgroundTask(delete_export_file, str(result.path)),
+    )

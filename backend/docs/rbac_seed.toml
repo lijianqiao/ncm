@@ -224,6 +224,19 @@ is_hidden = true
 permission = "session:kick"
 parent_key = "sessions"
 
+[[menus]]
+key = "perm_session_export"
+title = "在线会话-导出"
+name = "PermSessionExport"
+path = ""
+component = ""
+icon = "KeyOutline"
+sort = 2043
+type = "PERMISSION"
+is_hidden = true
+permission = "session:export"
+parent_key = "sessions"
+
 # ---- 用户权限点（user:*）----
 [[menus]]
 key = "perm_user_list"
@@ -554,6 +567,19 @@ permission = "log:login:list"
 parent_key = "logs_login"
 
 [[menus]]
+key = "perm_log_login_export"
+title = "登录日志-导出"
+name = "PermLogLoginExport"
+path = ""
+component = ""
+icon = "LogInOutline"
+sort = 20512
+type = "PERMISSION"
+is_hidden = true
+permission = "log:login:export"
+parent_key = "logs_login"
+
+[[menus]]
 key = "perm_log_operation_list"
 title = "操作日志-列表"
 name = "PermLogOperationList"
@@ -564,6 +590,19 @@ sort = 20521
 type = "PERMISSION"
 is_hidden = true
 permission = "log:operation:list"
+parent_key = "logs_operation"
+
+[[menus]]
+key = "perm_log_operation_export"
+title = "操作日志-导出"
+name = "PermLogOperationExport"
+path = ""
+component = ""
+icon = "HammerOutline"
+sort = 20522
+type = "PERMISSION"
+is_hidden = true
+permission = "log:operation:export"
 parent_key = "logs_operation"
 
 # ---- 部门权限点（dept:*）----
@@ -1043,6 +1082,32 @@ is_hidden = true
 permission = "credential:use"
 parent_key = "credentials"
 
+[[menus]]
+key = "perm_credential_import"
+title = "凭据-导入"
+name = "PermCredentialImport"
+path = ""
+component = ""
+icon = "KeyOutline"
+sort = 1026
+type = "PERMISSION"
+is_hidden = true
+permission = "credential:import"
+parent_key = "credentials"
+
+[[menus]]
+key = "perm_credential_export"
+title = "凭据-导出"
+name = "PermCredentialExport"
+path = ""
+component = ""
+icon = "KeyOutline"
+sort = 1027
+type = "PERMISSION"
+is_hidden = true
+permission = "credential:export"
+parent_key = "credentials"
+
 # ---- SNMP 凭据权限点（snmp_cred:*）----
 [[menus]]
 key = "snmp_credentials"
@@ -1107,6 +1172,32 @@ sort = 1034
 type = "PERMISSION"
 is_hidden = true
 permission = "snmp_cred:delete"
+parent_key = "snmp_credentials"
+
+[[menus]]
+key = "perm_snmp_cred_import"
+title = "SNMP 凭据-导入"
+name = "PermSnmpCredImport"
+path = ""
+component = ""
+icon = "KeyOutline"
+sort = 1035
+type = "PERMISSION"
+is_hidden = true
+permission = "snmp_cred:import"
+parent_key = "snmp_credentials"
+
+[[menus]]
+key = "perm_snmp_cred_export"
+title = "SNMP 凭据-导出"
+name = "PermSnmpCredExport"
+path = ""
+component = ""
+icon = "KeyOutline"
+sort = 1036
+type = "PERMISSION"
+is_hidden = true
+permission = "snmp_cred:export"
 parent_key = "snmp_credentials"
 
 # ---- 备份权限点（backup:*）----
@@ -1228,6 +1319,19 @@ is_hidden = true
 permission = "backup:batch_hard_delete"
 parent_key = "backups"
 
+[[menus]]
+key = "perm_backup_export"
+title = "备份-导出"
+name = "PermBackupExport"
+path = ""
+component = ""
+icon = "KeyOutline"
+sort = 1050
+type = "PERMISSION"
+is_hidden = true
+permission = "backup:export"
+parent_key = "backups"
+
 # ---- 模板权限点（template:*）----
 
 [[menus]]
@@ -1306,6 +1410,19 @@ sort = 1056
 type = "PERMISSION"
 is_hidden = true
 permission = "template:approve"
+parent_key = "templates"
+
+[[menus]]
+key = "perm_template_export"
+title = "模板-导出"
+name = "PermTemplateExport"
+path = ""
+component = ""
+icon = "KeyOutline"
+sort = 1056
+type = "PERMISSION"
+is_hidden = true
+permission = "template:export"
 parent_key = "templates"
 
 [[menus]]
@@ -1492,6 +1609,19 @@ is_hidden = true
 permission = "inventory_audit:restore"
 parent_key = "inventory_audit"
 
+[[menus]]
+key = "perm_inventory_audit_export"
+title = "盘点-导出"
+name = "PermInventoryAuditExport"
+path = ""
+component = ""
+icon = "KeyOutline"
+sort = 1076
+type = "PERMISSION"
+is_hidden = true
+permission = "inventory_audit:export"
+parent_key = "inventory_audit"
+
 # ---- 采集菜单（collect）----
 
 [[menus]]
@@ -1670,6 +1800,19 @@ is_hidden = true
 permission = "discovery:restore"
 parent_key = "discovery"
 
+[[menus]]
+key = "perm_discovery_export"
+title = "发现-导出"
+name = "PermDiscoveryExport"
+path = ""
+component = ""
+icon = "KeyOutline"
+sort = 1107
+type = "PERMISSION"
+is_hidden = true
+permission = "discovery:export"
+parent_key = "discovery"
+
 # ---- 网络拓扑权限点（topology:*）----
 
 [[menus]]
@@ -1754,6 +1897,19 @@ is_hidden = true
 permission = "alert:close"
 parent_key = "alerts"
 
+[[menus]]
+key = "perm_alert_export"
+title = "告警-导出"
+name = "PermAlertExport"
+path = ""
+component = ""
+icon = "KeyOutline"
+sort = 1134
+type = "PERMISSION"
+is_hidden = true
+permission = "alert:export"
+parent_key = "alerts"
+
 # 角色数据：permissions 会映射到上面菜单的 permission 字段，并绑定到角色 menus。
 
 [[roles]]
@@ -1828,12 +1984,14 @@ permissions = [
   "discovery:list",
   "discovery:adopt",
   "discovery:delete",
+  "discovery:export",
   "topology:view",
   "topology:refresh",
   "diff:view",
   "alert:list",
   "alert:ack",
   "alert:close",
+  "alert:export",
   "template:list",
   "template:create",
   "template:update",
@@ -1848,6 +2006,7 @@ permissions = [
   "deploy:rollback",
   "inventory_audit:create",
   "inventory_audit:view",
+  "inventory_audit:export",
 ]
 
 [[roles]]

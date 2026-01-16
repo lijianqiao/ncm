@@ -45,10 +45,13 @@ class PermissionCode(str, Enum):
     ROLE_MENUS_UPDATE = "role:menus:update"
 
     LOG_LOGIN_LIST = "log:login:list"
+    LOG_LOGIN_EXPORT = "log:login:export"
     LOG_OPERATION_LIST = "log:operation:list"
+    LOG_OPERATION_EXPORT = "log:operation:export"
 
     SESSION_LIST = "session:list"
     SESSION_KICK = "session:kick"
+    SESSION_EXPORT = "session:export"
 
     # 部门权限
     DEPT_LIST = "dept:list"
@@ -85,11 +88,15 @@ class PermissionCode(str, Enum):
     CREDENTIAL_UPDATE = "credential:update"
     CREDENTIAL_DELETE = "credential:delete"
     CREDENTIAL_USE = "credential:use"
+    CREDENTIAL_IMPORT = "credential:import"
+    CREDENTIAL_EXPORT = "credential:export"
     # NCM 部门 SNMP 凭据权限
     SNMP_CRED_LIST = "snmp_cred:list"
     SNMP_CRED_CREATE = "snmp_cred:create"
     SNMP_CRED_UPDATE = "snmp_cred:update"
     SNMP_CRED_DELETE = "snmp_cred:delete"
+    SNMP_CRED_IMPORT = "snmp_cred:import"
+    SNMP_CRED_EXPORT = "snmp_cred:export"
 
     # NCM 备份权限
     BACKUP_LIST = "backup:list"
@@ -101,6 +108,7 @@ class PermissionCode(str, Enum):
     BACKUP_BATCH_RESTORE = "backup:batch_restore"
     BACKUP_HARD_DELETE = "backup:hard_delete"
     BACKUP_BATCH_HARD_DELETE = "backup:batch_hard_delete"
+    BACKUP_EXPORT = "backup:export"
 
     # NCM 采集权限
     COLLECT_EXECUTE = "collect:execute"
@@ -113,6 +121,7 @@ class PermissionCode(str, Enum):
     DISCOVERY_DELETE = "discovery:delete"
     DISCOVERY_RECYCLE = "discovery:recycle"
     DISCOVERY_RESTORE = "discovery:restore"
+    DISCOVERY_EXPORT = "discovery:export"
 
     # NCM 拓扑权限
     TOPOLOGY_VIEW = "topology:view"
@@ -123,6 +132,7 @@ class PermissionCode(str, Enum):
     ALERT_LIST = "alert:list"
     ALERT_ACK = "alert:ack"
     ALERT_CLOSE = "alert:close"
+    ALERT_EXPORT = "alert:export"
 
     # Phase 4: 模板/渲染/下发
     TEMPLATE_LIST = "template:list"
@@ -131,6 +141,7 @@ class PermissionCode(str, Enum):
     TEMPLATE_DELETE = "template:delete"
     TEMPLATE_SUBMIT = "template:submit"
     TEMPLATE_APPROVE = "template:approve"
+    TEMPLATE_EXPORT = "template:export"
 
     RENDER_VIEW = "render:view"
 
@@ -149,6 +160,7 @@ class PermissionCode(str, Enum):
     INVENTORY_AUDIT_DELETE = "inventory_audit:delete"
     INVENTORY_AUDIT_RECYCLE = "inventory_audit:recycle"
     INVENTORY_AUDIT_RESTORE = "inventory_audit:restore"
+    INVENTORY_AUDIT_EXPORT = "inventory_audit:export"
 
 
 @dataclass(frozen=True, slots=True)
@@ -184,9 +196,12 @@ PERMISSION_DEFS: tuple[PermissionDef, ...] = (
     PermissionDef(PermissionCode.ROLE_MENUS_LIST, "角色-菜单-列表"),
     PermissionDef(PermissionCode.ROLE_MENUS_UPDATE, "角色-菜单-设置"),
     PermissionDef(PermissionCode.LOG_LOGIN_LIST, "登录日志-列表"),
+    PermissionDef(PermissionCode.LOG_LOGIN_EXPORT, "登录日志-导出"),
     PermissionDef(PermissionCode.LOG_OPERATION_LIST, "操作日志-列表"),
+    PermissionDef(PermissionCode.LOG_OPERATION_EXPORT, "操作日志-导出"),
     PermissionDef(PermissionCode.SESSION_LIST, "在线会话-列表"),
     PermissionDef(PermissionCode.SESSION_KICK, "在线会话-强制下线"),
+    PermissionDef(PermissionCode.SESSION_EXPORT, "在线会话-导出"),
     PermissionDef(PermissionCode.DEPT_LIST, "部门-列表"),
     PermissionDef(PermissionCode.DEPT_CREATE, "部门-创建"),
     PermissionDef(PermissionCode.DEPT_UPDATE, "部门-更新"),
@@ -218,11 +233,15 @@ PERMISSION_DEFS: tuple[PermissionDef, ...] = (
     PermissionDef(PermissionCode.CREDENTIAL_UPDATE, "凭据-更新"),
     PermissionDef(PermissionCode.CREDENTIAL_DELETE, "凭据-删除"),
     PermissionDef(PermissionCode.CREDENTIAL_USE, "凭据-使用", "缓存和使用 OTP 验证码"),
+    PermissionDef(PermissionCode.CREDENTIAL_IMPORT, "凭据-导入"),
+    PermissionDef(PermissionCode.CREDENTIAL_EXPORT, "凭据-导出"),
     # SNMP 凭据（部门维度）
     PermissionDef(PermissionCode.SNMP_CRED_LIST, "SNMP 凭据-列表"),
     PermissionDef(PermissionCode.SNMP_CRED_CREATE, "SNMP 凭据-创建"),
     PermissionDef(PermissionCode.SNMP_CRED_UPDATE, "SNMP 凭据-更新"),
     PermissionDef(PermissionCode.SNMP_CRED_DELETE, "SNMP 凭据-删除"),
+    PermissionDef(PermissionCode.SNMP_CRED_IMPORT, "SNMP 凭据-导入"),
+    PermissionDef(PermissionCode.SNMP_CRED_EXPORT, "SNMP 凭据-导出"),
     # NCM 备份权限
     PermissionDef(PermissionCode.BACKUP_LIST, "备份-列表"),
     PermissionDef(PermissionCode.BACKUP_CREATE, "备份-创建"),
@@ -233,6 +252,7 @@ PERMISSION_DEFS: tuple[PermissionDef, ...] = (
     PermissionDef(PermissionCode.BACKUP_BATCH_RESTORE, "备份-批量恢复"),
     PermissionDef(PermissionCode.BACKUP_HARD_DELETE, "备份-硬删除"),
     PermissionDef(PermissionCode.BACKUP_BATCH_HARD_DELETE, "备份-批量硬删除"),
+    PermissionDef(PermissionCode.BACKUP_EXPORT, "备份-导出"),
     # NCM 采集权限
     PermissionDef(PermissionCode.COLLECT_EXECUTE, "采集-执行", "执行 ARP/MAC 表采集"),
     PermissionDef(PermissionCode.COLLECT_VIEW, "采集-查看", "查看 ARP/MAC 表缓存数据"),
@@ -243,6 +263,7 @@ PERMISSION_DEFS: tuple[PermissionDef, ...] = (
     PermissionDef(PermissionCode.DISCOVERY_DELETE, "发现-删除", "删除发现记录"),
     PermissionDef(PermissionCode.DISCOVERY_RECYCLE, "发现-回收站", "查看发现记录回收站"),
     PermissionDef(PermissionCode.DISCOVERY_RESTORE, "发现-恢复", "恢复已删除的发现记录"),
+    PermissionDef(PermissionCode.DISCOVERY_EXPORT, "发现-导出", "导出发现记录"),
     # NCM 拓扑权限
     PermissionDef(PermissionCode.TOPOLOGY_VIEW, "拓扑-查看", "查看网络拓扑"),
     PermissionDef(PermissionCode.TOPOLOGY_REFRESH, "拓扑-刷新", "刷新拓扑数据"),
@@ -251,6 +272,7 @@ PERMISSION_DEFS: tuple[PermissionDef, ...] = (
     PermissionDef(PermissionCode.ALERT_LIST, "告警-列表", "查看告警列表"),
     PermissionDef(PermissionCode.ALERT_ACK, "告警-确认", "确认告警"),
     PermissionDef(PermissionCode.ALERT_CLOSE, "告警-关闭", "关闭告警"),
+    PermissionDef(PermissionCode.ALERT_EXPORT, "告警-导出", "导出告警列表"),
     # Phase 4: 模板/渲染/下发
     PermissionDef(PermissionCode.TEMPLATE_LIST, "模板-列表"),
     PermissionDef(PermissionCode.TEMPLATE_CREATE, "模板-创建"),
@@ -258,6 +280,7 @@ PERMISSION_DEFS: tuple[PermissionDef, ...] = (
     PermissionDef(PermissionCode.TEMPLATE_DELETE, "模板-删除"),
     PermissionDef(PermissionCode.TEMPLATE_SUBMIT, "模板-提交审批"),
     PermissionDef(PermissionCode.TEMPLATE_APPROVE, "模板-审批", "模板三级审批"),
+    PermissionDef(PermissionCode.TEMPLATE_EXPORT, "模板-导出"),
     PermissionDef(PermissionCode.RENDER_VIEW, "渲染-预览", "模板渲染预览(Dry-Run)"),
     PermissionDef(PermissionCode.DEPLOY_VIEW, "下发-查看", "查看下发任务与执行结果"),
     PermissionDef(PermissionCode.DEPLOY_CREATE, "下发-创建", "创建下发任务"),
@@ -273,6 +296,7 @@ PERMISSION_DEFS: tuple[PermissionDef, ...] = (
     PermissionDef(PermissionCode.INVENTORY_AUDIT_DELETE, "盘点-删除", "删除资产盘点任务（软删除）"),
     PermissionDef(PermissionCode.INVENTORY_AUDIT_RECYCLE, "盘点-回收站", "查看资产盘点任务回收站"),
     PermissionDef(PermissionCode.INVENTORY_AUDIT_RESTORE, "盘点-恢复", "恢复已删除资产盘点任务"),
+    PermissionDef(PermissionCode.INVENTORY_AUDIT_EXPORT, "盘点-导出", "导出资产盘点任务列表"),
 )
 
 

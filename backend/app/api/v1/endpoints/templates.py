@@ -10,10 +10,15 @@ from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query
+from fastapi.responses import FileResponse
+from starlette.background import BackgroundTask
 
-from app.api.deps import CurrentUser, TemplateServiceDep, require_permissions
+from app.api.deps import CurrentUser, SessionDep, TemplateServiceDep, require_permissions
+from app.core.config import settings
 from app.core.enums import DeviceVendor, TemplateStatus, TemplateType
 from app.core.permissions import PermissionCode
+from app.features.import_export.templates import export_templates_df
+from app.import_export import ImportExportService, delete_export_file
 from app.schemas.common import PaginatedResponse, ResponseBase
 from app.schemas.template import (
     TemplateApproveRequest,
@@ -368,4 +373,24 @@ async def batch_hard_delete_templates(
             failed_ids=failed_ids,
         ),
         message=f"批量彻底删除完成，成功 {success_count} 条",
+    )
+
+
+@router.get(
+    "/export",
+    summary="导出模板库",
+    dependencies=[Depends(require_permissions([PermissionCode.TEMPLATE_EXPORT.value]))],
+)
+async def export_templates(
+    db: SessionDep,
+    current_user: CurrentUser,
+    fmt: str = Query("csv", pattern="^(csv|xlsx)$", description="导出格式"),
+) -> FileResponse:
+    svc = ImportExportService(db=db, redis_client=None, base_dir=str(settings.IMPORT_EXPORT_TMP_DIR or "") or None)
+    result = await svc.export_table(fmt=fmt, filename_prefix="templates", df_fn=export_templates_df)
+    return FileResponse(
+        path=result.path,
+        filename=result.filename,
+        media_type=result.media_type,
+        background=BackgroundTask(delete_export_file, str(result.path)),
     )

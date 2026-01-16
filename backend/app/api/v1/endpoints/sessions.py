@@ -9,10 +9,15 @@
 from typing import Any
 from uuid import UUID
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
+from fastapi.responses import FileResponse
+from starlette.background import BackgroundTask
 
 from app.api import deps
+from app.core.config import settings
 from app.core.permissions import PermissionCode
+from app.features.import_export.sessions import export_sessions_df
+from app.import_export import ImportExportService, delete_export_file
 from app.schemas.common import BatchOperationResult, PaginatedResponse, ResponseBase
 from app.schemas.session import KickUsersRequest, OnlineSessionResponse
 
@@ -110,3 +115,23 @@ async def kick_user(
     """
     await session_service.kick_user(user_id=user_id)
     return ResponseBase(data=None, message="已强制下线")
+
+
+@router.get(
+    "/export",
+    summary="导出在线会话",
+)
+async def export_sessions(
+    db: deps.SessionDep,
+    current_user: deps.CurrentUser,
+    _: deps.User = Depends(deps.require_permissions([PermissionCode.SESSION_EXPORT.value])),
+    fmt: str = Query("csv", pattern="^(csv|xlsx)$", description="导出格式"),
+) -> FileResponse:
+    svc = ImportExportService(db=db, redis_client=None, base_dir=str(settings.IMPORT_EXPORT_TMP_DIR or "") or None)
+    result = await svc.export_table(fmt=fmt, filename_prefix="sessions", df_fn=export_sessions_df)
+    return FileResponse(
+        path=result.path,
+        filename=result.filename,
+        media_type=result.media_type,
+        background=BackgroundTask(delete_export_file, str(result.path)),
+    )

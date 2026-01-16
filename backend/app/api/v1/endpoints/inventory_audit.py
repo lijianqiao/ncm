@@ -10,9 +10,14 @@ from typing import Any, cast
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query
+from fastapi.responses import FileResponse
+from starlette.background import BackgroundTask
 
 from app.api import deps
+from app.core.config import settings
 from app.core.permissions import PermissionCode
+from app.features.import_export.inventory_audit import export_inventory_audits_df
+from app.import_export import ImportExportService, delete_export_file
 from app.schemas.common import (
     BatchDeleteRequest,
     BatchOperationResult,
@@ -226,6 +231,26 @@ async def batch_hard_delete_inventory_audits(
 
 
 @router.get(
+    "/export",
+    summary="导出盘点任务列表",
+)
+async def export_inventory_audits(
+    db: deps.SessionDep,
+    current_user: deps.CurrentUser,
+    _: deps.User = Depends(deps.require_permissions([PermissionCode.INVENTORY_AUDIT_EXPORT.value])),
+    fmt: str = Query("csv", pattern="^(csv|xlsx)$", description="导出格式"),
+) -> FileResponse:
+    svc = ImportExportService(db=db, redis_client=None, base_dir=str(settings.IMPORT_EXPORT_TMP_DIR or "") or None)
+    result = await svc.export_table(fmt=fmt, filename_prefix="inventory_audits", df_fn=export_inventory_audits_df)
+    return FileResponse(
+        path=result.path,
+        filename=result.filename,
+        media_type=result.media_type,
+        background=BackgroundTask(delete_export_file, str(result.path)),
+    )
+
+
+@router.get(
     "/{audit_id}",
     response_model=ResponseBase[InventoryAuditResponse],
     summary="盘点任务详情",
@@ -273,3 +298,4 @@ async def export_inventory_audit(
     """
     audit = await service.get(audit_id)
     return ResponseBase(data={"id": str(audit.id), "name": audit.name, "scope": audit.scope, "result": audit.result})
+

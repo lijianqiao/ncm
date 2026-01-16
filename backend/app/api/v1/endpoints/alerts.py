@@ -9,10 +9,15 @@
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query
+from fastapi.responses import FileResponse
+from starlette.background import BackgroundTask
 
 from app.api import deps
+from app.core.config import settings
 from app.core.enums import AlertSeverity, AlertStatus, AlertType
 from app.core.permissions import PermissionCode
+from app.features.import_export.alerts import export_alerts_df
+from app.import_export import ImportExportService, delete_export_file
 from app.schemas.alert import AlertListQuery, AlertResponse
 from app.schemas.common import PaginatedResponse, ResponseBase
 
@@ -77,6 +82,26 @@ async def read_alerts(
             page_size=page_size,
             items=responses,
         )
+    )
+
+
+@router.get(
+    "/export",
+    summary="导出告警列表",
+)
+async def export_alerts(
+    db: deps.SessionDep,
+    current_user: deps.CurrentUser,
+    _: deps.User = Depends(deps.require_permissions([PermissionCode.ALERT_EXPORT.value])),
+    fmt: str = Query("csv", pattern="^(csv|xlsx)$", description="导出格式"),
+) -> FileResponse:
+    svc = ImportExportService(db=db, redis_client=None, base_dir=str(settings.IMPORT_EXPORT_TMP_DIR or "") or None)
+    result = await svc.export_table(fmt=fmt, filename_prefix="alerts", df_fn=export_alerts_df)
+    return FileResponse(
+        path=result.path,
+        filename=result.filename,
+        media_type=result.media_type,
+        background=BackgroundTask(delete_export_file, str(result.path)),
     )
 
 

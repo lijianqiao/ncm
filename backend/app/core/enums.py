@@ -55,6 +55,39 @@ class AuthType(str, Enum):
     OTP_MANUAL = "otp_manual"  # OTP 手动输入（需要用户输入）
 
 
+# ===== SNMP 相关枚举 =====
+
+
+class SnmpVersion(str, Enum):
+    """SNMP 版本枚举。"""
+
+    V2C = "v2c"
+    V3 = "v3"
+
+
+class SnmpSecurityLevel(str, Enum):
+    """SNMPv3 安全级别枚举。"""
+
+    NO_AUTH_NO_PRIV = "no_auth_no_priv"
+    AUTH_NO_PRIV = "auth_no_priv"
+    AUTH_PRIV = "auth_priv"
+
+
+class SnmpAuthProtocol(str, Enum):
+    """SNMPv3 Auth 协议枚举。"""
+
+    MD5 = "md5"
+    SHA = "sha"
+
+
+class SnmpPrivProtocol(str, Enum):
+    """SNMPv3 Priv 协议枚举。"""
+
+    DES = "des"
+    AES = "aes"
+
+
+
 class DeviceStatus(str, Enum):
     """设备生命周期状态。"""
 

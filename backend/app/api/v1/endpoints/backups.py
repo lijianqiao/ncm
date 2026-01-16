@@ -10,11 +10,15 @@ from io import BytesIO
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
+from starlette.background import BackgroundTask
 
-from app.api.deps import BackupServiceDep, CurrentUser, require_permissions
+from app.api.deps import BackupServiceDep, CurrentUser, SessionDep, require_permissions
+from app.core.config import settings
 from app.core.enums import BackupType
 from app.core.permissions import PermissionCode
+from app.features.import_export.backups import export_backups_df
+from app.import_export import ImportExportService, delete_export_file
 from app.schemas.backup import (
     BackupBatchDeleteRequest,
     BackupBatchDeleteResult,
@@ -168,6 +172,26 @@ async def get_recycle_backups(
             page=page,
             page_size=page_size,
         )
+    )
+
+
+@router.get(
+    "/export",
+    summary="导出配置备份列表",
+    dependencies=[Depends(require_permissions([PermissionCode.BACKUP_EXPORT.value]))],
+)
+async def export_backups(
+    current_user: CurrentUser,
+    db: SessionDep,
+    fmt: str = Query("csv", pattern="^(csv|xlsx)$", description="导出格式"),
+) -> FileResponse:
+    svc = ImportExportService(db=db, redis_client=None, base_dir=str(settings.IMPORT_EXPORT_TMP_DIR or "") or None)
+    result = await svc.export_table(fmt=fmt, filename_prefix="backups", df_fn=export_backups_df)
+    return FileResponse(
+        path=result.path,
+        filename=result.filename,
+        media_type=result.media_type,
+        background=BackgroundTask(delete_export_file, str(result.path)),
     )
 
 
