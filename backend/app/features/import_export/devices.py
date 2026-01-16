@@ -6,7 +6,6 @@
 @Docs: 设备导入导出
 """
 
-import ipaddress
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -28,6 +27,7 @@ from app.core.enums import AuthType, DeviceGroup, DeviceStatus, DeviceVendor
 from app.models.credential import DeviceGroupCredential
 from app.models.dept import Department
 from app.models.device import Device
+from fastapi_import_export.validation_extras import RowValidator
 
 DEVICE_IMPORT_COLUMNS: list[str] = [
     "name",
@@ -148,10 +148,8 @@ async def validate_devices(
     ips = [_to_str(r.get("ip_address")) for r in rows]
     ip_set = {ip for ip in ips if ip}
 
-    result = await db.execute(
-        select(Device.ip_address).where(and_(Device.is_deleted.is_(False), Device.ip_address.in_(ip_set)))
-    )
-    existing_ips = set(result.scalars().all())
+    result = await db.execute(select(Device.ip_address, Device.is_deleted).where(Device.ip_address.in_(ip_set)))
+    existing_ip_deleted_map = {ip: bool(is_deleted) for ip, is_deleted in result.all()}
 
     dept_codes = {_to_str(r.get("dept_code")) for r in rows if _to_str(r.get("dept_code"))}
     dept_map: dict[str, UUID] = {}
@@ -168,37 +166,39 @@ async def validate_devices(
 
     for r in rows:
         row_number = int(r["row_number"])
-        name = _to_str(r.get("name"))
-        ip = _to_str(r.get("ip_address"))
         vendor = _normalize_enum(_to_str(r.get("vendor")) or DeviceVendor.H3C.value)
         auth_type = _normalize_enum(_to_str(r.get("auth_type")) or AuthType.OTP_SEED.value)
         device_group = _normalize_enum(_to_str(r.get("device_group")) or DeviceGroup.ACCESS.value)
         status = _normalize_enum(_to_str(r.get("status")) or DeviceStatus.IN_USE.value)
         dept_code = _to_str(r.get("dept_code"))
 
-        if not name:
-            add_error(row_number, "name", "设备名称不能为空")
-        if not ip:
-            add_error(row_number, "ip_address", "IP 地址不能为空")
-        else:
-            if ip in ip_seen:
-                add_error(row_number, "ip_address", "导入文件中 IP 地址重复")
-            ip_seen.add(ip)
-            try:
-                ipaddress.ip_address(ip)
-            except Exception:
-                add_error(row_number, "ip_address", "IP 地址格式无效")
-            if (not allow_overwrite) and (ip in existing_ips):
-                add_error(row_number, "ip_address", "IP 地址已存在")
+        r["vendor"] = vendor
+        r["auth_type"] = auth_type
+        r["device_group"] = device_group
+        r["status"] = status
 
-        if vendor not in {e.value for e in DeviceVendor}:
-            add_error(row_number, "vendor", f"厂商无效: {vendor}")
-        if auth_type not in {e.value for e in AuthType}:
-            add_error(row_number, "auth_type", f"认证类型无效: {auth_type}")
-        if device_group not in {e.value for e in DeviceGroup}:
-            add_error(row_number, "device_group", f"设备分组无效: {device_group}")
-        if status not in {e.value for e in DeviceStatus}:
-            add_error(row_number, "status", f"设备状态无效: {status}")
+        v = RowValidator(errors=errors, row_number=row_number, row=r)
+        v.not_blank("name", "设备名称不能为空")
+        v.not_blank("ip_address", "IP 地址不能为空")
+
+        ip = v.get_str("ip_address")
+        if ip:
+            if ip in ip_seen:
+                v.add(field="ip_address", message=f"导入文件中 IP 地址重复: {ip}", value=ip, type="infile_duplicate")
+            ip_seen.add(ip)
+            v.ip_address("ip_address", "IP 地址格式无效")
+            v.db_unique_conflict(
+                field="ip_address",
+                deleted_map=existing_ip_deleted_map,
+                allow_overwrite=allow_overwrite,
+                exists_message="IP 地址已存在: {value}",
+                deleted_message="IP 地址已存在（回收站）: {value}，请先恢复或选择覆盖导入",
+            )
+
+        v.one_of("vendor", {e.value for e in DeviceVendor}, "厂商无效")
+        v.one_of("auth_type", {e.value for e in AuthType}, "认证类型无效")
+        v.one_of("device_group", {e.value for e in DeviceGroup}, "设备分组无效")
+        v.one_of("status", {e.value for e in DeviceStatus}, "设备状态无效")
 
         dept_id: UUID | None = None
         if dept_code:
@@ -217,17 +217,12 @@ async def validate_devices(
                     credential_seed_pairs.add((dept_id, device_group))
 
         if auth_type == AuthType.STATIC.value:
-            username = _to_str(r.get("username"))
-            password = _to_str(r.get("password"))
-            if not username:
-                add_error(row_number, "username", "静态密码认证必须填写 username")
-            if not password:
-                add_error(row_number, "password", "静态密码认证必须填写 password")
+            v.require_fields(["username", "password"], "静态密码认证必须填写")
 
         normalized_rows.append(
             {
                 "row_number": row_number,
-                "name": name,
+                "name": _to_str(r.get("name")),
                 "ip_address": ip,
                 "vendor": vendor,
                 "model": _to_str(r.get("model")) or None,
@@ -300,9 +295,7 @@ async def persist_devices(
 
     async with db.begin():
         ip_set = {str(d["ip_address"]) for d in device_dicts}
-        existing_result = await db.execute(
-            select(Device).where(and_(Device.is_deleted.is_(False), Device.ip_address.in_(ip_set)))
-        )
+        existing_result = await db.execute(select(Device).where(Device.ip_address.in_(ip_set)))
         existing_by_ip = {d.ip_address: d for d in existing_result.scalars().all()}
 
         to_insert: list[dict[str, Any]] = []
@@ -333,7 +326,13 @@ async def persist_devices(
             if d.get("username"):
                 otp_username = str(d["username"]).strip() or None
 
-            if auth_type == AuthType.OTP_SEED.value and dept_id is not None and otp_seed and otp_username and d.get("device_group"):
+            if (
+                auth_type == AuthType.OTP_SEED.value
+                and dept_id is not None
+                and otp_seed
+                and otp_username
+                and d.get("device_group")
+            ):
                 credential_seed_items.append((dept_id, str(d.get("device_group")), otp_username, otp_seed))
 
             values: dict[str, Any] = {
@@ -361,6 +360,9 @@ async def persist_devices(
             existing = existing_by_ip.get(ip)
             if existing is not None:
                 if allow_overwrite:
+                    if existing.is_deleted:
+                        existing.is_deleted = False
+                        existing.is_active = True
                     to_update.append((existing, values))
                 else:
                     continue
@@ -543,4 +545,3 @@ def build_device_import_template(path: Path) -> None:
 
     ws.freeze_panes = "A2"
     wb.save(path)
-

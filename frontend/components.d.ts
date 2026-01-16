@@ -11,6 +11,7 @@ export {}
 /* prettier-ignore */
 declare module 'vue' {
   export interface GlobalComponents {
+    DataImportExport: typeof import('./src/components/common/DataImportExport.vue')['default']
     GlobalAlerts: typeof import('./src/components/common/GlobalAlerts.vue')['default']
     NAlert: typeof import('naive-ui')['NAlert']
     NButton: typeof import('naive-ui')['NButton']

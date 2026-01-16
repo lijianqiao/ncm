@@ -7,7 +7,15 @@
  */
 
 import { request } from '@/utils/request'
-import type { ResponseBase, PaginatedResponse } from '@/types/api'
+import type {
+  ResponseBase,
+  PaginatedResponse,
+  ImportValidateResponse,
+  ImportPreviewResponse, // Wait, this was not in api.d.ts, I missed it? Let me check.
+  ImportCommitRequest,
+  ImportCommitResponse,
+} from '@/types/api'
+
 import type {
   DeviceVendorType,
   DeviceStatusType,
@@ -119,49 +127,6 @@ export interface DeviceLifecycleStatsResponse {
   maintenance: number
   retired: number
   total: number
-}
-
-export interface ImportErrorItem {
-  row_number: number
-  field: string | null
-  message: string
-}
-
-export interface ImportValidateResponse {
-  import_id: string
-  checksum: string
-  total_rows: number
-  valid_rows: number
-  error_rows: number
-  errors: ImportErrorItem[]
-}
-
-export interface ImportPreviewRow {
-  row_number: number
-  data: Record<string, unknown>
-}
-
-export interface ImportPreviewResponse {
-  import_id: string
-  checksum: string
-  page: number
-  page_size: number
-  total_rows: number
-  rows: ImportPreviewRow[]
-}
-
-export interface ImportCommitRequest {
-  import_id: string
-  checksum: string
-  allow_overwrite?: boolean
-}
-
-export interface ImportCommitResponse {
-  import_id: string
-  checksum: string
-  status: string
-  imported_rows: number
-  created_at: string
 }
 
 // ==================== API 函数 ====================

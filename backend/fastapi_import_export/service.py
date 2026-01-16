@@ -28,6 +28,7 @@ FastAPI reuse. Python stdlib does not provide a built-in `UploadFile` type.
 
 import inspect
 import json
+import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime
@@ -41,6 +42,8 @@ from openpyxl import Workbook
 from openpyxl.worksheet.worksheet import Worksheet
 
 from fastapi_import_export.config import ImportExportConfig, resolve_config
+from fastapi_import_export.db_validation import DbCheckSpec, run_db_checks
+from fastapi_import_export.exceptions import ImportExportError
 from fastapi_import_export.parse import normalize_columns, parse_tabular_file
 from fastapi_import_export.schemas import (
     ImportCommitRequest,
@@ -56,9 +59,16 @@ from fastapi_import_export.storage import (
     new_import_id,
     now_ts,
     read_meta,
+    safe_rmtree,
     sha256_file,
     write_meta,
 )
+from fastapi_import_export.validation import collect_infile_duplicates
+
+try:
+    from sqlalchemy.exc import IntegrityError
+except Exception:  # pragma: no cover
+    IntegrityError = None  # type: ignore
 
 
 class RedisLike(Protocol):
@@ -180,6 +190,101 @@ async def _maybe_await(value: Any) -> Any:
     return value
 
 
+def _format_integrity_error(exc: Exception) -> tuple[str, dict[str, Any] | None]:
+    """Format an IntegrityError exception.
+
+    格式化 IntegrityError 异常。
+
+    Args:
+        exc: The IntegrityError exception instance.
+            IntegrityError 异常实例。
+
+    Returns:
+        A tuple of (user-friendly message, optional details dict).
+            包含用户友好消息和可选详细信息字典的元组。
+    """
+    orig = getattr(exc, "orig", None)
+    constraint = getattr(orig, "constraint_name", None) or getattr(orig, "constraint", None)
+    detail = getattr(orig, "detail", None)
+    msg = str(exc)
+    details: dict[str, Any] = {}
+    if constraint:
+        details["constraint"] = str(constraint)
+    if detail:
+        details["detail"] = str(detail)
+    if "duplicate key value violates unique constraint" in msg:
+        user_msg = "唯一约束冲突：导入数据与现有数据存在重复键（可能包含软删除记录）。"
+        if details:
+            return user_msg, details
+        return user_msg, None
+    user_msg = "数据库完整性错误：导入写入失败。"
+    return user_msg, details or None
+
+
+def _parse_pg_unique_detail(text: str) -> dict[str, Any] | None:
+    """Parse PostgreSQL unique constraint detail message.
+
+    解析 PostgreSQL 唯一约束详细错误信息。
+
+    Args:
+        text: The detail message text.
+            详细错误信息文本。
+
+    Returns:
+        A dict with "columns" and "values" keys, or None if not matched.
+            包含 "columns" 和 "values" 键的字典，或 None（未匹配）。
+    """
+    m = re.search(r"Key\s+\((?P<cols>[^)]+)\)=\((?P<vals>[^)]+)\)\s+already exists\.", text)
+    if not m:
+        return None
+    cols = [c.strip() for c in str(m.group("cols")).split(",") if c.strip()]
+    vals = [v.strip() for v in str(m.group("vals")).split(",") if v.strip()]
+    if len(cols) != len(vals):
+        return {"columns": cols, "values": vals}
+    return {"columns": cols, "values": vals}
+
+
+def _find_conflict_row_numbers(
+    df: pl.DataFrame, *, columns: list[str], values: list[str], limit: int = 50
+) -> list[int]:
+    """Find row numbers of rows with given column values.
+
+    查找给定列值的行号。
+
+    Args:
+        df: The DataFrame to search.
+            要搜索的 DataFrame。
+        columns: List of column names to match.
+            要匹配的列名列表。
+        values: List of values to match.
+            要匹配的值列表。
+        limit: Maximum number of row numbers to return.
+            返回的最大行号数量。
+
+    Returns:
+        A list of row numbers where the specified columns have the given values.
+            指定列值匹配的行号列表。
+    """
+    if df.is_empty():
+        return []
+    for c in columns:
+        if c not in df.columns:
+            return []
+
+    exprs: list[pl.Expr] = []
+    for c, v in zip(columns, values, strict=False):
+        exprs.append(pl.col(c).cast(pl.Utf8, strict=False) == v)
+    if not exprs:
+        return []
+    filt = exprs[0]
+    for e in exprs[1:]:
+        filt = filt & e
+    matched = df.filter(filt).select("row_number")
+    if matched.is_empty():
+        return []
+    return [int(x) for x in matched.get_column("row_number").to_list()[:limit]]
+
+
 class ImportExportService:
     """Domain-agnostic import/export service.
 
@@ -255,8 +360,8 @@ class ImportExportService:
         file_path = create_export_path(filename, config=self.config)
 
         if fmt == "csv":
-            df.write_csv(file_path)
-            return ExportResult(path=file_path, filename=filename, media_type="text/csv")
+            df.write_csv(file_path, include_bom=True, line_terminator="\r\n")
+            return ExportResult(path=file_path, filename=filename, media_type="text/csv; charset=utf-8")
 
         wb = Workbook()
         ws = wb.active
@@ -315,6 +420,8 @@ class ImportExportService:
         column_aliases: dict[str, str],
         validate_fn: ValidateFn,
         allow_overwrite: bool = False,
+        unique_fields: list[str] | None = None,
+        db_checks: list[DbCheckSpec] | None = None,
     ) -> ImportValidateResponse:
         """Upload, parse, normalize columns, then validate.
 
@@ -352,67 +459,79 @@ class ImportExportService:
         """
         import_id = new_import_id()
         paths = get_import_paths(import_id, config=self.config)
-        paths.root.mkdir(parents=True, exist_ok=True)
+        try:
+            paths.root.mkdir(parents=True, exist_ok=True)
 
-        filename = file.filename or "upload"
-        content_type = file.content_type
-        ext = Path(filename).suffix.lower()
-        original_path = paths.original.with_suffix(ext)
+            filename = file.filename or "upload"
+            content_type = file.content_type
+            ext = Path(filename).suffix.lower()
+            original_path = paths.original.with_suffix(ext)
 
-        size = 0
-        with original_path.open("wb") as out:
-            while True:
-                chunk = await file.read(1024 * 1024)
-                if not chunk:
-                    break
-                size += len(chunk)
-                if size > int(self.max_upload_mb) * 1024 * 1024:
-                    raise ValueError("上传文件过大")
-                out.write(chunk)
+            size = 0
+            with original_path.open("wb") as out:
+                while True:
+                    chunk = await file.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    size += len(chunk)
+                    if size > int(self.max_upload_mb) * 1024 * 1024:
+                        raise ImportExportError(message="上传文件过大")
+                    out.write(chunk)
 
-        checksum = sha256_file(original_path)
-        meta: dict[str, Any] = {
-            "import_id": str(import_id),
-            "filename": filename,
-            "content_type": content_type,
-            "checksum": checksum,
-            "size_bytes": size,
-            "created_at": now_ts(),
-            "status": "uploaded",
-        }
-        write_meta(paths, meta)
+            checksum = sha256_file(original_path)
+            meta: dict[str, Any] = {
+                "import_id": str(import_id),
+                "filename": filename,
+                "content_type": content_type,
+                "checksum": checksum,
+                "size_bytes": size,
+                "created_at": now_ts(),
+                "status": "uploaded",
+            }
+            write_meta(paths, meta)
 
-        parsed = parse_tabular_file(original_path, filename=filename)
-        df = normalize_columns(parsed.df, column_aliases)
-        df.write_parquet(paths.parsed_parquet)
+            parsed = parse_tabular_file(original_path, filename=filename)
+            df = normalize_columns(parsed.df, column_aliases)
+            df.write_parquet(paths.parsed_parquet)
 
-        valid_df, errors = await validate_fn(self.db, df, allow_overwrite=allow_overwrite)
-        paths.errors_json.write_text(json.dumps(errors, ensure_ascii=False, indent=2), encoding="utf-8")
-        if not valid_df.is_empty():
-            valid_df.write_parquet(paths.valid_parquet)
+            valid_df, errors = await validate_fn(self.db, df, allow_overwrite=allow_overwrite)
+            if db_checks:
+                errors.extend(await run_db_checks(db=self.db, df=df, specs=db_checks, allow_overwrite=allow_overwrite))
+            if unique_fields:
+                errors.extend(collect_infile_duplicates(df, unique_fields))
+                extra_error_rows = {int(e.get("row_number") or 0) for e in errors if int(e.get("row_number") or 0) > 0}
+                if not valid_df.is_empty() and extra_error_rows:
+                    if "row_number" in valid_df.columns:
+                        valid_df = valid_df.filter(~pl.col("row_number").is_in(list(extra_error_rows)))
+            paths.errors_json.write_text(json.dumps(errors, ensure_ascii=False, indent=2), encoding="utf-8")
+            if not valid_df.is_empty():
+                valid_df.write_parquet(paths.valid_parquet)
 
-        resp = ImportValidateResponse(
-            import_id=import_id,
-            checksum=checksum,
-            total_rows=int(parsed.total_rows),
-            valid_rows=int(valid_df.height) if not valid_df.is_empty() else 0,
-            error_rows=len({e["row_number"] for e in errors if int(e.get("row_number") or 0) > 0}) if errors else 0,
-            errors=[
-                ImportErrorItem(
-                    row_number=int(e.get("row_number") or 0),
-                    field=cast(str | None, e.get("field")),
-                    message=str(e.get("message") or ""),
-                )
-                for e in errors[:200]
-            ],
-        )
+            resp = ImportValidateResponse(
+                import_id=import_id,
+                checksum=checksum,
+                total_rows=int(parsed.total_rows),
+                valid_rows=int(valid_df.height) if not valid_df.is_empty() else 0,
+                error_rows=len({e["row_number"] for e in errors if int(e.get("row_number") or 0) > 0}) if errors else 0,
+                errors=[
+                    ImportErrorItem(
+                        row_number=int(e.get("row_number") or 0),
+                        field=cast(str | None, e.get("field")),
+                        message=str(e.get("message") or ""),
+                    )
+                    for e in errors[:200]
+                ],
+            )
 
-        meta["status"] = "validated"
-        meta["total_rows"] = resp.total_rows
-        meta["valid_rows"] = resp.valid_rows
-        meta["error_rows"] = resp.error_rows
-        write_meta(paths, meta)
-        return resp
+            meta["status"] = "validated"
+            meta["total_rows"] = resp.total_rows
+            meta["valid_rows"] = resp.valid_rows
+            meta["error_rows"] = resp.error_rows
+            write_meta(paths, meta)
+            return resp
+        except Exception:
+            safe_rmtree(paths.root)
+            raise
 
     async def preview(
         self,
@@ -444,9 +563,15 @@ class ImportExportService:
                 预览响应（包含 rows）。
         """
         paths = get_import_paths(import_id, config=self.config)
+        if page < 1:
+            raise ImportExportError(message="page 必须 >= 1")
+        if page_size < 1 or page_size > 500:
+            raise ImportExportError(message="page_size 必须在 1..500 之间")
+        if kind not in {"all", "valid"}:
+            raise ImportExportError(message="kind 必须为 all 或 valid")
         meta = read_meta(paths)
         if str(meta.get("checksum")) != checksum:
-            raise ValueError("checksum 不匹配")
+            raise ImportExportError(message="checksum 不匹配")
 
         parquet = paths.valid_parquet if kind == "valid" else paths.parsed_parquet
         if not parquet.exists():
@@ -510,9 +635,15 @@ class ImportExportService:
                 提交响应（包含 imported_rows）。
         """
         paths = get_import_paths(body.import_id, config=self.config)
+        if not str(body.checksum).strip():
+            raise ImportExportError(message="checksum 不能为空")
+        if not paths.meta.exists():
+            raise ImportExportError(message="import_id 不存在或已过期")
         meta = read_meta(paths)
         if str(meta.get("checksum")) != body.checksum:
-            raise ValueError("checksum 不匹配")
+            raise ImportExportError(message="checksum 不匹配")
+        if str(meta.get("status")) not in {"validated", "committed"}:
+            raise ImportExportError(message="导入状态非法，请先完成上传校验")
 
         if meta.get("status") == "committed":
             committed_at = int(meta.get("committed_at") or now_ts())
@@ -527,7 +658,7 @@ class ImportExportService:
         if paths.errors_json.exists():
             errors = json.loads(paths.errors_json.read_text(encoding="utf-8"))
             if errors:
-                raise ValueError("存在校验错误，整批不可导入")
+                raise ImportExportError(message="存在校验错误，整批不可导入", details=errors[:200])
 
         lock_key = f"{lock_namespace}:lock:{body.import_id}"
         lock_acquired = False
@@ -535,7 +666,7 @@ class ImportExportService:
             result = await _maybe_await(self.redis_client.set(lock_key, "1", ex=self.lock_ttl_seconds, nx=True))
             lock_acquired = bool(result)
             if not lock_acquired:
-                raise ValueError("导入正在执行，请稍后重试")
+                raise ImportExportError(message="导入正在执行，请稍后重试")
 
         valid_df = pl.read_parquet(paths.valid_parquet) if paths.valid_parquet.exists() else pl.DataFrame()
         rollback = getattr(self.db, "rollback", None)
@@ -545,23 +676,69 @@ class ImportExportService:
             except Exception:
                 pass
 
-        imported_rows = await persist_fn(self.db, valid_df, allow_overwrite=body.allow_overwrite)
+        try:
+            imported_rows = await persist_fn(self.db, valid_df, allow_overwrite=body.allow_overwrite)
+            meta["status"] = "committed"
+            meta["committed_at"] = now_ts()
+            meta["imported_rows"] = imported_rows
+            write_meta(paths, meta)
+            return ImportCommitResponse(
+                import_id=body.import_id,
+                checksum=body.checksum,
+                status="committed",
+                imported_rows=imported_rows,
+                created_at=datetime.fromtimestamp(int(meta.get("committed_at") or now_ts())),
+            )
+        except Exception as exc:
+            meta["status"] = "commit_failed"
+            meta["commit_failed_at"] = now_ts()
+            meta["commit_error"] = str(exc)
+            write_meta(paths, meta)
 
-        meta["status"] = "committed"
-        meta["committed_at"] = now_ts()
-        meta["imported_rows"] = imported_rows
-        write_meta(paths, meta)
+            if IntegrityError is not None and isinstance(exc, IntegrityError):
+                msg, details = _format_integrity_error(exc)
+                detail_text = ""
+                orig = getattr(exc, "orig", None)
+                if orig is not None:
+                    detail_text = str(getattr(orig, "detail", "") or "")
+                parsed = _parse_pg_unique_detail(detail_text) or _parse_pg_unique_detail(str(exc))
+                if parsed and "columns" in parsed and "values" in parsed:
+                    row_numbers = _find_conflict_row_numbers(
+                        valid_df, columns=parsed["columns"], values=parsed["values"]
+                    )
+                    payload = {"columns": parsed["columns"], "values": parsed["values"], "row_numbers": row_numbers}
+                    if details:
+                        payload.update(details)
+                    raise ImportExportError(
+                        message=f"唯一约束冲突：{', '.join(f'{c}={v}' for c, v in zip(parsed['columns'], parsed['values'], strict=False))} 已存在（可能包含软删除记录）。",
+                        details=payload,
+                    ) from exc
+                raise ImportExportError(message=msg, details=details) from exc
 
-        if self.redis_client is not None and lock_acquired:
-            try:
-                await _maybe_await(self.redis_client.delete(lock_key))
-            except Exception:
-                pass
-
-        return ImportCommitResponse(
-            import_id=body.import_id,
-            checksum=body.checksum,
-            status="committed",
-            imported_rows=imported_rows,
-            created_at=datetime.fromtimestamp(int(meta.get("committed_at") or now_ts())),
-        )
+            text = str(exc)
+            if "duplicate key value violates unique constraint" in text:
+                parsed = _parse_pg_unique_detail(text)
+                if parsed and "columns" in parsed and "values" in parsed:
+                    row_numbers = _find_conflict_row_numbers(
+                        valid_df, columns=parsed["columns"], values=parsed["values"]
+                    )
+                    return_details = {
+                        "columns": parsed["columns"],
+                        "values": parsed["values"],
+                        "row_numbers": row_numbers,
+                    }
+                    raise ImportExportError(
+                        message=f"唯一约束冲突：{', '.join(f'{c}={v}' for c, v in zip(parsed['columns'], parsed['values'], strict=False))} 已存在（可能包含软删除记录）。",
+                        details=return_details,
+                    ) from exc
+                raise ImportExportError(
+                    message="唯一约束冲突：导入数据与现有数据存在重复键（可能包含软删除记录）。",
+                    details={"error": text},
+                ) from exc
+            raise
+        finally:
+            if self.redis_client is not None and lock_acquired:
+                try:
+                    await _maybe_await(self.redis_client.delete(lock_key))
+                except Exception:
+                    pass

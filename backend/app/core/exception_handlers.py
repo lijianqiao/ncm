@@ -16,6 +16,7 @@ from pydantic import ValidationError
 
 from app.core.exceptions import CustomException
 from app.core.logger import logger
+from fastapi_import_export.exceptions import ImportExportError
 
 
 def _format_validation_errors(errors: Sequence[Any]) -> list[dict]:
@@ -119,11 +120,19 @@ async def generic_exception_handler(request: Request, exc: Exception):
     )
 
 
+async def import_export_exception_handler(request: Request, exc: ImportExportError):
+    return JSONResponse(
+        status_code=int(exc.status_code),
+        content={"error_code": int(exc.status_code), "message": exc.message, "details": exc.details},
+    )
+
+
 def register_exception_handlers(app: FastAPI) -> None:
     """
     注册所有全局异常处理器。
     """
     app.add_exception_handler(CustomException, custom_exception_handler)  # type: ignore
+    app.add_exception_handler(ImportExportError, import_export_exception_handler)  # type: ignore
     app.add_exception_handler(Exception, generic_exception_handler)  # 通用异常处理器（兜底）
     app.add_exception_handler(RequestValidationError, validation_exception_handler)  # type: ignore
     app.add_exception_handler(ValidationError, pydantic_validation_exception_handler)  # type: ignore

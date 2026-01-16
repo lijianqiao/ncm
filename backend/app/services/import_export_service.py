@@ -6,6 +6,7 @@
 @Docs: 导入导出服务
 """
 
+from typing import Any
 from uuid import UUID
 
 from fastapi import UploadFile
@@ -33,14 +34,30 @@ from app.import_export import (
 
 
 class ImportExportService:
-    def __init__(self, db: AsyncSession):
+    def __init__(
+        self,
+        db: AsyncSession,
+        *,
+        redis_client: Any | None = None,
+        base_dir: str | None = None,
+        max_upload_mb: int | None = None,
+        lock_ttl_seconds: int = 300,
+    ):
         self.db = db
+        resolved_base_dir = base_dir
+        if resolved_base_dir is None:
+            resolved_base_dir = (
+                str(settings.IMPORT_EXPORT_TMP_DIR) if str(settings.IMPORT_EXPORT_TMP_DIR or "").strip() else None
+            )
+
         self._svc = GenericImportExportService(
             db=db,
-            redis_client=cache_module.redis_client,
-            base_dir=str(settings.IMPORT_EXPORT_TMP_DIR) if str(settings.IMPORT_EXPORT_TMP_DIR or "").strip() else None,
-            max_upload_mb=int(settings.IMPORT_EXPORT_MAX_UPLOAD_MB),
-            lock_ttl_seconds=300,
+            redis_client=redis_client if redis_client is not None else cache_module.redis_client,
+            base_dir=resolved_base_dir,
+            max_upload_mb=int(max_upload_mb)
+            if max_upload_mb is not None
+            else int(settings.IMPORT_EXPORT_MAX_UPLOAD_MB),
+            lock_ttl_seconds=int(lock_ttl_seconds),
         )
 
     async def export_devices(self, *, fmt: str) -> ExportResult:

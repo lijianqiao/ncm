@@ -10,6 +10,8 @@ Examples:
 """
 
 from fastapi_import_export.config import ImportExportConfig, resolve_config
+from fastapi_import_export.db_validation import DbCheckFn, DbCheckSpec, run_db_checks
+from fastapi_import_export.exceptions import ImportExportError
 from fastapi_import_export.parse import ParsedTable, dataframe_to_preview_rows, normalize_columns, parse_tabular_file
 from fastapi_import_export.schemas import (
     ImportCommitRequest,
@@ -32,8 +34,15 @@ from fastapi_import_export.storage import (
     sha256_file,
     write_meta,
 )
+from fastapi_import_export.validation_core import ErrorCollector, RowContext
 
 __all__ = [
+    "ImportExportError",
+    "DbCheckFn",
+    "DbCheckSpec",
+    "run_db_checks",
+    "ErrorCollector",
+    "RowContext",
     "ImportExportConfig",
     "resolve_config",
     "ParsedTable",

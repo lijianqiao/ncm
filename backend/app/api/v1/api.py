@@ -66,6 +66,7 @@ def auto_include_routers() -> None:
     package_path = Path(endpoints.__file__).parent
 
     registered_count = 0
+    failed_modules: list[tuple[str, Exception]] = []
     for _, module_name, _ in pkgutil.iter_modules([str(package_path)]):
         full_module_name = f"{package_name}.{module_name}"
         try:
@@ -79,9 +80,13 @@ def auto_include_routers() -> None:
                 registered_count += 1
                 logger.debug(f"已注册路由 {prefix}")
         except Exception as e:
-            logger.error(f"加载路由失败 {full_module_name}: {e}")
+            logger.exception(f"加载路由失败 {full_module_name}")
+            failed_modules.append((full_module_name, e))
 
     logger.info(f"自动注册了 {registered_count} 个 API 路由")
+    if failed_modules:
+        failed = "\n".join(f"- {name}: {type(err).__name__}: {err}" for name, err in failed_modules)
+        raise RuntimeError(f"自动注册路由失败，禁止启动（共 {len(failed_modules)} 个模块加载失败）:\n{failed}")
 
 
 # 执行自动注册
