@@ -209,6 +209,10 @@ const responseSuccessInterceptor = (response: AxiosResponse): unknown => {
   removePendingRequest(response.config)
 
   const url = response.config?.url || ''
+  const responseType = response.config?.responseType
+  if (responseType === 'blob' || responseType === 'arraybuffer') {
+    return response
+  }
   if (url.includes('/auth/login')) {
     return response.data
   }

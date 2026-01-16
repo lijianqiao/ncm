@@ -177,6 +177,11 @@ class Settings(BaseSettings):
     # 注意：即便超过天数，也至少保留每台设备 1 条备份（优先保留最新成功备份）
     BACKUP_RETENTION_KEEP_DAYS: int = 30
 
+    # 导入导出（Import/Export）
+    IMPORT_EXPORT_TMP_DIR: str = ""  # 空表示使用系统临时目录下的 ncm 子目录
+    IMPORT_EXPORT_TTL_HOURS: int = 24  # 导入临时数据默认保留时长（小时）
+    IMPORT_EXPORT_MAX_UPLOAD_MB: int = 20  # 上传文件大小限制（MB）
+
     @computed_field
     @property
     def CELERY_BROKER_URL(self) -> RedisDsn:

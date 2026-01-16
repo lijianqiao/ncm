@@ -9,11 +9,20 @@
 from typing import Any
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
+from fastapi.responses import FileResponse
+from starlette.background import BackgroundTask
 
 from app.api import deps
 from app.core.enums import DeviceGroup, DeviceStatus, DeviceVendor
 from app.core.permissions import PermissionCode
+from app.import_export import (
+    ImportCommitRequest,
+    ImportCommitResponse,
+    ImportPreviewResponse,
+    ImportValidateResponse,
+    delete_export_file,
+)
 from app.schemas.common import PaginatedResponse, ResponseBase
 from app.schemas.device import (
     DeviceBatchCreate,
@@ -116,7 +125,7 @@ async def read_recycle_bin(
     )
 
 
-@router.get("/{device_id}", response_model=ResponseBase[DeviceResponse], summary="获取设备详情")
+@router.get("/{device_id:uuid}", response_model=ResponseBase[DeviceResponse], summary="获取设备详情")
 async def read_device(
     device_id: UUID,
     device_service: deps.DeviceServiceDep,
@@ -208,7 +217,7 @@ async def batch_delete_devices(
     )
 
 
-@router.put("/{device_id}", response_model=ResponseBase[DeviceResponse], summary="更新设备")
+@router.put("/{device_id:uuid}", response_model=ResponseBase[DeviceResponse], summary="更新设备")
 async def update_device(
     device_id: UUID,
     obj_in: DeviceUpdate,
@@ -231,7 +240,7 @@ async def update_device(
     return ResponseBase(data=DeviceResponse.model_validate(device), message="设备更新成功")
 
 
-@router.delete("/{device_id}", response_model=ResponseBase[DeviceResponse], summary="删除设备")
+@router.delete("/{device_id:uuid}", response_model=ResponseBase[DeviceResponse], summary="删除设备")
 async def delete_device(
     device_id: UUID,
     device_service: deps.DeviceServiceDep,
@@ -278,7 +287,7 @@ async def batch_restore_devices(
     )
 
 
-@router.post("/{device_id}/restore", response_model=ResponseBase[DeviceResponse], summary="恢复设备")
+@router.post("/{device_id:uuid}/restore", response_model=ResponseBase[DeviceResponse], summary="恢复设备")
 async def restore_device(
     device_id: UUID,
     device_service: deps.DeviceServiceDep,
@@ -299,7 +308,7 @@ async def restore_device(
     return ResponseBase(data=DeviceResponse.model_validate(device), message="设备恢复成功")
 
 
-@router.delete("/{device_id}/hard", response_model=ResponseBase[dict], summary="彻底删除设备")
+@router.delete("/{device_id:uuid}/hard", response_model=ResponseBase[dict], summary="彻底删除设备")
 async def hard_delete_device(
     device_id: UUID,
     device_service: deps.DeviceServiceDep,
@@ -348,7 +357,7 @@ async def batch_hard_delete_devices(
 
 
 @router.post(
-    "/{device_id}/status/transition",
+    "/{device_id:uuid}/status/transition",
     response_model=ResponseBase[DeviceResponse],
     summary="设备状态流转",
 )
@@ -445,3 +454,93 @@ async def lifecycle_stats(
     """
     data = await device_service.get_lifecycle_stats(dept_id=dept_id, vendor=vendor.value if vendor else None)
     return ResponseBase(data=DeviceLifecycleStatsResponse(**data))
+
+
+@router.get(
+    "/export",
+    response_class=FileResponse,
+    summary="导出设备列表",
+    dependencies=[Depends(deps.require_permissions([PermissionCode.DEVICE_EXPORT.value]))],
+)
+async def export_devices(
+    import_export_service: deps.ImportExportServiceDep,
+    fmt: str = Query(default="xlsx", pattern="^(xlsx|csv)$", description="导出格式：xlsx/csv"),
+) -> FileResponse:
+    result = await import_export_service.export_devices(fmt=fmt)
+    return FileResponse(
+        path=result.path,
+        filename=result.filename,
+        media_type=result.media_type,
+        background=BackgroundTask(delete_export_file, str(result.path)),
+    )
+
+
+@router.get(
+    "/import/template",
+    response_class=FileResponse,
+    summary="下载设备导入模板",
+    dependencies=[Depends(deps.require_permissions([PermissionCode.DEVICE_IMPORT.value]))],
+)
+async def download_device_import_template(
+    import_export_service: deps.ImportExportServiceDep,
+) -> FileResponse:
+    result = await import_export_service.build_device_import_template()
+    return FileResponse(
+        path=result.path,
+        filename=result.filename,
+        media_type=result.media_type,
+        background=BackgroundTask(delete_export_file, str(result.path)),
+    )
+
+
+@router.post(
+    "/import/upload",
+    response_model=ResponseBase[ImportValidateResponse],
+    summary="上传并解析校验设备导入文件",
+    dependencies=[Depends(deps.require_permissions([PermissionCode.DEVICE_IMPORT.value]))],
+)
+async def upload_parse_validate_device_import(
+    import_export_service: deps.ImportExportServiceDep,
+    file: UploadFile = File(...),
+    allow_overwrite: bool = Form(default=False),
+) -> ResponseBase[ImportValidateResponse]:
+    resp = await import_export_service.upload_parse_validate_device_import(file=file, allow_overwrite=allow_overwrite)
+    return ResponseBase(data=resp)
+
+
+@router.get(
+    "/import/preview",
+    response_model=ResponseBase[ImportPreviewResponse],
+    summary="预览导入数据",
+    dependencies=[Depends(deps.require_permissions([PermissionCode.DEVICE_IMPORT.value]))],
+)
+async def preview_device_import(
+    import_export_service: deps.ImportExportServiceDep,
+    import_id: UUID = Query(...),
+    checksum: str = Query(...),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=200),
+    kind: str = Query(default="all", pattern="^(all|valid)$"),
+) -> ResponseBase[ImportPreviewResponse]:
+    resp = await import_export_service.preview_device_import(
+        import_id=import_id,
+        checksum=checksum,
+        page=page,
+        page_size=page_size,
+        kind=kind,
+    )
+    return ResponseBase(data=resp)
+
+
+@router.post(
+    "/import/commit",
+    response_model=ResponseBase[ImportCommitResponse],
+    summary="确认导入设备（单事务）",
+    dependencies=[Depends(deps.require_permissions([PermissionCode.DEVICE_IMPORT.value]))],
+)
+async def commit_device_import(
+    body: ImportCommitRequest,
+    import_export_service: deps.ImportExportServiceDep,
+) -> ResponseBase[ImportCommitResponse]:
+    resp = await import_export_service.commit_device_import(body=body)
+    return ResponseBase(data=resp)

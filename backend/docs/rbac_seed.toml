@@ -845,6 +845,32 @@ permission = "device:stats:view"
 parent_key = "devices"
 
 [[menus]]
+key = "perm_device_import"
+title = "设备-导入"
+name = "PermDeviceImport"
+path = ""
+component = ""
+icon = "KeyOutline"
+sort = 1019
+type = "PERMISSION"
+is_hidden = true
+permission = "device:import"
+parent_key = "devices"
+
+[[menus]]
+key = "perm_device_export"
+title = "设备-导出"
+name = "PermDeviceExport"
+path = ""
+component = ""
+icon = "KeyOutline"
+sort = 1020
+type = "PERMISSION"
+is_hidden = true
+permission = "device:export"
+parent_key = "devices"
+
+[[menus]]
 key = "presets"
 title = "快捷操作"
 name = "PresetOps"

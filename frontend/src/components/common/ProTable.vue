@@ -70,6 +70,7 @@ const props = withDefaults(
     showAdd?: boolean
     showRecycleBin?: boolean
     showBatchDelete?: boolean
+    showExport?: boolean
     virtualScroll?: boolean
     maxHeight?: number
     disablePagination?: boolean
@@ -93,6 +94,7 @@ const props = withDefaults(
     showRecycleBin: false,
     disablePagination: false,
     showBatchDelete: false,
+    showExport: true,
     virtualScroll: false,
     maxHeight: 600,
     resizable: true,
@@ -692,7 +694,7 @@ defineExpose({
           </n-button>
 
           <!-- Export Button -->
-          <n-button secondary @click="handleExport" title="导出 CSV">
+          <n-button v-if="showExport" secondary @click="handleExport" title="导出 CSV">
             <template #icon>
               <n-icon>
                 <DownloadIcon />

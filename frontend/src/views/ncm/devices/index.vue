@@ -2,10 +2,16 @@
 import { ref, h, onMounted } from 'vue'
 import {
   NButton,
+  NIcon,
   NFormItem,
   NInput,
   NModal,
   NInputNumber,
+  NCheckbox,
+  NAlert,
+  NUpload,
+  NUploadDragger,
+  NSpace,
   useDialog,
   type DataTableColumns,
   NTag,
@@ -17,6 +23,11 @@ import {
   NGridItem,
   NForm,
 } from 'naive-ui'
+import {
+  AddOutline as AddIcon,
+  CloudUploadOutline as ImportIcon,
+  DownloadOutline as ExportIcon,
+} from '@vicons/ionicons5'
 import { $alert } from '@/utils/alert'
 import {
   getDevices,
@@ -32,9 +43,14 @@ import {
   transitionDeviceStatus,
   batchTransitionDeviceStatus,
   getDeviceLifecycleStats,
+  exportDevices,
+  downloadDeviceImportTemplate,
+  uploadDeviceImportFile,
+  commitDeviceImport,
   type Device,
   type DeviceSearchParams,
   type DeviceLifecycleStatsResponse,
+  type ImportValidateResponse,
 } from '@/api/devices'
 import {
   DeviceStatus,
@@ -66,6 +82,126 @@ defineOptions({
 
 const dialog = useDialog()
 const tableRef = ref()
+
+const exporting = ref(false)
+const showImportModal = ref(false)
+const importUploading = ref(false)
+const importCommitting = ref(false)
+const importFile = ref<File | null>(null)
+const importResult = ref<ImportValidateResponse | null>(null)
+const allowOverwrite = ref(false)
+
+const getFilenameFromContentDisposition = (value: string | null | undefined) => {
+  if (!value) return null
+  const utf8Match = value.match(/filename\*=UTF-8''([^;]+)/i)
+  if (utf8Match?.[1]) {
+    try {
+      return decodeURIComponent(utf8Match[1])
+    } catch {
+      return utf8Match[1]
+    }
+  }
+  const match = value.match(/filename="?([^"]+)"?/i)
+  return match?.[1] || null
+}
+
+const downloadBlob = (blob: Blob, filename: string) => {
+  const url = window.URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  window.URL.revokeObjectURL(url)
+}
+
+const handleExportCsv = async () => {
+  exporting.value = true
+  try {
+    const res = await exportDevices('csv')
+    const cd = res.headers?.['content-disposition'] as string | undefined
+    const filename = getFilenameFromContentDisposition(cd) || 'devices.csv'
+    downloadBlob(res.data, filename)
+    $alert.success('导出已开始')
+  } catch {
+    // Error handled
+  } finally {
+    exporting.value = false
+  }
+}
+
+const handleDownloadImportTemplate = async () => {
+  try {
+    const res = await downloadDeviceImportTemplate()
+    const cd = res.headers?.['content-disposition'] as string | undefined
+    const filename = getFilenameFromContentDisposition(cd) || 'device_import_template.xlsx'
+    downloadBlob(res.data, filename)
+  } catch {
+    // Error handled
+  }
+}
+
+const resetImportState = () => {
+  importFile.value = null
+  importResult.value = null
+  allowOverwrite.value = false
+}
+
+const handleOpenImport = () => {
+  resetImportState()
+  showImportModal.value = true
+}
+
+const handleImportFileChange = (options: { file: { file?: File | null } }) => {
+  importFile.value = options.file.file || null
+  importResult.value = null
+}
+
+const handleUploadAndValidate = async () => {
+  if (!importFile.value) {
+    $alert.warning('请选择要导入的文件')
+    return
+  }
+  importUploading.value = true
+  try {
+    const res = await uploadDeviceImportFile(importFile.value, allowOverwrite.value)
+    importResult.value = res.data
+    if (importResult.value.error_rows > 0) {
+      $alert.warning('存在校验错误，整批不可导入')
+    } else {
+      $alert.success('校验通过，可确认导入')
+    }
+  } catch {
+    // Error handled
+  } finally {
+    importUploading.value = false
+  }
+}
+
+const handleCommitImport = async () => {
+  if (!importResult.value) return
+  if (importResult.value.error_rows > 0) {
+    $alert.warning('存在校验错误，无法导入')
+    return
+  }
+  importCommitting.value = true
+  try {
+    await commitDeviceImport({
+      import_id: importResult.value.import_id,
+      checksum: importResult.value.checksum,
+      allow_overwrite: allowOverwrite.value,
+    })
+    $alert.success('导入成功')
+    showImportModal.value = false
+    tableRef.value?.reload()
+    fetchLifecycleStats()
+  } catch {
+    // Error handled
+  } finally {
+    importCommitting.value = false
+  }
+}
 
 // ==================== 常量定义（使用统一枚举） ====================
 
@@ -550,10 +686,34 @@ const handleRecycleBin = () => {
     <!-- 设备列表 -->
     <ProTable ref="tableRef" title="设备列表" :columns="columns" :request="loadData" :row-key="(row: Device) => row.id"
       :context-menu-options="contextMenuOptions" search-placeholder="搜索设备名称/IP/序列号" :search-filters="searchFilters"
-      @add="handleCreate" @batch-delete="handleBatchDelete" @context-menu-select="handleContextMenuSelect"
-      @recycle-bin="handleRecycleBin" show-add show-batch-delete show-recycle-bin>
+      @batch-delete="handleBatchDelete" @context-menu-select="handleContextMenuSelect" @recycle-bin="handleRecycleBin"
+      show-batch-delete show-recycle-bin :show-export="false">
       <template #toolbar-left>
         <n-button type="info" @click="handleBatchTransition"> 批量状态流转 </n-button>
+      </template>
+      <template #toolbar>
+        <n-button type="primary" @click="handleCreate">
+          <template #icon>
+            <n-icon>
+              <AddIcon />
+            </n-icon>
+          </template>
+          新建
+        </n-button>
+        <n-button circle secondary title="导出 CSV" :loading="exporting" :disabled="exporting" @click="handleExportCsv">
+          <template #icon>
+            <n-icon>
+              <ExportIcon />
+            </n-icon>
+          </template>
+        </n-button>
+        <n-button circle type="primary" secondary title="导入" @click="handleOpenImport">
+          <template #icon>
+            <n-icon>
+              <ImportIcon />
+            </n-icon>
+          </template>
+        </n-button>
       </template>
     </ProTable>
 
@@ -701,6 +861,55 @@ const handleRecycleBin = () => {
       <template #action>
         <n-button @click="showBatchTransitionModal = false">取消</n-button>
         <n-button type="primary" @click="submitBatchTransition">确认</n-button>
+      </template>
+    </n-modal>
+
+    <!-- 导入 Modal -->
+    <n-modal v-model:show="showImportModal" preset="dialog" title="导入设备" style="width: 720px"
+      @after-leave="resetImportState">
+      <n-space vertical>
+        <n-alert type="info" title="导入流程" :bordered="false">
+          上传文件后会进行全量校验；只要有一行错误，整批不会导入。
+        </n-alert>
+
+        <n-upload :default-upload="false" :max="1" accept=".csv,.xlsx,.xlsm,.xls" @change="handleImportFileChange">
+          <n-upload-dragger>
+            <div style="padding: 12px 0">点击或拖拽上传 CSV / Excel</div>
+          </n-upload-dragger>
+        </n-upload>
+
+        <n-space justify="space-between">
+          <n-button tertiary @click="handleDownloadImportTemplate">下载模板</n-button>
+          <n-space>
+            <n-checkbox v-model:checked="allowOverwrite">允许覆盖（按 IP）</n-checkbox>
+            <n-button type="primary" :loading="importUploading" :disabled="importUploading"
+              @click="handleUploadAndValidate">
+              上传并校验
+            </n-button>
+          </n-space>
+        </n-space>
+
+        <n-alert v-if="importResult" :type="importResult.error_rows > 0 ? 'warning' : 'success'" :bordered="false">
+          总行数：{{ importResult.total_rows }}；可导入：{{ importResult.valid_rows }}；错误行：{{
+            importResult.error_rows
+          }}
+        </n-alert>
+
+        <div v-if="importResult?.errors?.length">
+          <n-alert type="warning" :bordered="false" title="错误明细（最多展示前 200 条）">
+            <div v-for="(e, idx) in importResult.errors" :key="idx">
+              第 {{ e.row_number }} 行：{{ e.field ? e.field + ' - ' : '' }}{{ e.message }}
+            </div>
+          </n-alert>
+        </div>
+      </n-space>
+
+      <template #action>
+        <n-button @click="showImportModal = false">取消</n-button>
+        <n-button type="primary" :loading="importCommitting" :disabled="!importResult || importResult.error_rows > 0 || importUploading || importCommitting
+          " @click="handleCommitImport">
+          确认导入
+        </n-button>
       </template>
     </n-modal>
   </div>

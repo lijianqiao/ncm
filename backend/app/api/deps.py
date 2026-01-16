@@ -86,6 +86,7 @@ from app.services.dept_service import DeptService
 from app.services.device_service import DeviceService
 from app.services.diff_service import DiffService
 from app.services.discovery_service import DiscoveryService
+from app.services.import_export_service import ImportExportService
 from app.services.inventory_audit_service import InventoryAuditService
 from app.services.log_service import LogService
 from app.services.menu_service import MenuService
@@ -529,6 +530,10 @@ def get_discovery_service(db: SessionDep, discovery_crud: DiscoveryCRUDDep) -> D
     return DiscoveryService(db, discovery_crud)
 
 
+def get_import_export_service(db: SessionDep) -> ImportExportService:
+    return ImportExportService(db)
+
+
 AlertServiceDep = Annotated[AlertService, Depends(get_alert_service)]
 AuthServiceDep = Annotated[AuthService, Depends(get_auth_service)]
 BackupServiceDep = Annotated[BackupService, Depends(get_backup_service)]
@@ -552,3 +557,4 @@ SessionServiceDep = Annotated[SessionService, Depends(get_session_service)]
 TemplateServiceDep = Annotated[TemplateService, Depends(get_template_service)]
 TopologyServiceDep = Annotated[TopologyService, Depends(get_topology_service)]
 UserServiceDep = Annotated[UserService, Depends(get_user_service)]
+ImportExportServiceDep = Annotated[ImportExportService, Depends(get_import_export_service)]

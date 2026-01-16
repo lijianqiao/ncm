@@ -25,6 +25,7 @@ dependencies = [
     "orjson>=3.11.5",
     "pandas>=2.3.3",
     "phonenumbers>=9.0.21",
+    "polars>=1.37.1",
     "prometheus-client>=0.23.1",
     "pwdlib[argon2,bcrypt]>=0.3.0",
     "pydantic-settings>=2.12.0",

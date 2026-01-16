@@ -14,6 +14,7 @@ import type {
   DeviceGroupType,
   AuthTypeType,
 } from '@/types/enums'
+import type { AxiosResponse } from 'axios'
 
 // ==================== 类型重导出（兼容现有代码） ====================
 
@@ -120,6 +121,49 @@ export interface DeviceLifecycleStatsResponse {
   total: number
 }
 
+export interface ImportErrorItem {
+  row_number: number
+  field: string | null
+  message: string
+}
+
+export interface ImportValidateResponse {
+  import_id: string
+  checksum: string
+  total_rows: number
+  valid_rows: number
+  error_rows: number
+  errors: ImportErrorItem[]
+}
+
+export interface ImportPreviewRow {
+  row_number: number
+  data: Record<string, unknown>
+}
+
+export interface ImportPreviewResponse {
+  import_id: string
+  checksum: string
+  page: number
+  page_size: number
+  total_rows: number
+  rows: ImportPreviewRow[]
+}
+
+export interface ImportCommitRequest {
+  import_id: string
+  checksum: string
+  allow_overwrite?: boolean
+}
+
+export interface ImportCommitResponse {
+  import_id: string
+  checksum: string
+  status: string
+  imported_rows: number
+  created_at: string
+}
+
 // ==================== API 函数 ====================
 
 /** 获取设备列表 */
@@ -215,6 +259,57 @@ export function transitionDeviceStatus(id: string, toStatus: DeviceStatus, reaso
     url: `/devices/${id}/status/transition`,
     method: 'post',
     data: { to_status: toStatus, reason },
+  })
+}
+
+export function exportDevices(fmt: 'csv' | 'xlsx' = 'csv') {
+  return request<AxiosResponse<Blob>>({
+    url: '/devices/export',
+    method: 'get',
+    params: { fmt },
+    responseType: 'blob',
+  })
+}
+
+export function downloadDeviceImportTemplate() {
+  return request<AxiosResponse<Blob>>({
+    url: '/devices/import/template',
+    method: 'get',
+    responseType: 'blob',
+  })
+}
+
+export function uploadDeviceImportFile(file: File, allowOverwrite = false) {
+  const formData = new FormData()
+  formData.append('file', file)
+  formData.append('allow_overwrite', allowOverwrite ? 'true' : 'false')
+  return request<ResponseBase<ImportValidateResponse>>({
+    url: '/devices/import/upload',
+    method: 'post',
+    data: formData,
+    headers: { 'Content-Type': 'multipart/form-data' },
+  })
+}
+
+export function previewDeviceImport(params: {
+  import_id: string
+  checksum: string
+  page?: number
+  page_size?: number
+  kind?: 'all' | 'valid'
+}) {
+  return request<ResponseBase<ImportPreviewResponse>>({
+    url: '/devices/import/preview',
+    method: 'get',
+    params,
+  })
+}
+
+export function commitDeviceImport(data: ImportCommitRequest) {
+  return request<ResponseBase<ImportCommitResponse>>({
+    url: '/devices/import/commit',
+    method: 'post',
+    data,
   })
 }
 

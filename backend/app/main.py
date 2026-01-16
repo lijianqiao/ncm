@@ -24,6 +24,7 @@ from app.core.metrics import metrics_endpoint
 from app.core.middleware import RequestLogMiddleware
 from app.core.permissions import validate_no_magic_permission_strings
 from app.core.rate_limiter import limiter
+from app.import_export import cleanup_expired_imports
 from app.subscribers.log_subscriber import register_log_subscribers
 
 
@@ -40,6 +41,17 @@ async def lifespan(app: FastAPI):
 
     # 启动期校验：禁止权限码魔法字符串
     validate_no_magic_permission_strings()
+
+    # 清理过期导入临时目录
+    try:
+        cleaned = cleanup_expired_imports(
+            ttl_hours=settings.IMPORT_EXPORT_TTL_HOURS,
+            base_dir=str(settings.IMPORT_EXPORT_TMP_DIR) if str(settings.IMPORT_EXPORT_TMP_DIR or "").strip() else None,
+        )
+        if cleaned:
+            logger.info(f"清理过期导入临时目录: {cleaned} 个")
+    except Exception as e:
+        logger.warning(f"清理导入临时目录失败: {e}")
 
     # 注册事件订阅者
     register_log_subscribers()

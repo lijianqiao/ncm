@@ -67,6 +67,8 @@ class PermissionCode(str, Enum):
     DEVICE_RESTORE = "device:restore"
     DEVICE_STATUS_TRANSITION = "device:status:transition"
     DEVICE_STATS_VIEW = "device:stats:view"
+    DEVICE_IMPORT = "device:import"
+    DEVICE_EXPORT = "device:export"
 
     # NCM 预设模板权限
     PRESET_LIST = "preset:list"
@@ -200,6 +202,8 @@ PERMISSION_DEFS: tuple[PermissionDef, ...] = (
     PermissionDef(PermissionCode.DEVICE_RESTORE, "设备-恢复"),
     PermissionDef(PermissionCode.DEVICE_STATUS_TRANSITION, "设备-状态流转", "设备生命周期状态流转"),
     PermissionDef(PermissionCode.DEVICE_STATS_VIEW, "设备-统计-查看", "设备生命周期统计"),
+    PermissionDef(PermissionCode.DEVICE_IMPORT, "设备-导入", "导入设备数据"),
+    PermissionDef(PermissionCode.DEVICE_EXPORT, "设备-导出", "导出设备数据"),
     # NCM 预设模板权限
     PermissionDef(PermissionCode.PRESET_LIST, "预设模板-列表"),
     PermissionDef(PermissionCode.PRESET_CREATE, "预设模板-创建"),
