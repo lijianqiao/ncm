@@ -187,12 +187,14 @@ async def list_discoveries(
     """获取通过网络扫描发现的所有设备记录。
 
     Args:
-        db (Session): 数据库会话。
+        service (DiscoveryService): 发现服务依赖。
         page (int): 当前页码。
         page_size (int): 每页限制。
         status (DiscoveryStatus | None): 状态过滤（如：NEW, IGNORED, MATCHED）。
         keyword (str | None): 匹配 IP、MAC、主机名的搜索关键词。
         scan_source (str | None): 识别扫描的具体来源标识。
+        sort_by (str | None): 排序字段。
+        sort_order (str | None): 排序方向。
 
     Returns:
         ResponseBase[PaginatedResponse[DiscoveryResponse]]: 包含发现资产详情的分页响应。
@@ -268,8 +270,8 @@ async def get_discovery(
     """获取单个扫描发现记录的完整属性。
 
     Args:
-        db (Session): 数据库会话。
         discovery_id (UUID): 扫描结果主键 ID。
+        service (DiscoveryService): 发现服务依赖。
 
     Returns:
         ResponseBase[DiscoveryResponse]: 发现资产及 CMDB 匹配关联信息。
@@ -323,9 +325,9 @@ async def delete_discovery(
     """物理删除或隐藏特定的扫描发现结果。
 
     Args:
-        db (Session): 数据库会话。
         discovery_id (UUID): 扫描记录 ID。
         current_user (CurrentUser): 当前执行操作的用户。
+        service (DiscoveryService): 发现服务依赖。
 
     Returns:
         ResponseBase[DeleteResponse]: 确认删除的消息。
@@ -353,6 +355,23 @@ async def list_discoveries_recycle_bin(
     sort_by: str | None = Query(None, description="排序字段"),
     sort_order: str | None = Query(None, description="排序方向 (asc/desc)"),
 ) -> ResponseBase[PaginatedResponse[DiscoveryResponse]]:
+    """获取已删除的发现记录列表（回收站）。
+
+    仅限超级管理员访问。
+
+    Args:
+        service (DiscoveryService): 发现服务依赖。
+        page (int): 页码。
+        page_size (int): 每页数量。
+        status (DiscoveryStatus | None): 状态筛选。
+        keyword (str | None): 关键词搜索。
+        scan_source (str | None): 扫描来源筛选。
+        sort_by (str | None): 排序字段。
+        sort_order (str | None): 排序方向。
+
+    Returns:
+        ResponseBase[PaginatedResponse[DiscoveryResponse]]: 回收站中的发现记录列表。
+    """
     items, total = await service.get_deleted_discoveries_paginated(
         page=page,
         page_size=page_size,
@@ -418,6 +437,16 @@ async def batch_delete_discoveries(
     service: DiscoveryServiceDep,
     current_user: CurrentUser,
 ) -> ResponseBase[BatchOperationResult]:
+    """批量删除发现记录（软删除）。
+
+    Args:
+        request (BatchDeleteRequest): 批量删除请求体。
+        service (DiscoveryService): 发现服务依赖。
+        current_user (CurrentUser): 当前操作用户。
+
+    Returns:
+        ResponseBase[BatchOperationResult]: 批量操作结果。
+    """
     success_count, failed_ids = await service.batch_delete_discoveries(ids=request.ids)
     return ResponseBase(
         data=BatchOperationResult(
@@ -441,6 +470,17 @@ async def batch_restore_discoveries(
     request: BatchRestoreRequest,
     service: DiscoveryServiceDep,
 ) -> ResponseBase[BatchOperationResult]:
+    """批量恢复发现记录。
+
+    仅限超级管理员访问。
+
+    Args:
+        request (BatchRestoreRequest): 批量恢复请求体。
+        service (DiscoveryService): 发现服务依赖。
+
+    Returns:
+        ResponseBase[BatchOperationResult]: 批量恢复结果。
+    """
     success_count, failed_ids = await service.batch_restore_discoveries(ids=request.ids)
     return ResponseBase(
         data=BatchOperationResult(
@@ -464,6 +504,17 @@ async def restore_discovery(
     discovery_id: UUID,
     service: DiscoveryServiceDep,
 ) -> ResponseBase[DiscoveryResponse]:
+    """恢复已删除的发现记录。
+
+    仅限超级管理员访问。
+
+    Args:
+        discovery_id (UUID): 发现记录 ID。
+        service (DiscoveryService): 发现服务依赖。
+
+    Returns:
+        ResponseBase[DiscoveryResponse]: 恢复后的发现记录详情。
+    """
     item = await service.restore_discovery(discovery_id=discovery_id)
     response = DiscoveryResponse(
         id=item.id,
@@ -509,6 +560,17 @@ async def hard_delete_discovery(
     discovery_id: UUID,
     service: DiscoveryServiceDep,
 ) -> ResponseBase[dict]:
+    """彻底删除发现记录（硬删除，不可恢复）。
+
+    仅限超级管理员访问。
+
+    Args:
+        discovery_id (UUID): 发现记录 ID。
+        service (DiscoveryService): 发现服务依赖。
+
+    Returns:
+        ResponseBase[dict]: 删除结果。
+    """
     await service.hard_delete_discovery(discovery_id=discovery_id)
     return ResponseBase(data={"message": "发现记录已彻底删除"}, message="发现记录已彻底删除")
 
@@ -526,6 +588,17 @@ async def batch_hard_delete_discoveries(
     request: BatchDeleteRequest,
     service: DiscoveryServiceDep,
 ) -> ResponseBase[BatchOperationResult]:
+    """批量彻底删除发现记录（硬删除，不可恢复）。
+
+    仅限超级管理员访问。
+
+    Args:
+        request (BatchDeleteRequest): 批量删除请求体。
+        service (DiscoveryService): 发现服务依赖。
+
+    Returns:
+        ResponseBase[BatchOperationResult]: 批量删除结果。
+    """
     success_count, failed_ids = await service.batch_hard_delete_discoveries(ids=request.ids)
     return ResponseBase(
         data=BatchOperationResult(
@@ -560,8 +633,8 @@ async def adopt_device(
         db (Session): 数据库会话。
         discovery_id (UUID): 发现记录关联 ID。
         request (AdoptDeviceRequest): 纳管配置，包含名称、分组、凭据等。
-        scan_service (ScanService): 扫描资产服务。
         current_user (CurrentUser): 当前操作人。
+        scan_service (ScanService): 扫描资产服务。
 
     Returns:
         ResponseBase[AdoptResponse]: 包含新设备 ID 的确认响应。
@@ -739,6 +812,16 @@ async def export_discovery(
     current_user: CurrentUser,
     fmt: str = Query("csv", pattern="^(csv|xlsx)$", description="导出格式"),
 ) -> FileResponse:
+    """导出发现记录为 CSV/XLSX 文件。
+
+    Args:
+        db (Session): 数据库会话。
+        current_user (CurrentUser): 当前登录用户。
+        fmt (str): 导出格式，csv 或 xlsx。
+
+    Returns:
+        FileResponse: 文件下载响应，后台自动清理临时文件。
+    """
     svc = ImportExportService(db=db, redis_client=None, base_dir=str(settings.IMPORT_EXPORT_TMP_DIR or "") or None)
     result = await svc.export_table(fmt=fmt, filename_prefix="discovery", df_fn=export_discovery_df)
     return FileResponse(

@@ -37,6 +37,7 @@ import {
   exportDevices,
   downloadDeviceImportTemplate,
   uploadDeviceImportFile,
+  previewDeviceImport,
   commitDeviceImport,
   type Device,
   type DeviceSearchParams,
@@ -574,7 +575,7 @@ const handleRecycleBin = () => {
         <DataImportExport title="设备" show-import show-export export-name="devices_export.csv"
           template-name="device_import_template.xlsx" :export-api="exportDevices"
           :import-template-api="downloadDeviceImportTemplate" :import-validate-api="uploadDeviceImportFile"
-          :import-commit-api="commitDeviceImport" @success="
+          :import-preview-api="previewDeviceImport" :import-commit-api="commitDeviceImport" @success="
             () => {
               tableRef?.reload()
               fetchLifecycleStats()

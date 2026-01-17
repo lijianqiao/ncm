@@ -21,11 +21,13 @@ import {
   getOnlineSessions,
   kickUser,
   batchKickUsers,
+  exportSessions,
   type OnlineSession,
   type SessionSearchParams,
 } from '@/api/sessions'
 import { formatDateTime } from '@/utils/date'
 import ProTable from '@/components/common/ProTable.vue'
+import DataImportExport from '@/components/common/DataImportExport.vue'
 
 defineOptions({
   name: 'OnlineSessions',
@@ -153,19 +155,13 @@ const loadData = async (params: SessionSearchParams) => {
 
 <template>
   <div class="online-sessions p-4">
-    <ProTable
-      ref="tableRef"
-      title="在线会话"
-      :columns="columns"
-      :request="loadData"
-      :row-key="(row) => row.user_id"
-      :context-menu-options="contextMenuOptions"
-      search-placeholder="搜索用户名/IP"
-      :scroll-x="1200"
-      show-batch-delete
-      @context-menu-select="handleContextMenuSelect"
-      @batch-delete="handleBatchKick"
-    />
+    <ProTable ref="tableRef" title="在线会话" :columns="columns" :request="loadData" :row-key="(row) => row.user_id"
+      :context-menu-options="contextMenuOptions" search-placeholder="搜索用户名/IP" :scroll-x="1200" show-batch-delete
+      @context-menu-select="handleContextMenuSelect" @batch-delete="handleBatchKick">
+      <template #toolbar>
+        <DataImportExport title="会话" show-export export-name="sessions_export.csv" :export-api="exportSessions" />
+      </template>
+    </ProTable>
   </div>
 </template>
 

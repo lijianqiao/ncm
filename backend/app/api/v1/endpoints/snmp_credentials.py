@@ -62,6 +62,18 @@ async def read_snmp_credentials(
     page_size: int = Query(20, ge=1, le=500, description="每页数量"),
     dept_id: UUID | None = Query(None, description="部门筛选"),
 ) -> ResponseBase[PaginatedResponse[DeptSnmpCredentialResponse]]:
+    """获取部门 SNMP 凭据列表。
+
+    Args:
+        db (Session): 数据库会话。
+        current_user (User): 当前登录用户。
+        page (int): 页码。
+        page_size (int): 每页数量。
+        dept_id (UUID | None): 部门 ID 筛选。
+
+    Returns:
+        ResponseBase[PaginatedResponse[DeptSnmpCredentialResponse]]: 分页后的凭据列表。
+    """
     service = _get_service(db)
     records, total = await service.get_multi_paginated(page=page, page_size=page_size, dept_id=dept_id)
     items = [await service.to_response(r) for r in records]
@@ -79,6 +91,16 @@ async def create_snmp_credential(
     current_user: deps.CurrentUser,
     _: deps.User = Depends(deps.require_permissions([PermissionCode.SNMP_CRED_CREATE.value])),
 ) -> ResponseBase[DeptSnmpCredentialResponse]:
+    """创建新的部门 SNMP 凭据。
+
+    Args:
+        db (Session): 数据库会话。
+        request (DeptSnmpCredentialCreate): 创建请求体。
+        current_user (User): 当前登录用户。
+
+    Returns:
+        ResponseBase[DeptSnmpCredentialResponse]: 创建成功的凭据信息。
+    """
     service = _get_service(db)
     resp = await service.create(data=request)
     await db.commit()
@@ -97,6 +119,17 @@ async def update_snmp_credential(
     current_user: deps.CurrentUser,
     _: deps.User = Depends(deps.require_permissions([PermissionCode.SNMP_CRED_UPDATE.value])),
 ) -> ResponseBase[DeptSnmpCredentialResponse]:
+    """更新部门 SNMP 凭据。
+
+    Args:
+        db (Session): 数据库会话。
+        snmp_cred_id (UUID): 凭据 ID。
+        request (DeptSnmpCredentialUpdate): 更新请求体。
+        current_user (User): 当前登录用户。
+
+    Returns:
+        ResponseBase[DeptSnmpCredentialResponse]: 更新后的凭据信息。
+    """
     service = _get_service(db)
     resp = await service.update(snmp_cred_id=snmp_cred_id, data=request)
     await db.commit()
@@ -114,6 +147,16 @@ async def delete_snmp_credential(
     current_user: deps.CurrentUser,
     _: deps.User = Depends(deps.require_permissions([PermissionCode.SNMP_CRED_DELETE.value])),
 ) -> ResponseBase[dict]:
+    """删除部门 SNMP 凭据（软删除）。
+
+    Args:
+        db (Session): 数据库会话。
+        snmp_cred_id (UUID): 凭据 ID。
+        current_user (User): 当前登录用户。
+
+    Returns:
+        ResponseBase[dict]: 删除结果。
+    """
     service = _get_service(db)
     await service.delete(snmp_cred_id=snmp_cred_id)
     await db.commit()
@@ -131,7 +174,16 @@ async def batch_delete_snmp_credentials(
     current_user: deps.CurrentUser,
     _: deps.User = Depends(deps.require_permissions([PermissionCode.SNMP_CRED_DELETE.value])),
 ) -> Any:
-    """批量删除 SNMP 凭据（软删除）。"""
+    """批量删除 SNMP 凭据（软删除）。
+
+    Args:
+        db (Session): 数据库会话。
+        request (SnmpCredentialBatchRequest): 批量删除请求体。
+        current_user (User): 当前登录用户。
+
+    Returns:
+        ResponseBase[SnmpCredentialBatchResult]: 批量删除结果。
+    """
     service = _get_service(db)
     success_count, failed_ids = await service.batch_delete(request.ids)
     await db.commit()
@@ -158,7 +210,18 @@ async def read_recycle_bin_snmp_credentials(
     page_size: int = Query(20, ge=1, le=500, description="每页数量"),
     keyword: str | None = Query(None, description="关键字搜索"),
 ) -> ResponseBase[PaginatedResponse[DeptSnmpCredentialResponse]]:
-    """获取回收站 SNMP 凭据列表（已删除的凭据）。"""
+    """获取回收站 SNMP 凭据列表（已删除的凭据）。
+
+    Args:
+        db (Session): 数据库会话。
+        current_user (User): 当前登录用户。
+        page (int): 页码。
+        page_size (int): 每页数量。
+        keyword (str | None): 关键字搜索。
+
+    Returns:
+        ResponseBase[PaginatedResponse[DeptSnmpCredentialResponse]]: 回收站中的凭据列表。
+    """
     service = _get_service(db)
     records, total = await service.get_recycle_bin_paginated(
         page=page,
@@ -187,7 +250,16 @@ async def restore_snmp_credential(
     current_user: deps.CurrentUser,
     _: deps.User = Depends(deps.require_permissions([PermissionCode.SNMP_CRED_DELETE.value])),
 ) -> Any:
-    """恢复已删除的 SNMP 凭据。"""
+    """恢复已删除的 SNMP 凭据。
+
+    Args:
+        db (Session): 数据库会话。
+        snmp_cred_id (UUID): 凭据 ID。
+        current_user (User): 当前登录用户。
+
+    Returns:
+        ResponseBase[DeptSnmpCredentialResponse]: 恢复后的凭据信息。
+    """
     service = _get_service(db)
     obj = await service.restore(snmp_cred_id)
     await db.commit()
@@ -208,7 +280,16 @@ async def batch_restore_snmp_credentials(
     current_user: deps.CurrentUser,
     _: deps.User = Depends(deps.require_permissions([PermissionCode.SNMP_CRED_DELETE.value])),
 ) -> Any:
-    """批量恢复已删除的 SNMP 凭据。"""
+    """批量恢复已删除的 SNMP 凭据。
+
+    Args:
+        db (Session): 数据库会话。
+        request (SnmpCredentialBatchRequest): 批量恢复请求体。
+        current_user (User): 当前登录用户。
+
+    Returns:
+        ResponseBase[SnmpCredentialBatchResult]: 批量恢复结果。
+    """
     service = _get_service(db)
     success_count, failed_ids = await service.batch_restore(request.ids)
     await db.commit()
@@ -254,7 +335,16 @@ async def batch_hard_delete_snmp_credentials(
     current_user: deps.CurrentUser,
     _: deps.User = Depends(deps.require_permissions([PermissionCode.SNMP_CRED_DELETE.value])),
 ) -> Any:
-    """批量彻底删除 SNMP 凭据（硬删除，不可恢复）。"""
+    """批量彻底删除 SNMP 凭据（硬删除，不可恢复）。
+
+    Args:
+        db (Session): 数据库会话。
+        request (SnmpCredentialBatchRequest): 批量删除请求体。
+        current_user (User): 当前登录用户。
+
+    Returns:
+        ResponseBase[SnmpCredentialBatchResult]: 批量删除结果。
+    """
     service = _get_service(db)
     success_count, failed_ids = await service.batch_hard_delete(request.ids)
     await db.commit()
@@ -297,6 +387,15 @@ async def download_snmp_credential_import_template(
     current_user: deps.CurrentUser,
     _: deps.User = Depends(deps.require_permissions([PermissionCode.SNMP_CRED_IMPORT.value])),
 ):
+    """下载 SNMP 凭据导入模板。
+
+    Args:
+        db (Session): 数据库会话。
+        current_user (User): 当前登录用户。
+
+    Returns:
+        FileResponse: 模板文件下载响应。
+    """
     svc = ImportExportService(db=db, redis_client=None, base_dir=str(settings.IMPORT_EXPORT_TMP_DIR or "") or None)
     result = await svc.build_template(
         filename_prefix="snmp_credential_import_template", builder=build_snmp_credential_import_template
@@ -321,6 +420,17 @@ async def upload_parse_validate_snmp_credential_import(
     file: UploadFile = File(...),
     allow_overwrite: bool = Form(default=False),
 ) -> ResponseBase[ImportValidateResponse]:
+    """上传并校验 SNMP 凭据导入文件。
+
+    Args:
+        db (Session): 数据库会话。
+        current_user (User): 当前登录用户。
+        file (UploadFile): 上传的文件。
+        allow_overwrite (bool): 是否允许覆盖同名数据。
+
+    Returns:
+        ResponseBase[ImportValidateResponse]: 校验结果响应。
+    """
     svc = ImportExportService(db=db, redis_client=None, base_dir=str(settings.IMPORT_EXPORT_TMP_DIR or "") or None)
     resp = await svc.upload_parse_validate(
         file=file,
@@ -362,6 +472,16 @@ async def commit_snmp_credential_import(
     body: ImportCommitRequest,
     _: deps.User = Depends(deps.require_permissions([PermissionCode.SNMP_CRED_IMPORT.value])),
 ) -> ResponseBase[ImportCommitResponse]:
+    """提交 SNMP 凭据导入，将数据写入数据库。
+
+    Args:
+        db (Session): 数据库会话。
+        current_user (User): 当前登录用户。
+        body (ImportCommitRequest): 提交请求体。
+
+    Returns:
+        ResponseBase[ImportCommitResponse]: 提交结果响应。
+    """
     svc = ImportExportService(db=db, redis_client=None, base_dir=str(settings.IMPORT_EXPORT_TMP_DIR or "") or None)
     resp = await svc.commit(body=body, persist_fn=persist_snmp_credentials, lock_namespace="import")
     return ResponseBase(data=resp)

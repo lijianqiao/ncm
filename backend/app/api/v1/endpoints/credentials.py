@@ -439,6 +439,16 @@ async def export_credentials(
     _: deps.User = Depends(deps.require_permissions([PermissionCode.CREDENTIAL_EXPORT.value])),
     fmt: str = Query("csv", pattern="^(csv|xlsx)$", description="导出格式"),
 ):
+    """导出分组凭据为 CSV/XLSX 文件。
+
+    Args:
+        db (Session): 数据库会话。
+        current_user (User): 当前登录用户。
+        fmt (str): 导出格式，csv 或 xlsx。
+
+    Returns:
+        FileResponse: 文件下载响应，后台自动清理临时文件。
+    """
     svc = ImportExportService(db=db, redis_client=None, base_dir=str(settings.IMPORT_EXPORT_TMP_DIR or "") or None)
     result = await svc.export_table(fmt=fmt, filename_prefix="credentials", df_fn=export_credentials_df)
     return FileResponse(
@@ -458,6 +468,15 @@ async def download_credential_import_template(
     current_user: deps.CurrentUser,
     _: deps.User = Depends(deps.require_permissions([PermissionCode.CREDENTIAL_IMPORT.value])),
 ):
+    """下载分组凭据批量导入模板。
+
+    Args:
+        db (Session): 数据库会话。
+        current_user (User): 当前登录用户。
+
+    Returns:
+        FileResponse: 模板文件下载响应。
+    """
     svc = ImportExportService(db=db, redis_client=None, base_dir=str(settings.IMPORT_EXPORT_TMP_DIR or "") or None)
     result = await svc.build_template(
         filename_prefix="credential_import_template", builder=build_credential_import_template
@@ -482,6 +501,17 @@ async def upload_parse_validate_credential_import(
     file: UploadFile = File(...),
     allow_overwrite: bool = Form(default=False),
 ) -> ResponseBase[ImportValidateResponse]:
+    """上传并校验分组凭据导入文件。
+
+    Args:
+        db (Session): 数据库会话。
+        current_user (User): 当前登录用户。
+        file (UploadFile): 上传的导入数据文件。
+        allow_overwrite (bool): 是否允许覆盖已有凭据。
+
+    Returns:
+        ResponseBase[ImportValidateResponse]: 解析与校验结果。
+    """
     svc = ImportExportService(db=db, redis_client=None, base_dir=str(settings.IMPORT_EXPORT_TMP_DIR or "") or None)
     resp = await svc.upload_parse_validate(
         file=file,
@@ -507,6 +537,20 @@ async def preview_credential_import(
     page_size: int = Query(20, ge=1, le=200, description="每页数量"),
     kind: str = Query("all", pattern="^(all|valid)$", description="预览类型"),
 ) -> ResponseBase[ImportPreviewResponse]:
+    """预览分组凭据导入数据。
+
+    Args:
+        db (Session): 数据库会话。
+        current_user (User): 当前登录用户。
+        import_id (UUID): 导入任务 ID。
+        checksum (str): 文件校验和。
+        page (int): 页码。
+        page_size (int): 每页数量。
+        kind (str): 预览类型（all/valid）。
+
+    Returns:
+        ResponseBase[ImportPreviewResponse]: 预览数据及分页信息。
+    """
     svc = ImportExportService(db=db, redis_client=None, base_dir=str(settings.IMPORT_EXPORT_TMP_DIR or "") or None)
     resp = await svc.preview(import_id=import_id, checksum=checksum, page=page, page_size=page_size, kind=kind)
     return ResponseBase(data=resp)
@@ -523,6 +567,16 @@ async def commit_credential_import(
     body: ImportCommitRequest,
     _: deps.User = Depends(deps.require_permissions([PermissionCode.CREDENTIAL_IMPORT.value])),
 ) -> ResponseBase[ImportCommitResponse]:
+    """提交分组凭据导入（单事务执行）。
+
+    Args:
+        db (Session): 数据库会话。
+        current_user (User): 当前登录用户。
+        body (ImportCommitRequest): 导入确认请求体。
+
+    Returns:
+        ResponseBase[ImportCommitResponse]: 导入执行结果。
+    """
     svc = ImportExportService(db=db, redis_client=None, base_dir=str(settings.IMPORT_EXPORT_TMP_DIR or "") or None)
     resp = await svc.commit(body=body, persist_fn=persist_credentials, lock_namespace="import")
     return ResponseBase(data=resp)

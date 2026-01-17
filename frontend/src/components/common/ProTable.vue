@@ -82,6 +82,12 @@ const props = withDefaults(
     storageKey?: string
     /** 是否启用多列排序，默认 false */
     multipleSort?: boolean
+    /** 是否显示搜索栏，默认 true */
+    showSearch?: boolean
+    /** 是否显示刷新按钮，默认 true */
+    showRefresh?: boolean
+    /** 表格最小高度，默认 600 */
+    minHeight?: number
   }>(),
   {
     scrollX: 1000,
@@ -94,7 +100,7 @@ const props = withDefaults(
     showRecycleBin: false,
     disablePagination: false,
     showBatchDelete: false,
-    showExport: true,
+    showExport: false,
     virtualScroll: false,
     maxHeight: 600,
     resizable: true,
@@ -102,6 +108,9 @@ const props = withDefaults(
     densityOptions: true,
     fullscreenEnabled: true,
     multipleSort: false,
+    showSearch: true,
+    showRefresh: true,
+    minHeight: 600,
   },
 )
 
@@ -621,7 +630,7 @@ defineExpose({
 <template>
   <div class="pro-table" :class="{ 'pro-table--fullscreen': isFullscreen }" @click="clickOutside">
     <!-- Search Form Area -->
-    <n-card class="search-card" :bordered="false" size="small">
+    <n-card v-if="showSearch" class="search-card" :bordered="false" size="small">
       <div class="search-bar">
         <!-- Keyword Search -->
         <n-input v-model:value="keyword" :placeholder="searchPlaceholder || '请输入关键字搜索...'"
@@ -694,7 +703,7 @@ defineExpose({
           </n-button>
 
           <!-- Export Button -->
-          <n-button v-if="showExport" secondary @click="handleExport" title="导出 CSV">
+          <n-button v-if="showExport" circle secondary @click="handleExport" title="导出 CSV">
             <template #icon>
               <n-icon>
                 <DownloadIcon />
@@ -760,7 +769,7 @@ defineExpose({
           </n-button>
 
           <!-- Refresh Button -->
-          <n-button circle secondary @click="handleRefresh" title="刷新">
+          <n-button v-if="showRefresh" circle secondary @click="handleRefresh" title="刷新">
             <template #icon>
               <n-icon>
                 <RefreshIcon />
@@ -778,7 +787,7 @@ defineExpose({
           @update:checked-row-keys="handleCheck" @update:filters="handleFiltersChange"
           @update:sorter="handleSorterChange" :scroll-x="autoScrollX" :virtual-scroll="virtualScroll"
           :max-height="virtualScroll ? maxHeight : undefined" flex-height
-          style="height: 100%; min-height: 600px; flex: 1; min-width: 0" />
+          :style="{ height: '100%', minHeight: minHeight + 'px', flex: 1, minWidth: 0 }" />
       </div>
 
       <!-- Context Menu -->

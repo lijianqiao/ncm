@@ -1,9 +1,18 @@
 <script setup lang="ts">
 import { h, ref } from 'vue'
-import { NDrawer, NDrawerContent, NDescriptions, NDescriptionsItem, NTag, type DataTableColumns, type DropdownOption } from 'naive-ui'
-import { getLoginLogs, type LoginLog, type LogSearchParams } from '@/api/logs'
+import {
+  NDrawer,
+  NDrawerContent,
+  NDescriptions,
+  NDescriptionsItem,
+  NTag,
+  type DataTableColumns,
+  type DropdownOption,
+} from 'naive-ui'
+import { getLoginLogs, exportLoginLogs, type LoginLog, type LogSearchParams } from '@/api/logs'
 import { formatDateTime } from '@/utils/date'
 import ProTable from '@/components/common/ProTable.vue'
+import DataImportExport from '@/components/common/DataImportExport.vue'
 
 defineOptions({
   name: 'LoginLog',
@@ -64,16 +73,13 @@ const loadData = async (params: LogSearchParams) => {
 
 <template>
   <div class="p-4">
-    <ProTable
-      ref="tableRef"
-      title="登录日志"
-      :columns="columns"
-      :request="loadData"
-      :row-key="(row: LoginLog) => row.id"
-      :context-menu-options="contextMenuOptions"
-      search-placeholder="搜索用户名/IP/消息"
-      @context-menu-select="handleContextMenuSelect"
-    />
+    <ProTable ref="tableRef" title="登录日志" :columns="columns" :request="loadData" :row-key="(row: LoginLog) => row.id"
+      :context-menu-options="contextMenuOptions" search-placeholder="搜索用户名/IP/消息"
+      @context-menu-select="handleContextMenuSelect">
+      <template #toolbar>
+        <DataImportExport title="登录日志" show-export export-name="login_logs_export.csv" :export-api="exportLoginLogs" />
+      </template>
+    </ProTable>
 
     <!-- 详情抽屉 -->
     <n-drawer v-model:show="showDrawer" :width="500" placement="right" :native-scrollbar="true">
@@ -92,7 +98,9 @@ const loadData = async (params: LogSearchParams) => {
           <n-descriptions-item label="浏览器">{{ currentLog.browser || '-' }}</n-descriptions-item>
           <n-descriptions-item label="系统">{{ currentLog.os || '-' }}</n-descriptions-item>
           <n-descriptions-item label="设备">{{ currentLog.device || '-' }}</n-descriptions-item>
-          <n-descriptions-item label="时间">{{ formatDateTime(currentLog.created_at) }}</n-descriptions-item>
+          <n-descriptions-item label="时间">{{
+            formatDateTime(currentLog.created_at)
+            }}</n-descriptions-item>
         </n-descriptions>
       </n-drawer-content>
     </n-drawer>

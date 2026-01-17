@@ -14,6 +14,7 @@ import type {
   TemplateStatusType,
   DeviceTypeType,
 } from '@/types/enums'
+import type { AxiosResponse } from 'axios'
 
 // 重新导出枚举类型供外部使用
 export type { TemplateTypeType as TemplateType }
@@ -230,5 +231,14 @@ export function batchHardDeleteTemplates(ids: string[]) {
     url: '/templates/batch/hard',
     method: 'delete',
     data: { ids },
+  })
+}
+
+export function exportTemplates(fmt: 'csv' | 'xlsx' = 'csv') {
+  return request<AxiosResponse<Blob>>({
+    url: '/templates/export',
+    method: 'get',
+    params: { fmt },
+    responseType: 'blob',
   })
 }

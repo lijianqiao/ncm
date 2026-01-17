@@ -111,6 +111,20 @@ async def list_inventory_audits_recycle_bin(
     page_size: int = Query(default=20, ge=1, le=500),
     status: str | None = Query(default=None, description="状态筛选"),
 ) -> ResponseBase[PaginatedResponse[InventoryAuditResponse]]:
+    """获取已删除的盘点任务列表（回收站）。
+
+    仅限超级管理员访问。
+
+    Args:
+        service (InventoryAuditService): 资产盘点服务。
+        active_superuser (User): 超级管理员权限验证。
+        page (int): 页码。
+        page_size (int): 每页数量。
+        status (str | None): 状态筛选。
+
+    Returns:
+        ResponseBase[PaginatedResponse[InventoryAuditResponse]]: 回收站中的盘点任务列表。
+    """
     items, total = await service.list_deleted_paginated(page=page, page_size=page_size, status=status)
     return ResponseBase(
         data=PaginatedResponse(
@@ -133,6 +147,16 @@ async def batch_delete_inventory_audits(
     current_user: deps.CurrentUser,
     _: deps.User = Depends(deps.require_permissions([PermissionCode.INVENTORY_AUDIT_DELETE.value])),
 ) -> ResponseBase[BatchOperationResult]:
+    """批量删除盘点任务（软删除）。
+
+    Args:
+        request (BatchDeleteRequest): 批量删除请求体。
+        service (InventoryAuditService): 资产盘点服务。
+        current_user (User): 当前登录用户。
+
+    Returns:
+        ResponseBase[BatchOperationResult]: 批量操作结果。
+    """
     success_count, failed_ids = await service.batch_delete(ids=request.ids, hard_delete=request.hard_delete)
     return ResponseBase(
         data=BatchOperationResult(
@@ -154,6 +178,16 @@ async def delete_inventory_audit(
     current_user: deps.CurrentUser,
     _: deps.User = Depends(deps.require_permissions([PermissionCode.INVENTORY_AUDIT_DELETE.value])),
 ) -> ResponseBase[InventoryAuditResponse]:
+    """删除盘点任务（软删除）。
+
+    Args:
+        audit_id (UUID): 盘点任务 ID。
+        service (InventoryAuditService): 资产盘点服务。
+        current_user (User): 当前登录用户。
+
+    Returns:
+        ResponseBase[InventoryAuditResponse]: 被删除的盘点任务详情。
+    """
     audit = await service.delete(audit_id)
     return ResponseBase(data=InventoryAuditResponse.model_validate(audit), message="盘点任务删除成功")
 
@@ -169,6 +203,18 @@ async def batch_restore_inventory_audits(
     active_superuser: deps.User = Depends(deps.get_current_active_superuser),
     _: deps.User = Depends(deps.require_permissions([PermissionCode.INVENTORY_AUDIT_RESTORE.value])),
 ) -> ResponseBase[BatchOperationResult]:
+    """批量恢复盘点任务。
+
+    仅限超级管理员访问。
+
+    Args:
+        request (BatchRestoreRequest): 批量恢复请求体。
+        service (InventoryAuditService): 资产盘点服务。
+        active_superuser (User): 超级管理员权限验证。
+
+    Returns:
+        ResponseBase[BatchOperationResult]: 批量恢复结果。
+    """
     success_count, failed_ids = await service.batch_restore(ids=request.ids)
     return ResponseBase(
         data=BatchOperationResult(
@@ -190,6 +236,18 @@ async def restore_inventory_audit(
     active_superuser: deps.User = Depends(deps.get_current_active_superuser),
     _: deps.User = Depends(deps.require_permissions([PermissionCode.INVENTORY_AUDIT_RESTORE.value])),
 ) -> ResponseBase[InventoryAuditResponse]:
+    """恢复已删除的盘点任务。
+
+    仅限超级管理员访问。
+
+    Args:
+        audit_id (UUID): 盘点任务 ID。
+        service (InventoryAuditService): 资产盘点服务。
+        active_superuser (User): 超级管理员权限验证。
+
+    Returns:
+        ResponseBase[InventoryAuditResponse]: 恢复后的盘点任务详情。
+    """
     audit = await service.restore(audit_id)
     return ResponseBase(data=InventoryAuditResponse.model_validate(audit), message="盘点任务恢复成功")
 
@@ -205,6 +263,18 @@ async def hard_delete_inventory_audit(
     active_superuser: deps.User = Depends(deps.get_current_active_superuser),
     _: deps.User = Depends(deps.require_permissions([PermissionCode.INVENTORY_AUDIT_DELETE.value])),
 ) -> ResponseBase[dict]:
+    """彻底删除盘点任务（硬删除，不可恢复）。
+
+    仅限超级管理员访问。
+
+    Args:
+        audit_id (UUID): 盘点任务 ID。
+        service (InventoryAuditService): 资产盘点服务。
+        active_superuser (User): 超级管理员权限验证。
+
+    Returns:
+        ResponseBase[dict]: 删除结果。
+    """
     await service.hard_delete(audit_id)
     return ResponseBase(data={"message": "盘点任务已彻底删除"}, message="盘点任务已彻底删除")
 
@@ -220,6 +290,18 @@ async def batch_hard_delete_inventory_audits(
     active_superuser: deps.User = Depends(deps.get_current_active_superuser),
     _: deps.User = Depends(deps.require_permissions([PermissionCode.INVENTORY_AUDIT_DELETE.value])),
 ) -> ResponseBase[BatchOperationResult]:
+    """批量彻底删除盘点任务（硬删除，不可恢复）。
+
+    仅限超级管理员访问。
+
+    Args:
+        request (BatchDeleteRequest): 批量删除请求体。
+        service (InventoryAuditService): 资产盘点服务。
+        active_superuser (User): 超级管理员权限验证。
+
+    Returns:
+        ResponseBase[BatchOperationResult]: 批量删除结果。
+    """
     success_count, failed_ids = await service.batch_delete(ids=request.ids, hard_delete=True)
     return ResponseBase(
         data=BatchOperationResult(
@@ -240,6 +322,16 @@ async def export_inventory_audits(
     _: deps.User = Depends(deps.require_permissions([PermissionCode.INVENTORY_AUDIT_EXPORT.value])),
     fmt: str = Query("csv", pattern="^(csv|xlsx)$", description="导出格式"),
 ) -> FileResponse:
+    """导出盘点任务列表为 CSV/XLSX 文件。
+
+    Args:
+        db (Session): 数据库会话。
+        current_user (User): 当前登录用户。
+        fmt (str): 导出格式，csv 或 xlsx。
+
+    Returns:
+        FileResponse: 文件下载响应，后台自动清理临时文件。
+    """
     svc = ImportExportService(db=db, redis_client=None, base_dir=str(settings.IMPORT_EXPORT_TMP_DIR or "") or None)
     result = await svc.export_table(fmt=fmt, filename_prefix="inventory_audits", df_fn=export_inventory_audits_df)
     return FileResponse(
@@ -298,4 +390,3 @@ async def export_inventory_audit(
     """
     audit = await service.get(audit_id)
     return ResponseBase(data={"id": str(audit.id), "name": audit.name, "scope": audit.scope, "result": audit.result})
-

@@ -213,7 +213,26 @@ async def approve_template(
     service: TemplateServiceDep,
     user: CurrentUser,
 ) -> ResponseBase[TemplateResponse]:
-    """对指定模板进行单级审批操作（三级审批）。"""
+    """对指定模板执行单级审批（支持三级串行审批）。
+
+    三个审批级别依次进行，只有在前一等级通过后才可进入下一等级。
+    审批通过到达最高等级后，模板状态将变更为“已批准”；若任一级拒绝，
+    模板将回到“已拒绝”并记录审批备注。
+
+    Args:
+        template_id (UUID): 目标模板的唯一标识。
+        body (TemplateApproveRequest): 审批请求体，包含审批等级、是否通过、备注。
+        service (TemplateService): 模板服务依赖，用于执行业务流程。
+        user (User): 当前审批人，用于审计和权限判断。
+
+    Returns:
+        ResponseBase[TemplateResponse]: 返回最新的模板详情（含状态与审批轨迹）。
+
+    Raises:
+        NotFoundException: 当模板不存在时。
+        ForbiddenException: 当审批等级或审批人不具备操作权限时。
+        ConflictException: 当模板状态不满足当前审批操作（如未提交或已终态）。
+    """
 
     template = await service.approve_step(
         template_id,
@@ -256,7 +275,18 @@ async def batch_delete_templates(
     request: TemplateBatchRequest,
     service: TemplateServiceDep,
 ) -> Any:
-    """批量删除模板（软删除）。"""
+    """批量软删除模板（可从回收站恢复）。
+
+    Args:
+        request (TemplateBatchRequest): 批量请求体，包含待删除模板的 ID 列表。
+        service (TemplateService): 模板服务依赖。
+
+    Returns:
+        ResponseBase[TemplateBatchResult]: 返回批量操作结果（成功数、失败数、失败ID）。
+
+    Raises:
+        ForbiddenException: 当无删除权限或部分模板不允许删除时。
+    """
     success_count, failed_ids = await service.batch_delete_templates(request.ids)
     return ResponseBase(
         data=TemplateBatchResult(
@@ -280,7 +310,17 @@ async def read_recycle_bin_templates(
     page_size: int = Query(20, ge=1, le=500, description="每页数量"),
     keyword: str | None = Query(None, description="关键字搜索"),
 ) -> ResponseBase[PaginatedResponse[TemplateResponse]]:
-    """获取回收站模板列表（已删除的模板）。"""
+    """获取回收站中的模板（软删除后保留，可恢复）。
+
+    Args:
+        service (TemplateService): 模板服务依赖。
+        page (int): 页码（从 1 开始）。
+        page_size (int): 每页数量（1-500）。
+        keyword (str | None): 关键字模糊匹配名称/描述。
+
+    Returns:
+        ResponseBase[PaginatedResponse[TemplateResponse]]: 回收站模板分页列表。
+    """
     items, total = await service.get_recycle_bin_paginated(
         page=page,
         page_size=page_size,
@@ -306,7 +346,18 @@ async def restore_template(
     template_id: UUID,
     service: TemplateServiceDep,
 ) -> Any:
-    """恢复已删除的模板。"""
+    """从回收站恢复已删除的模板到原有状态。
+
+    Args:
+        template_id (UUID): 目标模板 ID。
+        service (TemplateService): 模板服务依赖。
+
+    Returns:
+        ResponseBase[TemplateResponse]: 恢复后的模板详情。
+
+    Raises:
+        NotFoundException: 模板不存在或未处于可恢复状态时。
+    """
     template = await service.restore_template(template_id)
     return ResponseBase(
         data=TemplateResponse.model_validate(template),
@@ -324,7 +375,15 @@ async def batch_restore_templates(
     request: TemplateBatchRequest,
     service: TemplateServiceDep,
 ) -> Any:
-    """批量恢复已删除的模板。"""
+    """批量恢复模板（从回收站恢复至正常状态）。
+
+    Args:
+        request (TemplateBatchRequest): 批量请求体，包含模板 ID 列表。
+        service (TemplateService): 模板服务依赖。
+
+    Returns:
+        ResponseBase[TemplateBatchResult]: 批量恢复的结果统计。
+    """
     success_count, failed_ids = await service.batch_restore_templates(request.ids)
     return ResponseBase(
         data=TemplateBatchResult(
@@ -346,7 +405,19 @@ async def hard_delete_template(
     template_id: UUID,
     service: TemplateServiceDep,
 ) -> Any:
-    """彻底删除模板（硬删除，不可恢复）。"""
+    """彻底删除模板（物理删除，不可恢复）。
+
+    Args:
+        template_id (UUID): 目标模板 ID。
+        service (TemplateService): 模板服务依赖。
+
+    Returns:
+        ResponseBase[dict]: 操作结果消息。
+
+    Raises:
+        NotFoundException: 模板不存在时。
+        ForbiddenException: 无权限或模板处于不可删除状态时。
+    """
     await service.hard_delete_template(template_id)
     return ResponseBase(
         data={"message": "模板已彻底删除"},
@@ -364,7 +435,15 @@ async def batch_hard_delete_templates(
     request: TemplateBatchRequest,
     service: TemplateServiceDep,
 ) -> Any:
-    """批量彻底删除模板（硬删除，不可恢复）。"""
+    """批量彻底删除模板（物理删除，不可恢复）。
+
+    Args:
+        request (TemplateBatchRequest): 批量请求体，包含模板 ID 列表。
+        service (TemplateService): 模板服务依赖。
+
+    Returns:
+        ResponseBase[TemplateBatchResult]: 批量硬删除的结果统计。
+    """
     success_count, failed_ids = await service.batch_hard_delete_templates(request.ids)
     return ResponseBase(
         data=TemplateBatchResult(
@@ -386,6 +465,16 @@ async def export_templates(
     current_user: CurrentUser,
     fmt: str = Query("csv", pattern="^(csv|xlsx)$", description="导出格式"),
 ) -> FileResponse:
+    """导出模板列表为 CSV/XLSX 文件。
+
+    Args:
+        db (Session): 数据库会话。
+        current_user (User): 当前登录用户。
+        fmt (str): 导出格式，csv 或 xlsx。
+
+    Returns:
+        FileResponse: 文件下载响应，后台自动清理临时文件。
+    """
     svc = ImportExportService(db=db, redis_client=None, base_dir=str(settings.IMPORT_EXPORT_TMP_DIR or "") or None)
     result = await svc.export_table(fmt=fmt, filename_prefix="templates", df_fn=export_templates_df)
     return FileResponse(

@@ -98,6 +98,16 @@ async def export_login_logs(
     _: deps.User = Depends(deps.require_permissions([PermissionCode.LOG_LOGIN_EXPORT.value])),
     fmt: str = Query("csv", pattern="^(csv|xlsx)$", description="导出格式"),
 ) -> FileResponse:
+    """导出登录日志列表为 CSV/XLSX 文件。
+
+    Args:
+        db (Session): 数据库会话。
+        current_user (User): 当前登录用户。
+        fmt (str): 导出格式，csv 或 xlsx。
+
+    Returns:
+        FileResponse: 文件下载响应，后台自动清理临时文件。
+    """
     svc = ImportExportService(db=db, redis_client=None, base_dir=str(settings.IMPORT_EXPORT_TMP_DIR or "") or None)
     result = await svc.export_table(fmt=fmt, filename_prefix="login_logs", df_fn=export_login_logs_df)
     return FileResponse(
@@ -118,6 +128,16 @@ async def export_operation_logs(
     _: deps.User = Depends(deps.require_permissions([PermissionCode.LOG_OPERATION_EXPORT.value])),
     fmt: str = Query("csv", pattern="^(csv|xlsx)$", description="导出格式"),
 ) -> FileResponse:
+    """导出操作日志列表为 CSV/XLSX 文件。
+
+    Args:
+        db (Session): 数据库会话。
+        current_user (User): 当前登录用户。
+        fmt (str): 导出格式，csv 或 xlsx。
+
+    Returns:
+        FileResponse: 文件下载响应，后台自动清理临时文件。
+    """
     svc = ImportExportService(db=db, redis_client=None, base_dir=str(settings.IMPORT_EXPORT_TMP_DIR or "") or None)
     result = await svc.export_table(fmt=fmt, filename_prefix="operation_logs", df_fn=export_operation_logs_df)
     return FileResponse(

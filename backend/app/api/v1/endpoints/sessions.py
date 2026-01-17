@@ -127,6 +127,16 @@ async def export_sessions(
     _: deps.User = Depends(deps.require_permissions([PermissionCode.SESSION_EXPORT.value])),
     fmt: str = Query("csv", pattern="^(csv|xlsx)$", description="导出格式"),
 ) -> FileResponse:
+    """导出在线会话列表为 CSV/XLSX 文件。
+
+    Args:
+        db (Session): 数据库会话。
+        current_user (User): 当前登录用户。
+        fmt (str): 导出格式，csv 或 xlsx。
+
+    Returns:
+        FileResponse: 文件下载响应，后台自动清理临时文件。
+    """
     svc = ImportExportService(db=db, redis_client=None, base_dir=str(settings.IMPORT_EXPORT_TMP_DIR or "") or None)
     result = await svc.export_table(fmt=fmt, filename_prefix="sessions", df_fn=export_sessions_df)
     return FileResponse(

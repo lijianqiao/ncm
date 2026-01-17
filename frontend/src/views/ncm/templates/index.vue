@@ -15,7 +15,7 @@ import {
   NCode,
   type DropdownOption,
 } from 'naive-ui'
-import { HelpCircleOutline } from '@vicons/ionicons5'
+import { AddOutline as AddIcon, HelpCircleOutline } from '@vicons/ionicons5'
 import { $alert } from '@/utils/alert'
 import {
   getTemplates,
@@ -32,6 +32,7 @@ import {
   batchRestoreTemplates,
   hardDeleteTemplate,
   batchHardDeleteTemplates,
+  exportTemplates,
   type Template,
   type TemplateSearchParams,
   type TemplateType,
@@ -45,6 +46,7 @@ import { formatDateTime } from '@/utils/date'
 import { formatUserDisplayNameParts } from '@/utils/user'
 import ProTable, { type FilterConfig } from '@/components/common/ProTable.vue'
 import RecycleBinModal from '@/components/common/RecycleBinModal.vue'
+import DataImportExport from '@/components/common/DataImportExport.vue'
 
 defineOptions({
   name: 'TemplateManagement',
@@ -225,13 +227,13 @@ const statusLabelMap: Record<TemplateStatus, string> = {
 }
 
 const statusColorMap: Record<TemplateStatus, 'default' | 'info' | 'success' | 'warning' | 'error'> =
-  {
-    draft: 'default',
-    pending: 'info',
-    approved: 'success',
-    rejected: 'error',
-    deprecated: 'warning',
-  }
+{
+  draft: 'default',
+  pending: 'info',
+  approved: 'success',
+  rejected: 'error',
+  deprecated: 'warning',
+}
 
 const vendorLabelMap: Record<DeviceVendor, string> = {
   cisco: 'Cisco',
@@ -740,41 +742,29 @@ const submitApprove = async () => {
 
 <template>
   <div class="template-management p-4">
-    <ProTable
-      ref="tableRef"
-      title="模板列表"
-      :columns="columns"
-      :request="loadData"
-      :row-key="(row: Template) => row.id"
-      :context-menu-options="contextMenuOptions"
-      search-placeholder="搜索模板名称/描述"
-      :search-filters="searchFilters"
-      v-model:checked-row-keys="selectedRowKeys"
-      @add="handleCreate"
-      @batch-delete="handleBatchDelete"
-      @context-menu-select="handleContextMenuSelect"
-      @recycle-bin="handleRecycleBin"
-      show-add
-      show-batch-delete
-      show-recycle-bin
-      :scroll-x="1200"
-    />
+    <ProTable ref="tableRef" title="模板列表" :columns="columns" :request="loadData" :row-key="(row: Template) => row.id"
+      :context-menu-options="contextMenuOptions" search-placeholder="搜索模板名称/描述" :search-filters="searchFilters"
+      v-model:checked-row-keys="selectedRowKeys" @add="handleCreate" @batch-delete="handleBatchDelete"
+      @context-menu-select="handleContextMenuSelect" @recycle-bin="handleRecycleBin" show-batch-delete show-recycle-bin
+      :scroll-x="1200">
+      <template #toolbar>
+        <n-button type="primary" @click="handleCreate">
+          <template #icon>
+            <n-icon>
+              <AddIcon />
+            </n-icon>
+          </template>
+          新建
+        </n-button>
+        <DataImportExport title="模板" show-export export-name="templates_export.csv" :export-api="exportTemplates" />
+      </template>
+    </ProTable>
 
     <!-- 回收站 Modal -->
-    <RecycleBinModal
-      ref="recycleBinRef"
-      v-model:show="showRecycleBin"
-      title="回收站 (已删除模板)"
-      :columns="recycleBinColumns"
-      :request="loadRecycleBinData"
-      :row-key="(row: Template) => row.id"
-      search-placeholder="搜索模板名称..."
-      :scroll-x="900"
-      @restore="handleRestore"
-      @batch-restore="handleBatchRestore"
-      @hard-delete="handleHardDelete"
-      @batch-hard-delete="handleBatchHardDelete"
-    />
+    <RecycleBinModal ref="recycleBinRef" v-model:show="showRecycleBin" title="回收站 (已删除模板)" :columns="recycleBinColumns"
+      :request="loadRecycleBinData" :row-key="(row: Template) => row.id" search-placeholder="搜索模板名称..." :scroll-x="900"
+      @restore="handleRestore" @batch-restore="handleBatchRestore" @hard-delete="handleHardDelete"
+      @batch-hard-delete="handleBatchHardDelete" />
 
     <!-- 提交审批 Modal -->
     <n-modal v-model:show="showSubmitModal" preset="card" title="提交审批" style="width: 520px">
@@ -785,13 +775,8 @@ const submitApprove = async () => {
         </div>
         <n-form label-placement="left" label-width="110" style="width: 100%">
           <n-form-item label="审批人(可选)">
-            <n-select
-              v-model:value="submitApproverIds"
-              multiple
-              :options="submitApproverOptions"
-              :loading="submitApproverLoading"
-              placeholder="不选=允许有权限者审批；选=指定 3 人"
-            />
+            <n-select v-model:value="submitApproverIds" multiple :options="submitApproverOptions"
+              :loading="submitApproverLoading" placeholder="不选=允许有权限者审批；选=指定 3 人" />
           </n-form-item>
           <n-form-item label="提交备注">
             <n-input v-model:value="submitComment" type="textarea" :rows="2" placeholder="可选" />
@@ -799,9 +784,7 @@ const submitApprove = async () => {
         </n-form>
         <n-space justify="end">
           <n-button @click="showSubmitModal = false">取消</n-button>
-          <n-button type="primary" :loading="submitLoading" @click="submitApproval"
-            >确认提交</n-button
-          >
+          <n-button type="primary" :loading="submitLoading" @click="submitApproval">确认提交</n-button>
         </n-space>
       </n-space>
     </n-modal>
@@ -815,13 +798,10 @@ const submitApprove = async () => {
         </div>
         <n-form label-placement="left" label-width="110" style="width: 100%">
           <n-form-item label="审批动作">
-            <n-select
-              v-model:value="approveDecision"
-              :options="[
-                { label: '通过', value: 'approve' },
-                { label: '拒绝', value: 'reject' },
-              ]"
-            />
+            <n-select v-model:value="approveDecision" :options="[
+              { label: '通过', value: 'approve' },
+              { label: '拒绝', value: 'reject' },
+            ]" />
           </n-form-item>
           <n-form-item label="审批意见">
             <n-input v-model:value="approveComment" type="textarea" :rows="2" placeholder="可选" />
@@ -835,12 +815,7 @@ const submitApprove = async () => {
     </n-modal>
 
     <!-- 查看模板 Modal -->
-    <n-modal
-      v-model:show="showViewModal"
-      preset="card"
-      title="模板详情"
-      style="width: 900px; max-height: 80vh"
-    >
+    <n-modal v-model:show="showViewModal" preset="card" title="模板详情" style="width: 900px; max-height: 80vh">
       <div v-if="viewLoading" style="text-align: center; padding: 40px">加载中...</div>
       <template v-else-if="viewData">
         <n-space vertical>
@@ -853,23 +828,18 @@ const submitApprove = async () => {
           </n-space>
           <div>
             <strong>适用厂商:</strong>
-            {{ viewData.vendors.map((v) => vendorLabelMap[v]).join(', ') }}
+            {{viewData.vendors.map((v) => vendorLabelMap[v]).join(', ')}}
           </div>
           <div v-if="viewData.approvals && viewData.approvals.length > 0">
             <strong>审批流程:</strong>
             <n-space vertical style="margin-top: 8px">
               <div v-for="a in viewData.approvals" :key="a.level">
-                <n-tag
-                  :type="
-                    a.status === 'approved'
-                      ? 'success'
-                      : a.status === 'rejected'
-                        ? 'error'
-                        : 'default'
-                  "
-                  size="small"
-                  style="margin-right: 8px"
-                >
+                <n-tag :type="a.status === 'approved'
+                    ? 'success'
+                    : a.status === 'rejected'
+                      ? 'error'
+                      : 'default'
+                  " size="small" style="margin-right: 8px">
                   第 {{ a.level }} 级
                 </n-tag>
                 <span>审批人: {{ a.approver_name || '待指定' }}</span>
@@ -883,9 +853,7 @@ const submitApprove = async () => {
                         : '待审批'
                   }}
                 </span>
-                <span v-if="a.approved_at" style="margin-left: 12px"
-                  >时间: {{ formatDateTime(a.approved_at) }}</span
-                >
+                <span v-if="a.approved_at" style="margin-left: 12px">时间: {{ formatDateTime(a.approved_at) }}</span>
                 <div v-if="a.comment" style="color: #666; margin-top: 4px">
                   备注: {{ a.comment }}
                 </div>
@@ -895,38 +863,20 @@ const submitApprove = async () => {
           <div><strong>描述:</strong> {{ viewData.description || '-' }}</div>
           <div>
             <strong>模板内容:</strong>
-            <n-code
-              :code="viewData.content"
-              language="jinja2"
-              style="max-height: 400px; overflow: auto"
-            />
+            <n-code :code="viewData.content" language="jinja2" style="max-height: 400px; overflow: auto" />
           </div>
           <div v-if="viewData.parameters">
             <strong>参数定义:</strong>
-            <n-code
-              :code="viewData.parameters"
-              language="json"
-              style="max-height: 200px; overflow: auto"
-            />
+            <n-code :code="viewData.parameters" language="json" style="max-height: 200px; overflow: auto" />
           </div>
         </n-space>
       </template>
     </n-modal>
 
     <!-- 创建/编辑模板 Modal -->
-    <n-modal
-      v-model:show="showCreateModal"
-      preset="dialog"
-      :title="modalType === 'create' ? '新建模板' : '编辑模板'"
-      style="width: 800px"
-    >
-      <n-form
-        ref="createFormRef"
-        :model="createModel"
-        :rules="createRules"
-        label-placement="left"
-        label-width="100"
-      >
+    <n-modal v-model:show="showCreateModal" preset="dialog" :title="modalType === 'create' ? '新建模板' : '编辑模板'"
+      style="width: 800px">
+      <n-form ref="createFormRef" :model="createModel" :rules="createRules" label-placement="left" label-width="100">
         <n-form-item label="模板名称" path="name">
           <n-input v-model:value="createModel.name" placeholder="请输入模板名称" />
         </n-form-item>
@@ -934,39 +884,21 @@ const submitApprove = async () => {
           <n-select v-model:value="createModel.template_type" :options="templateTypeOptions" />
         </n-form-item>
         <n-form-item label="适用厂商" path="vendors">
-          <n-select
-            v-model:value="createModel.vendors"
-            :options="vendorOptions"
-            multiple
-            placeholder="请选择适用厂商"
-          />
+          <n-select v-model:value="createModel.vendors" :options="vendorOptions" multiple placeholder="请选择适用厂商" />
         </n-form-item>
         <n-form-item label="设备类型">
-          <n-select
-            v-model:value="createModel.device_type"
-            :options="deviceTypeOptions"
-            placeholder="请选择设备类型（可选）"
-            clearable
-          />
+          <n-select v-model:value="createModel.device_type" :options="deviceTypeOptions" placeholder="请选择设备类型（可选）"
+            clearable />
         </n-form-item>
         <n-form-item label="描述">
-          <n-input
-            v-model:value="createModel.description"
-            type="textarea"
-            placeholder="模板描述"
-            :rows="2"
-          />
+          <n-input v-model:value="createModel.description" type="textarea" placeholder="模板描述" :rows="2" />
         </n-form-item>
         <n-form-item path="content">
           <template #label>
             <span style="display: inline-flex; align-items: center; gap: 6px">
               <span>模板内容</span>
-              <n-popover
-                trigger="click"
-                placement="right-start"
-                :width="480"
-                :content-style="{ maxHeight: '320px', overflow: 'auto' }"
-              >
+              <n-popover trigger="click" placement="right-start" :width="480"
+                :content-style="{ maxHeight: '320px', overflow: 'auto' }">
                 <template #trigger>
                   <n-icon size="16" style="cursor: pointer; opacity: 0.75">
                     <HelpCircleOutline />
@@ -974,33 +906,20 @@ const submitApprove = async () => {
                 </template>
                 <n-space vertical size="small">
                   <div style="font-weight: 600">使用示例</div>
-                  <n-code
-                    language="jinja2"
-                    :code="templateContentExample"
-                    style="max-height: 260px; overflow: auto"
-                  />
+                  <n-code language="jinja2" :code="templateContentExample" style="max-height: 260px; overflow: auto" />
                 </n-space>
               </n-popover>
             </span>
           </template>
-          <n-input
-            v-model:value="createModel.content"
-            type="textarea"
-            placeholder="Jinja2 模板内容"
-            :rows="10"
-            style="font-family: monospace"
-          />
+          <n-input v-model:value="createModel.content" type="textarea" placeholder="Jinja2 模板内容" :rows="10"
+            style="font-family: monospace" />
         </n-form-item>
         <n-form-item>
           <template #label>
             <span style="display: inline-flex; align-items: center; gap: 6px">
               <span>参数定义</span>
-              <n-popover
-                trigger="click"
-                placement="right-start"
-                :width="480"
-                :content-style="{ maxHeight: '320px', overflow: 'auto' }"
-              >
+              <n-popover trigger="click" placement="right-start" :width="480"
+                :content-style="{ maxHeight: '320px', overflow: 'auto' }">
                 <template #trigger>
                   <n-icon size="16" style="cursor: pointer; opacity: 0.75">
                     <HelpCircleOutline />
@@ -1011,22 +930,14 @@ const submitApprove = async () => {
                   <div style="opacity: 0.8">
                     这里填写 JSON Schema（字符串），用于校验你在“渲染预览/配置下发”里传入的 params。
                   </div>
-                  <n-code
-                    language="json"
-                    :code="templateParametersSchemaExample"
-                    style="max-height: 220px; overflow: auto"
-                  />
+                  <n-code language="json" :code="templateParametersSchemaExample"
+                    style="max-height: 220px; overflow: auto" />
                 </n-space>
               </n-popover>
             </span>
           </template>
-          <n-input
-            v-model:value="createModel.parameters"
-            type="textarea"
-            placeholder="JSON Schema 格式的参数定义（可选）"
-            :rows="4"
-            style="font-family: monospace"
-          />
+          <n-input v-model:value="createModel.parameters" type="textarea" placeholder="JSON Schema 格式的参数定义（可选）"
+            :rows="4" style="font-family: monospace" />
         </n-form-item>
       </n-form>
       <template #action>
@@ -1036,43 +947,26 @@ const submitApprove = async () => {
     </n-modal>
 
     <!-- 渲染预览 Modal -->
-    <n-modal
-      v-model:show="showRenderModal"
-      preset="card"
-      title="模板渲染预览(Dry-Run)"
-      style="width: 900px; max-height: 85vh; overflow: auto"
-    >
+    <n-modal v-model:show="showRenderModal" preset="card" title="模板渲染预览(Dry-Run)"
+      style="width: 900px; max-height: 85vh; overflow: auto">
       <n-space vertical size="large" style="width: 100%">
         <div v-if="renderTarget" style="font-weight: 600">
           模板：{{ renderTarget.name }}（v{{ renderTarget.version }}）
         </div>
 
         <n-form-item label="设备上下文(可选)">
-          <n-select
-            v-model:value="renderDeviceId"
-            :options="renderDeviceOptions"
-            placeholder="选择一个设备用于 device 上下文（可不选）"
-            filterable
-            clearable
-            :loading="renderDeviceLoading"
-          />
+          <n-select v-model:value="renderDeviceId" :options="renderDeviceOptions" placeholder="选择一个设备用于 device 上下文（可不选）"
+            filterable clearable :loading="renderDeviceLoading" />
         </n-form-item>
 
         <n-form-item label="模板参数(JSON)">
-          <n-input
-            v-model:value="renderParamsText"
-            type="textarea"
-            placeholder='{"key": "value"}'
-            :rows="6"
-            style="font-family: monospace"
-          />
+          <n-input v-model:value="renderParamsText" type="textarea" placeholder='{"key": "value"}' :rows="6"
+            style="font-family: monospace" />
         </n-form-item>
 
         <n-space justify="end">
           <n-button @click="showRenderModal = false">关闭</n-button>
-          <n-button type="primary" :loading="renderLoading" @click="submitRenderPreview"
-            >渲染预览</n-button
-          >
+          <n-button type="primary" :loading="renderLoading" @click="submitRenderPreview">渲染预览</n-button>
         </n-space>
 
         <div v-if="renderResult">

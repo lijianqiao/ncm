@@ -466,6 +466,15 @@ async def export_devices(
     import_export_service: deps.ImportExportServiceDep,
     fmt: str = Query(default="xlsx", pattern="^(xlsx|csv)$", description="导出格式：xlsx/csv"),
 ) -> FileResponse:
+    """导出设备列表为 CSV/XLSX 文件。
+
+    Args:
+        import_export_service (ImportExportService): 导入导出服务依赖。
+        fmt (str): 导出格式（xlsx 或 csv）。
+
+    Returns:
+        FileResponse: 文件下载响应，后台自动清理临时文件。
+    """
     result = await import_export_service.export_devices(fmt=fmt)
     return FileResponse(
         path=result.path,
@@ -484,6 +493,14 @@ async def export_devices(
 async def download_device_import_template(
     import_export_service: deps.ImportExportServiceDep,
 ) -> FileResponse:
+    """下载设备批量导入模板。
+
+    Args:
+        import_export_service (ImportExportService): 导入导出服务依赖。
+
+    Returns:
+        FileResponse: 模板文件下载响应。
+    """
     result = await import_export_service.build_device_import_template()
     return FileResponse(
         path=result.path,
@@ -504,6 +521,16 @@ async def upload_parse_validate_device_import(
     file: UploadFile = File(...),
     allow_overwrite: bool = Form(default=False),
 ) -> ResponseBase[ImportValidateResponse]:
+    """上传并解析校验设备导入文件。
+
+    Args:
+        import_export_service (ImportExportService): 导入导出服务依赖。
+        file (UploadFile): 导入的设备数据文件。
+        allow_overwrite (bool): 是否允许覆盖已有设备数据。
+
+    Returns:
+        ResponseBase[ImportValidateResponse]: 解析与校验结果。
+    """
     resp = await import_export_service.upload_parse_validate_device_import(file=file, allow_overwrite=allow_overwrite)
     return ResponseBase(data=resp)
 
@@ -522,6 +549,19 @@ async def preview_device_import(
     page_size: int = Query(default=20, ge=1, le=200),
     kind: str = Query(default="all", pattern="^(all|valid)$"),
 ) -> ResponseBase[ImportPreviewResponse]:
+    """预览设备导入解析后的数据。
+
+    Args:
+        import_export_service (ImportExportService): 导入导出服务依赖。
+        import_id (UUID): 导入任务 ID。
+        checksum (str): 文件校验和。
+        page (int): 页码。
+        page_size (int): 每页数量。
+        kind (str): 预览类型（all/valid）。
+
+    Returns:
+        ResponseBase[ImportPreviewResponse]: 预览数据及分页信息。
+    """
     resp = await import_export_service.preview_device_import(
         import_id=import_id,
         checksum=checksum,
@@ -542,5 +582,14 @@ async def commit_device_import(
     body: ImportCommitRequest,
     import_export_service: deps.ImportExportServiceDep,
 ) -> ResponseBase[ImportCommitResponse]:
+    """确认导入设备数据（单事务提交）。
+
+    Args:
+        body (ImportCommitRequest): 导入确认请求体。
+        import_export_service (ImportExportService): 导入导出服务依赖。
+
+    Returns:
+        ResponseBase[ImportCommitResponse]: 导入执行结果。
+    """
     resp = await import_export_service.commit_device_import(body=body)
     return ResponseBase(data=resp)

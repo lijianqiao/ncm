@@ -9,6 +9,7 @@
 import { request } from '@/utils/request'
 import type { ResponseBase, PaginatedResponse } from '@/types/api'
 import type { BackupTypeType } from '@/types/enums'
+import type { AxiosResponse } from 'axios'
 
 // 重新导出枚举类型供外部使用
 export type { BackupTypeType as BackupType }
@@ -264,4 +265,13 @@ export function getDeviceBackupHistory(
 export function downloadBackup(id: string) {
   // 返回下载 URL，由前端处理下载
   return `/backups/${id}/download`
+}
+
+export function exportBackups(fmt: 'csv' | 'xlsx' = 'csv') {
+  return request<AxiosResponse<Blob>>({
+    url: '/backups/export',
+    method: 'get',
+    params: { fmt },
+    responseType: 'blob',
+  })
 }

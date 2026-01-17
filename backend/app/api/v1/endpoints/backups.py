@@ -137,6 +137,18 @@ async def get_recycle_backups(
     device_id: UUID | None = Query(default=None, description="设备ID筛选"),
     backup_type: BackupType | None = Query(default=None, description="备份类型筛选"),
 ) -> ResponseBase[PaginatedResponse[BackupResponse]]:
+    """获取已软删除的备份列表（回收站）。
+
+    Args:
+        service (BackupService): 备份服务依赖。
+        page (int): 页码。
+        page_size (int): 每页数量。
+        device_id (UUID | None): 设备筛选。
+        backup_type (BackupType | None): 备份类型筛选。
+
+    Returns:
+        ResponseBase[PaginatedResponse[BackupResponse]]: 回收站备份列表。
+    """
     query = BackupListQuery(
         page=page,
         page_size=page_size,
@@ -185,6 +197,16 @@ async def export_backups(
     db: SessionDep,
     fmt: str = Query("csv", pattern="^(csv|xlsx)$", description="导出格式"),
 ) -> FileResponse:
+    """导出配置备份列表为 CSV/XLSX 文件。
+
+    Args:
+        current_user (User): 当前登录用户。
+        db (Session): 数据库会话。
+        fmt (str): 导出格式，csv 或 xlsx。
+
+    Returns:
+        FileResponse: 下载文件响应，后台自动删除临时文件。
+    """
     svc = ImportExportService(db=db, redis_client=None, base_dir=str(settings.IMPORT_EXPORT_TMP_DIR or "") or None)
     result = await svc.export_table(fmt=fmt, filename_prefix="backups", df_fn=export_backups_df)
     return FileResponse(
@@ -598,6 +620,16 @@ async def delete_backups_batch(
     service: BackupServiceDep,
     current_user: CurrentUser,
 ) -> ResponseBase[BackupBatchDeleteResult]:
+    """批量软删除备份记录。
+
+    Args:
+        request (BackupBatchDeleteRequest): 包含备份 ID 列表的请求。
+        service (BackupService): 备份服务依赖。
+        current_user (User): 操作者。
+
+    Returns:
+        ResponseBase[BackupBatchDeleteResult]: 包含成功/失败统计的响应。
+    """
     result = await service.delete_backups_batch(request.backup_ids)
 
     return ResponseBase(
@@ -618,6 +650,16 @@ async def restore_backups_batch(
     service: BackupServiceDep,
     current_user: CurrentUser,
 ) -> ResponseBase[BackupBatchRestoreResult]:
+    """批量恢复回收站中的备份记录。
+
+    Args:
+        request (BackupBatchRestoreRequest): 包含备份 ID 列表的请求。
+        service (BackupService): 备份服务依赖。
+        current_user (User): 操作者。
+
+    Returns:
+        ResponseBase[BackupBatchRestoreResult]: 批量恢复结果统计。
+    """
     result = await service.restore_backups_batch(request.backup_ids)
     return ResponseBase(
         data=result,
@@ -637,6 +679,16 @@ async def hard_delete_backups_batch(
     service: BackupServiceDep,
     current_user: CurrentUser,
 ) -> ResponseBase[BackupBatchDeleteResult]:
+    """批量硬删除备份记录（物理删除，不可恢复）。
+
+    Args:
+        request (BackupBatchHardDeleteRequest): 包含备份 ID 列表的请求。
+        service (BackupService): 备份服务依赖。
+        current_user (User): 操作者。
+
+    Returns:
+        ResponseBase[BackupBatchDeleteResult]: 批量硬删除结果统计。
+    """
     result = await service.delete_backups_batch(request.backup_ids, hard_delete=True)
     return ResponseBase(
         data=result,
@@ -656,6 +708,16 @@ async def restore_backup(
     service: BackupServiceDep,
     current_user: CurrentUser,
 ) -> ResponseBase[dict]:
+    """恢复回收站中的单个备份记录。
+
+    Args:
+        backup_id (UUID): 备份记录 ID。
+        service (BackupService): 备份服务依赖。
+        current_user (User): 操作者。
+
+    Returns:
+        ResponseBase[dict]: 恢复结果确认对象。
+    """
     await service.restore_backup(backup_id)
     return ResponseBase(data={"id": str(backup_id), "restored": True}, message="备份已恢复")
 
@@ -672,5 +734,15 @@ async def hard_delete_backup(
     service: BackupServiceDep,
     current_user: CurrentUser,
 ) -> ResponseBase[dict]:
+    """硬删除单个备份记录（物理删除，不可恢复）。
+
+    Args:
+        backup_id (UUID): 备份记录 ID。
+        service (BackupService): 备份服务依赖。
+        current_user (User): 操作者。
+
+    Returns:
+        ResponseBase[dict]: 确认硬删除的结果对象。
+    """
     await service.delete_backup(backup_id, hard_delete=True)
     return ResponseBase(data={"id": str(backup_id), "hard_deleted": True}, message="备份已硬删除")

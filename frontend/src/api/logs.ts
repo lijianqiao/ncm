@@ -1,5 +1,6 @@
 import { request } from '@/utils/request'
 import type { ResponseBase, PaginatedResponse } from '@/types/api'
+import type { AxiosResponse } from 'axios'
 
 export interface LoginLog {
   id: string
@@ -52,5 +53,23 @@ export function getOperationLogs(params?: LogSearchParams) {
     url: '/logs/operation',
     method: 'get',
     params,
+  })
+}
+
+export function exportLoginLogs(fmt: 'csv' | 'xlsx' = 'csv') {
+  return request<AxiosResponse<Blob>>({
+    url: '/logs/login/export',
+    method: 'get',
+    params: { fmt },
+    responseType: 'blob',
+  })
+}
+
+export function exportOperationLogs(fmt: 'csv' | 'xlsx' = 'csv') {
+  return request<AxiosResponse<Blob>>({
+    url: '/logs/operation/export',
+    method: 'get',
+    params: { fmt },
+    responseType: 'blob',
   })
 }

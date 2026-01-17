@@ -9,6 +9,7 @@
 import { request } from '@/utils/request'
 import type { ResponseBase, PaginatedResponse } from '@/types/api'
 import type { DiscoveryStatusType } from '@/types/enums'
+import type { AxiosResponse } from 'axios'
 
 // 重新导出枚举类型供外部使用
 export type { DiscoveryStatusType as DiscoveryStatus }
@@ -285,4 +286,13 @@ export async function batchDeleteDiscoveryRecords(ids: string[]) {
       failed_ids: res.data.failed_ids,
     },
   } satisfies ResponseBase<DiscoveryBatchResult>
+}
+
+export function exportDiscoveryRecords(fmt: 'csv' | 'xlsx' = 'csv') {
+  return request<AxiosResponse<Blob>>({
+    url: '/discovery/export',
+    method: 'get',
+    params: { fmt },
+    responseType: 'blob',
+  })
 }

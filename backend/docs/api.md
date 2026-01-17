@@ -382,6 +382,48 @@ Format: `application/json`
 
 ---
 
+### 导出告警列表
+
+**URL**: `/api/v1/alerts/export`
+
+**Method**: `GET`
+
+**Description**:
+
+导出告警列表为 CSV/XLSX 文件。
+
+Args:
+db (Session): 数据库会话。
+current_user (User): 当前登录用户。
+fmt (str): 导出格式，csv 或 xlsx。
+
+Returns:
+FileResponse: 文件下载响应，后台自动清理临时文件。
+
+#### Requests Parameters (Query/Path)
+
+| 参数名 | 位置    | 类型     | 必填 | 描述     | Default |
+| :----- | :------ | :------- | :--- | :------- | :------ |
+| `fmt`  | `query` | `string` | 否   | 导出格式 | csv     |
+
+#### Responses
+
+**Status Code**: `200` - Successful Response
+
+Format: `application/json`
+
+No properties (Empty Object)
+
+**Status Code**: `422` - Validation Error
+
+Format: `application/json`
+
+| 参数名   | 类型                     | 必填 | 描述   |
+| :------- | :----------------------- | :--- | :----- |
+| `detail` | `Array[ValidationError]` | 否   | Detail |
+
+---
+
 ### 获取告警详情
 
 **URL**: `/api/v1/alerts/{alert_id}`
@@ -845,6 +887,48 @@ Format: `application/json`
 | `code`    | `integer`                           | 否   | Code    |
 | `message` | `string`                            | 否   | Message |
 | `data`    | `PaginatedResponse_BackupResponse_` | 否   |         |
+
+**Status Code**: `422` - Validation Error
+
+Format: `application/json`
+
+| 参数名   | 类型                     | 必填 | 描述   |
+| :------- | :----------------------- | :--- | :----- |
+| `detail` | `Array[ValidationError]` | 否   | Detail |
+
+---
+
+### 导出配置备份列表
+
+**URL**: `/api/v1/backups/export`
+
+**Method**: `GET`
+
+**Description**:
+
+导出配置备份列表为 CSV/XLSX 文件。
+
+Args:
+current_user (User): 当前登录用户。
+db (Session): 数据库会话。
+fmt (str): 导出格式，csv 或 xlsx。
+
+Returns:
+FileResponse: 下载文件响应，后台自动删除临时文件。
+
+#### Requests Parameters (Query/Path)
+
+| 参数名 | 位置    | 类型     | 必填 | 描述     | Default |
+| :----- | :------ | :------- | :--- | :------- | :------ |
+| `fmt`  | `query` | `string` | 否   | 导出格式 | csv     |
+
+#### Responses
+
+**Status Code**: `200` - Successful Response
+
+Format: `application/json`
+
+No properties (Empty Object)
 
 **Status Code**: `422` - Validation Error
 
@@ -2298,6 +2382,225 @@ Format: `application/json`
 
 ---
 
+### 导出分组凭据
+
+**URL**: `/api/v1/credentials/export`
+
+**Method**: `GET`
+
+**Description**:
+
+导出分组凭据为 CSV/XLSX 文件。
+
+Args:
+db (Session): 数据库会话。
+current_user (User): 当前登录用户。
+fmt (str): 导出格式，csv 或 xlsx。
+
+Returns:
+FileResponse: 文件下载响应，后台自动清理临时文件。
+
+#### Requests Parameters (Query/Path)
+
+| 参数名 | 位置    | 类型     | 必填 | 描述     | Default |
+| :----- | :------ | :------- | :--- | :------- | :------ |
+| `fmt`  | `query` | `string` | 否   | 导出格式 | csv     |
+
+#### Responses
+
+**Status Code**: `200` - Successful Response
+
+Format: `application/json`
+
+No properties (Empty Object)
+
+**Status Code**: `422` - Validation Error
+
+Format: `application/json`
+
+| 参数名   | 类型                     | 必填 | 描述   |
+| :------- | :----------------------- | :--- | :----- |
+| `detail` | `Array[ValidationError]` | 否   | Detail |
+
+---
+
+### 下载分组凭据导入模板
+
+**URL**: `/api/v1/credentials/import/template`
+
+**Method**: `GET`
+
+**Description**:
+
+下载分组凭据批量导入模板。
+
+Args:
+db (Session): 数据库会话。
+current_user (User): 当前登录用户。
+
+Returns:
+FileResponse: 模板文件下载响应。
+
+#### Responses
+
+**Status Code**: `200` - Successful Response
+
+Format: `application/json`
+
+No properties (Empty Object)
+
+---
+
+### 上传并校验分组凭据导入文件
+
+**URL**: `/api/v1/credentials/import/upload`
+
+**Method**: `POST`
+
+**Description**:
+
+上传并校验分组凭据导入文件。
+
+Args:
+db (Session): 数据库会话。
+current_user (User): 当前登录用户。
+file (UploadFile): 上传的导入数据文件。
+allow_overwrite (bool): 是否允许覆盖已有凭据。
+
+Returns:
+ResponseBase[ImportValidateResponse]: 解析与校验结果。
+
+#### Request Body (multipart/form-data)
+
+| 参数名            | 类型      | 必填 | 描述            |
+| :---------------- | :-------- | :--- | :-------------- |
+| `file`            | `string`  | 是   | File            |
+| `allow_overwrite` | `boolean` | 否   | Allow Overwrite |
+
+#### Responses
+
+**Status Code**: `200` - Successful Response
+
+Format: `application/json`
+
+| 参数名    | 类型                     | 必填 | 描述    |
+| :-------- | :----------------------- | :--- | :------ |
+| `code`    | `integer`                | 否   | Code    |
+| `message` | `string`                 | 否   | Message |
+| `data`    | `ImportValidateResponse` | 否   |         |
+
+**Status Code**: `422` - Validation Error
+
+Format: `application/json`
+
+| 参数名   | 类型                     | 必填 | 描述   |
+| :------- | :----------------------- | :--- | :----- |
+| `detail` | `Array[ValidationError]` | 否   | Detail |
+
+---
+
+### 预览分组凭据导入数据
+
+**URL**: `/api/v1/credentials/import/preview`
+
+**Method**: `GET`
+
+**Description**:
+
+预览分组凭据导入数据。
+
+Args:
+db (Session): 数据库会话。
+current_user (User): 当前登录用户。
+import_id (UUID): 导入任务 ID。
+checksum (str): 文件校验和。
+page (int): 页码。
+page_size (int): 每页数量。
+kind (str): 预览类型（all/valid）。
+
+Returns:
+ResponseBase[ImportPreviewResponse]: 预览数据及分页信息。
+
+#### Requests Parameters (Query/Path)
+
+| 参数名      | 位置    | 类型      | 必填 | 描述       | Default |
+| :---------- | :------ | :-------- | :--- | :--------- | :------ |
+| `import_id` | `query` | `string`  | 是   | 导入ID     |         |
+| `checksum`  | `query` | `string`  | 是   | 文件校验和 |         |
+| `page`      | `query` | `integer` | 否   | 页码       | 1       |
+| `page_size` | `query` | `integer` | 否   | 每页数量   | 20      |
+| `kind`      | `query` | `string`  | 否   | 预览类型   | all     |
+
+#### Responses
+
+**Status Code**: `200` - Successful Response
+
+Format: `application/json`
+
+| 参数名    | 类型                    | 必填 | 描述    |
+| :-------- | :---------------------- | :--- | :------ |
+| `code`    | `integer`               | 否   | Code    |
+| `message` | `string`                | 否   | Message |
+| `data`    | `ImportPreviewResponse` | 否   |         |
+
+**Status Code**: `422` - Validation Error
+
+Format: `application/json`
+
+| 参数名   | 类型                     | 必填 | 描述   |
+| :------- | :----------------------- | :--- | :----- |
+| `detail` | `Array[ValidationError]` | 否   | Detail |
+
+---
+
+### 提交分组凭据导入
+
+**URL**: `/api/v1/credentials/import/commit`
+
+**Method**: `POST`
+
+**Description**:
+
+提交分组凭据导入（单事务执行）。
+
+Args:
+db (Session): 数据库会话。
+current_user (User): 当前登录用户。
+body (ImportCommitRequest): 导入确认请求体。
+
+Returns:
+ResponseBase[ImportCommitResponse]: 导入执行结果。
+
+#### Request Body (application/json)
+
+| 参数名            | 类型      | 必填 | 描述            |
+| :---------------- | :-------- | :--- | :-------------- |
+| `import_id`       | `string`  | 是   | Import Id       |
+| `checksum`        | `string`  | 是   | Checksum        |
+| `allow_overwrite` | `boolean` | 否   | Allow Overwrite |
+
+#### Responses
+
+**Status Code**: `200` - Successful Response
+
+Format: `application/json`
+
+| 参数名    | 类型                   | 必填 | 描述    |
+| :-------- | :--------------------- | :--- | :------ |
+| `code`    | `integer`              | 否   | Code    |
+| `message` | `string`               | 否   | Message |
+| `data`    | `ImportCommitResponse` | 否   |         |
+
+**Status Code**: `422` - Validation Error
+
+Format: `application/json`
+
+| 参数名   | 类型                     | 必填 | 描述   |
+| :------- | :----------------------- | :--- | :----- |
+| `detail` | `Array[ValidationError]` | 否   | Detail |
+
+---
+
 ## Dashboard
 
 ### 获取仪表盘统计
@@ -2599,6 +2902,20 @@ Format: `application/json`
 
 **Method**: `GET`
 
+**Description**:
+
+获取已删除的下发任务列表（回收站）。
+
+仅超级管理员可查看，用于审计与批量恢复。
+
+Args:
+service (DeployService): 下发服务依赖。
+page (int): 页码（从 1 开始）。
+page_size (int): 每页数量（1-500）。
+
+Returns:
+ResponseBase[PaginatedResponse[DeployTaskResponse]]: 回收站任务分页列表。
+
 #### Requests Parameters (Query/Path)
 
 | 参数名      | 位置    | 类型      | 必填 | 描述      | Default |
@@ -2634,6 +2951,20 @@ Format: `application/json`
 
 **Method**: `DELETE`
 
+**Description**:
+
+批量删除下发任务（支持软/硬删除）。
+
+当 `hard_delete` 为 True 时执行物理删除，不可恢复；否则为软删除，可在回收站恢复。
+
+Args:
+request (BatchDeleteRequest): 批量删除请求体（包含 ID 列表与是否硬删除）。
+service (DeployService): 下发服务依赖。
+user (User): 操作人信息。
+
+Returns:
+ResponseBase[BatchOperationResult]: 批量操作结果（成功数与失败ID）。
+
 #### Request Body (application/json)
 
 | 参数名        | 类型            | 必填 | 描述                    |
@@ -2668,6 +2999,18 @@ Format: `application/json`
 **URL**: `/api/v1/deploy/{task_id}`
 
 **Method**: `DELETE`
+
+**Description**:
+
+删除单个下发任务（软删除）。
+
+Args:
+task_id (UUID): 任务 ID。
+service (DeployService): 下发服务依赖。
+user (User): 操作人信息。
+
+Returns:
+ResponseBase[DeployTaskResponse]: 被标记删除后的任务详情。
 
 #### Requests Parameters (Query/Path)
 
@@ -2748,6 +3091,17 @@ Format: `application/json`
 
 **Method**: `POST`
 
+**Description**:
+
+批量恢复已删除的下发任务（从回收站恢复）。
+
+Args:
+request (BatchRestoreRequest): 批量恢复请求体（包含 ID 列表）。
+service (DeployService): 下发服务依赖。
+
+Returns:
+ResponseBase[BatchOperationResult]: 批量恢复结果。
+
 #### Request Body (application/json)
 
 | 参数名 | 类型            | 必填 | 描述             |
@@ -2781,6 +3135,17 @@ Format: `application/json`
 **URL**: `/api/v1/deploy/{task_id}/restore`
 
 **Method**: `POST`
+
+**Description**:
+
+恢复单个已删除的下发任务至正常状态。
+
+Args:
+task_id (UUID): 任务 ID。
+service (DeployService): 下发服务依赖。
+
+Returns:
+ResponseBase[DeployTaskResponse]: 恢复后的任务详情。
 
 #### Requests Parameters (Query/Path)
 
@@ -2816,6 +3181,17 @@ Format: `application/json`
 
 **Method**: `DELETE`
 
+**Description**:
+
+彻底删除单个下发任务（物理删除，不可恢复）。
+
+Args:
+task_id (UUID): 任务 ID。
+service (DeployService): 下发服务依赖。
+
+Returns:
+ResponseBase[dict]: 操作结果消息。
+
 #### Requests Parameters (Query/Path)
 
 | 参数名    | 位置   | 类型     | 必填 | 描述    | Default |
@@ -2849,6 +3225,17 @@ Format: `application/json`
 **URL**: `/api/v1/deploy/batch/hard`
 
 **Method**: `DELETE`
+
+**Description**:
+
+批量彻底删除任务（物理删除，不可恢复）。
+
+Args:
+request (BatchDeleteRequest): 批量请求体（包含 ID 列表）。
+service (DeployService): 下发服务依赖。
+
+Returns:
+ResponseBase[BatchOperationResult]: 批量硬删除结果。
 
 #### Request Body (application/json)
 
@@ -2891,6 +3278,15 @@ Format: `application/json`
 
 获取部门树结构。
 
+Args:
+dept_service (DeptService): 部门服务依赖。
+current_user (User): 当前登录用户。
+keyword (str | None): 关键词过滤 (名称或标识)。
+is_active (bool | None): 是否启用过滤。
+
+Returns:
+ResponseBase[list[DeptResponse]]: 部门树形结构列表。
+
 #### Requests Parameters (Query/Path)
 
 | 参数名      | 位置    | 类型     | 必填 | 描述         | Default |
@@ -2929,6 +3325,17 @@ Format: `application/json`
 **Description**:
 
 获取部门列表（分页）。
+
+Args:
+dept_service (DeptService): 部门服务依赖。
+current_user (User): 当前登录用户。
+page (int): 页码。
+page_size (int): 每页数量。
+keyword (str | None): 关键词过滤。
+is_active (bool | None): 是否启用过滤。
+
+Returns:
+ResponseBase[PaginatedResponse[DeptResponse]]: 分页后的部门列表。
 
 #### Requests Parameters (Query/Path)
 
@@ -2970,6 +3377,14 @@ Format: `application/json`
 **Description**:
 
 创建新部门。
+
+Args:
+dept_in (DeptCreate): 部门创建数据。
+dept_service (DeptService): 部门服务依赖。
+current_user (User): 当前登录用户。
+
+Returns:
+ResponseBase[DeptResponse]: 创建成功的部门信息。
 
 #### Request Body (application/json)
 
@@ -3013,7 +3428,20 @@ Format: `application/json`
 
 **Description**:
 
-获取已删除的部门列表（回收站）。仅限超级管理员。
+获取已删除的部门列表（回收站）。
+
+仅限超级管理员访问。
+
+Args:
+dept_service (DeptService): 部门服务依赖。
+active_superuser (User): 超级管理员权限验证。
+page (int): 页码。
+page_size (int): 每页数量。
+keyword (str | None): 关键词过滤。
+is_active (bool | None): 是否启用过滤。
+
+Returns:
+ResponseBase[PaginatedResponse[DeptResponse]]: 回收站中的部门列表。
 
 #### Requests Parameters (Query/Path)
 
@@ -3056,6 +3484,14 @@ Format: `application/json`
 
 根据 ID 获取部门详情。
 
+Args:
+id (UUID): 部门 ID。
+dept_service (DeptService): 部门服务依赖。
+current_user (User): 当前登录用户。
+
+Returns:
+ResponseBase[DeptResponse]: 部门详细信息。
+
 #### Requests Parameters (Query/Path)
 
 | 参数名 | 位置   | 类型     | 必填 | 描述 | Default |
@@ -3092,7 +3528,16 @@ Format: `application/json`
 
 **Description**:
 
-更新部门。
+更新部门信息。
+
+Args:
+id (UUID): 部门 ID。
+dept_in (DeptUpdate): 部门更新数据。
+dept_service (DeptService): 部门服务依赖。
+current_user (User): 当前登录用户。
+
+Returns:
+ResponseBase[DeptResponse]: 更新后的部门信息。
 
 #### Requests Parameters (Query/Path)
 
@@ -3145,6 +3590,14 @@ Format: `application/json`
 
 删除部门（软删除）。
 
+Args:
+id (UUID): 部门 ID。
+dept_service (DeptService): 部门服务依赖。
+current_user (User): 当前登录用户。
+
+Returns:
+ResponseBase[DeptResponse]: 被删除的部门信息。
+
 #### Requests Parameters (Query/Path)
 
 | 参数名 | 位置   | 类型     | 必填 | 描述 | Default |
@@ -3183,6 +3636,14 @@ Format: `application/json`
 
 批量删除部门。
 
+Args:
+request (BatchDeleteRequest): 批量删除请求体。
+dept_service (DeptService): 部门服务依赖。
+current_user (User): 当前登录用户。
+
+Returns:
+ResponseBase[BatchOperationResult]: 批量删除结果。
+
 #### Request Body (application/json)
 
 | 参数名        | 类型            | 必填 | 描述                    |
@@ -3220,7 +3681,17 @@ Format: `application/json`
 
 **Description**:
 
-批量恢复部门。需要超级管理员权限。
+批量恢复部门。
+
+仅限超级管理员访问。
+
+Args:
+request (BatchRestoreRequest): 批量恢复请求体。
+dept_service (DeptService): 部门服务依赖。
+active_superuser (User): 超级管理员权限验证。
+
+Returns:
+ResponseBase[BatchOperationResult]: 批量恢复结果。
 
 #### Request Body (application/json)
 
@@ -3258,7 +3729,17 @@ Format: `application/json`
 
 **Description**:
 
-恢复已删除部门。需要超级管理员权限。
+恢复已删除部门。
+
+仅限超级管理员访问。
+
+Args:
+id (UUID): 部门 ID。
+dept_service (DeptService): 部门服务依赖。
+active_superuser (User): 超级管理员权限验证。
+
+Returns:
+ResponseBase[DeptResponse]: 恢复后的部门信息。
 
 #### Requests Parameters (Query/Path)
 
@@ -3296,7 +3777,17 @@ Format: `application/json`
 
 **Description**:
 
-彻底删除部门（硬删除，不可恢复）。需要超级管理员权限。
+彻底删除部门（硬删除，不可恢复）。
+
+仅限超级管理员访问。
+
+Args:
+id (UUID): 部门 ID。
+dept_service (DeptService): 部门服务依赖。
+active_superuser (User): 超级管理员权限验证。
+
+Returns:
+ResponseBase[dict]: 删除结果。
 
 #### Requests Parameters (Query/Path)
 
@@ -3334,7 +3825,17 @@ Format: `application/json`
 
 **Description**:
 
-批量彻底删除部门（硬删除，不可恢复）。需要超级管理员权限。
+批量彻底删除部门（硬删除，不可恢复）。
+
+仅限超级管理员访问。
+
+Args:
+request (BatchDeleteRequest): 批量删除请求体。
+dept_service (DeptService): 部门服务依赖。
+active_superuser (User): 超级管理员权限验证。
+
+Returns:
+ResponseBase[BatchOperationResult]: 批量删除结果。
 
 #### Request Body (application/json)
 
@@ -4135,6 +4636,212 @@ Format: `application/json`
 
 ---
 
+### 导出设备列表
+
+**URL**: `/api/v1/devices/export`
+
+**Method**: `GET`
+
+**Description**:
+
+导出设备列表为 CSV/XLSX 文件。
+
+Args:
+import_export_service (ImportExportService): 导入导出服务依赖。
+fmt (str): 导出格式（xlsx 或 csv）。
+
+Returns:
+FileResponse: 文件下载响应，后台自动清理临时文件。
+
+#### Requests Parameters (Query/Path)
+
+| 参数名 | 位置    | 类型     | 必填 | 描述               | Default |
+| :----- | :------ | :------- | :--- | :----------------- | :------ |
+| `fmt`  | `query` | `string` | 否   | 导出格式：xlsx/csv | xlsx    |
+
+#### Responses
+
+**Status Code**: `200` - Successful Response
+
+**Status Code**: `422` - Validation Error
+
+Format: `application/json`
+
+| 参数名   | 类型                     | 必填 | 描述   |
+| :------- | :----------------------- | :--- | :----- |
+| `detail` | `Array[ValidationError]` | 否   | Detail |
+
+---
+
+### 下载设备导入模板
+
+**URL**: `/api/v1/devices/import/template`
+
+**Method**: `GET`
+
+**Description**:
+
+下载设备批量导入模板。
+
+Args:
+import_export_service (ImportExportService): 导入导出服务依赖。
+
+Returns:
+FileResponse: 模板文件下载响应。
+
+#### Responses
+
+**Status Code**: `200` - Successful Response
+
+---
+
+### 上传并解析校验设备导入文件
+
+**URL**: `/api/v1/devices/import/upload`
+
+**Method**: `POST`
+
+**Description**:
+
+上传并解析校验设备导入文件。
+
+Args:
+import_export_service (ImportExportService): 导入导出服务依赖。
+file (UploadFile): 导入的设备数据文件。
+allow_overwrite (bool): 是否允许覆盖已有设备数据。
+
+Returns:
+ResponseBase[ImportValidateResponse]: 解析与校验结果。
+
+#### Request Body (multipart/form-data)
+
+| 参数名            | 类型      | 必填 | 描述            |
+| :---------------- | :-------- | :--- | :-------------- |
+| `file`            | `string`  | 是   | File            |
+| `allow_overwrite` | `boolean` | 否   | Allow Overwrite |
+
+#### Responses
+
+**Status Code**: `200` - Successful Response
+
+Format: `application/json`
+
+| 参数名    | 类型                     | 必填 | 描述    |
+| :-------- | :----------------------- | :--- | :------ |
+| `code`    | `integer`                | 否   | Code    |
+| `message` | `string`                 | 否   | Message |
+| `data`    | `ImportValidateResponse` | 否   |         |
+
+**Status Code**: `422` - Validation Error
+
+Format: `application/json`
+
+| 参数名   | 类型                     | 必填 | 描述   |
+| :------- | :----------------------- | :--- | :----- |
+| `detail` | `Array[ValidationError]` | 否   | Detail |
+
+---
+
+### 预览导入数据
+
+**URL**: `/api/v1/devices/import/preview`
+
+**Method**: `GET`
+
+**Description**:
+
+预览设备导入解析后的数据。
+
+Args:
+import_export_service (ImportExportService): 导入导出服务依赖。
+import_id (UUID): 导入任务 ID。
+checksum (str): 文件校验和。
+page (int): 页码。
+page_size (int): 每页数量。
+kind (str): 预览类型（all/valid）。
+
+Returns:
+ResponseBase[ImportPreviewResponse]: 预览数据及分页信息。
+
+#### Requests Parameters (Query/Path)
+
+| 参数名      | 位置    | 类型      | 必填 | 描述      | Default |
+| :---------- | :------ | :-------- | :--- | :-------- | :------ |
+| `import_id` | `query` | `string`  | 是   | Import Id |         |
+| `checksum`  | `query` | `string`  | 是   | Checksum  |         |
+| `page`      | `query` | `integer` | 否   | Page      | 1       |
+| `page_size` | `query` | `integer` | 否   | Page Size | 20      |
+| `kind`      | `query` | `string`  | 否   | Kind      | all     |
+
+#### Responses
+
+**Status Code**: `200` - Successful Response
+
+Format: `application/json`
+
+| 参数名    | 类型                    | 必填 | 描述    |
+| :-------- | :---------------------- | :--- | :------ |
+| `code`    | `integer`               | 否   | Code    |
+| `message` | `string`                | 否   | Message |
+| `data`    | `ImportPreviewResponse` | 否   |         |
+
+**Status Code**: `422` - Validation Error
+
+Format: `application/json`
+
+| 参数名   | 类型                     | 必填 | 描述   |
+| :------- | :----------------------- | :--- | :----- |
+| `detail` | `Array[ValidationError]` | 否   | Detail |
+
+---
+
+### 确认导入设备（单事务）
+
+**URL**: `/api/v1/devices/import/commit`
+
+**Method**: `POST`
+
+**Description**:
+
+确认导入设备数据（单事务提交）。
+
+Args:
+body (ImportCommitRequest): 导入确认请求体。
+import_export_service (ImportExportService): 导入导出服务依赖。
+
+Returns:
+ResponseBase[ImportCommitResponse]: 导入执行结果。
+
+#### Request Body (application/json)
+
+| 参数名            | 类型      | 必填 | 描述            |
+| :---------------- | :-------- | :--- | :-------------- |
+| `import_id`       | `string`  | 是   | Import Id       |
+| `checksum`        | `string`  | 是   | Checksum        |
+| `allow_overwrite` | `boolean` | 否   | Allow Overwrite |
+
+#### Responses
+
+**Status Code**: `200` - Successful Response
+
+Format: `application/json`
+
+| 参数名    | 类型                   | 必填 | 描述    |
+| :-------- | :--------------------- | :--- | :------ |
+| `code`    | `integer`              | 否   | Code    |
+| `message` | `string`               | 否   | Message |
+| `data`    | `ImportCommitResponse` | 否   |         |
+
+**Status Code**: `422` - Validation Error
+
+Format: `application/json`
+
+| 参数名   | 类型                     | 必填 | 描述   |
+| :------- | :----------------------- | :--- | :----- |
+| `detail` | `Array[ValidationError]` | 否   | Detail |
+
+---
+
 ## Diff
 
 ### 获取设备最新配置差异
@@ -4293,12 +5000,14 @@ Format: `application/json`
 获取通过网络扫描发现的所有设备记录。
 
 Args:
-db (Session): 数据库会话。
+service (DiscoveryService): 发现服务依赖。
 page (int): 当前页码。
 page_size (int): 每页限制。
 status (DiscoveryStatus | None): 状态过滤（如：NEW, IGNORED, MATCHED）。
 keyword (str | None): 匹配 IP、MAC、主机名的搜索关键词。
 scan_source (str | None): 识别扫描的具体来源标识。
+sort_by (str | None): 排序字段。
+sort_order (str | None): 排序方向。
 
 Returns:
 ResponseBase[PaginatedResponse[DiscoveryResponse]]: 包含发现资产详情的分页响应。
@@ -4348,8 +5057,8 @@ Format: `application/json`
 获取单个扫描发现记录的完整属性。
 
 Args:
-db (Session): 数据库会话。
 discovery_id (UUID): 扫描结果主键 ID。
+service (DiscoveryService): 发现服务依赖。
 
 Returns:
 ResponseBase[DiscoveryResponse]: 发现资产及 CMDB 匹配关联信息。
@@ -4393,9 +5102,9 @@ Format: `application/json`
 物理删除或隐藏特定的扫描发现结果。
 
 Args:
-db (Session): 数据库会话。
 discovery_id (UUID): 扫描记录 ID。
 current_user (CurrentUser): 当前执行操作的用户。
+service (DiscoveryService): 发现服务依赖。
 
 Returns:
 ResponseBase[DeleteResponse]: 确认删除的消息。
@@ -4433,6 +5142,25 @@ Format: `application/json`
 **URL**: `/api/v1/discovery/recycle-bin`
 
 **Method**: `GET`
+
+**Description**:
+
+获取已删除的发现记录列表（回收站）。
+
+仅限超级管理员访问。
+
+Args:
+service (DiscoveryService): 发现服务依赖。
+page (int): 页码。
+page_size (int): 每页数量。
+status (DiscoveryStatus | None): 状态筛选。
+keyword (str | None): 关键词搜索。
+scan_source (str | None): 扫描来源筛选。
+sort_by (str | None): 排序字段。
+sort_order (str | None): 排序方向。
+
+Returns:
+ResponseBase[PaginatedResponse[DiscoveryResponse]]: 回收站中的发现记录列表。
 
 #### Requests Parameters (Query/Path)
 
@@ -4474,6 +5202,18 @@ Format: `application/json`
 
 **Method**: `DELETE`
 
+**Description**:
+
+批量删除发现记录（软删除）。
+
+Args:
+request (BatchDeleteRequest): 批量删除请求体。
+service (DiscoveryService): 发现服务依赖。
+current_user (CurrentUser): 当前操作用户。
+
+Returns:
+ResponseBase[BatchOperationResult]: 批量操作结果。
+
 #### Request Body (application/json)
 
 | 参数名        | 类型            | 必填 | 描述                    |
@@ -4509,6 +5249,19 @@ Format: `application/json`
 
 **Method**: `POST`
 
+**Description**:
+
+批量恢复发现记录。
+
+仅限超级管理员访问。
+
+Args:
+request (BatchRestoreRequest): 批量恢复请求体。
+service (DiscoveryService): 发现服务依赖。
+
+Returns:
+ResponseBase[BatchOperationResult]: 批量恢复结果。
+
 #### Request Body (application/json)
 
 | 参数名 | 类型            | 必填 | 描述             |
@@ -4542,6 +5295,19 @@ Format: `application/json`
 **URL**: `/api/v1/discovery/{discovery_id}/restore`
 
 **Method**: `POST`
+
+**Description**:
+
+恢复已删除的发现记录。
+
+仅限超级管理员访问。
+
+Args:
+discovery_id (UUID): 发现记录 ID。
+service (DiscoveryService): 发现服务依赖。
+
+Returns:
+ResponseBase[DiscoveryResponse]: 恢复后的发现记录详情。
 
 #### Requests Parameters (Query/Path)
 
@@ -4577,6 +5343,19 @@ Format: `application/json`
 
 **Method**: `DELETE`
 
+**Description**:
+
+彻底删除发现记录（硬删除，不可恢复）。
+
+仅限超级管理员访问。
+
+Args:
+discovery_id (UUID): 发现记录 ID。
+service (DiscoveryService): 发现服务依赖。
+
+Returns:
+ResponseBase[dict]: 删除结果。
+
 #### Requests Parameters (Query/Path)
 
 | 参数名         | 位置   | 类型     | 必填 | 描述         | Default |
@@ -4610,6 +5389,19 @@ Format: `application/json`
 **URL**: `/api/v1/discovery/batch/hard`
 
 **Method**: `DELETE`
+
+**Description**:
+
+批量彻底删除发现记录（硬删除，不可恢复）。
+
+仅限超级管理员访问。
+
+Args:
+request (BatchDeleteRequest): 批量删除请求体。
+service (DiscoveryService): 发现服务依赖。
+
+Returns:
+ResponseBase[BatchOperationResult]: 批量删除结果。
 
 #### Request Body (application/json)
 
@@ -4656,8 +5448,8 @@ Args:
 db (Session): 数据库会话。
 discovery_id (UUID): 发现记录关联 ID。
 request (AdoptDeviceRequest): 纳管配置，包含名称、分组、凭据等。
-scan_service (ScanService): 扫描资产服务。
 current_user (CurrentUser): 当前操作人。
+scan_service (ScanService): 扫描资产服务。
 
 Returns:
 ResponseBase[AdoptResponse]: 包含新设备 ID 的确认响应。
@@ -4844,6 +5636,48 @@ Format: `application/json`
 
 ---
 
+### 导出发现记录
+
+**URL**: `/api/v1/discovery/export`
+
+**Method**: `GET`
+
+**Description**:
+
+导出发现记录为 CSV/XLSX 文件。
+
+Args:
+db (Session): 数据库会话。
+current_user (CurrentUser): 当前登录用户。
+fmt (str): 导出格式，csv 或 xlsx。
+
+Returns:
+FileResponse: 文件下载响应，后台自动清理临时文件。
+
+#### Requests Parameters (Query/Path)
+
+| 参数名 | 位置    | 类型     | 必填 | 描述     | Default |
+| :----- | :------ | :------- | :--- | :------- | :------ |
+| `fmt`  | `query` | `string` | 否   | 导出格式 | csv     |
+
+#### Responses
+
+**Status Code**: `200` - Successful Response
+
+Format: `application/json`
+
+No properties (Empty Object)
+
+**Status Code**: `422` - Validation Error
+
+Format: `application/json`
+
+| 参数名   | 类型                     | 必填 | 描述   |
+| :------- | :----------------------- | :--- | :----- |
+| `detail` | `Array[ValidationError]` | 否   | Detail |
+
+---
+
 ## Inventory_audit
 
 ### 创建盘点任务（异步执行）
@@ -4951,6 +5785,22 @@ Format: `application/json`
 
 **Method**: `GET`
 
+**Description**:
+
+获取已删除的盘点任务列表（回收站）。
+
+仅限超级管理员访问。
+
+Args:
+service (InventoryAuditService): 资产盘点服务。
+active_superuser (User): 超级管理员权限验证。
+page (int): 页码。
+page_size (int): 每页数量。
+status (str | None): 状态筛选。
+
+Returns:
+ResponseBase[PaginatedResponse[InventoryAuditResponse]]: 回收站中的盘点任务列表。
+
 #### Requests Parameters (Query/Path)
 
 | 参数名      | 位置    | 类型      | 必填 | 描述      | Default |
@@ -4987,6 +5837,18 @@ Format: `application/json`
 
 **Method**: `DELETE`
 
+**Description**:
+
+批量删除盘点任务（软删除）。
+
+Args:
+request (BatchDeleteRequest): 批量删除请求体。
+service (InventoryAuditService): 资产盘点服务。
+current_user (User): 当前登录用户。
+
+Returns:
+ResponseBase[BatchOperationResult]: 批量操作结果。
+
 #### Request Body (application/json)
 
 | 参数名        | 类型            | 必填 | 描述                    |
@@ -5021,6 +5883,18 @@ Format: `application/json`
 **URL**: `/api/v1/inventory_audit/{audit_id}`
 
 **Method**: `DELETE`
+
+**Description**:
+
+删除盘点任务（软删除）。
+
+Args:
+audit_id (UUID): 盘点任务 ID。
+service (InventoryAuditService): 资产盘点服务。
+current_user (User): 当前登录用户。
+
+Returns:
+ResponseBase[InventoryAuditResponse]: 被删除的盘点任务详情。
 
 #### Requests Parameters (Query/Path)
 
@@ -5102,6 +5976,20 @@ Format: `application/json`
 
 **Method**: `POST`
 
+**Description**:
+
+批量恢复盘点任务。
+
+仅限超级管理员访问。
+
+Args:
+request (BatchRestoreRequest): 批量恢复请求体。
+service (InventoryAuditService): 资产盘点服务。
+active_superuser (User): 超级管理员权限验证。
+
+Returns:
+ResponseBase[BatchOperationResult]: 批量恢复结果。
+
 #### Request Body (application/json)
 
 | 参数名 | 类型            | 必填 | 描述             |
@@ -5135,6 +6023,20 @@ Format: `application/json`
 **URL**: `/api/v1/inventory_audit/{audit_id}/restore`
 
 **Method**: `POST`
+
+**Description**:
+
+恢复已删除的盘点任务。
+
+仅限超级管理员访问。
+
+Args:
+audit_id (UUID): 盘点任务 ID。
+service (InventoryAuditService): 资产盘点服务。
+active_superuser (User): 超级管理员权限验证。
+
+Returns:
+ResponseBase[InventoryAuditResponse]: 恢复后的盘点任务详情。
 
 #### Requests Parameters (Query/Path)
 
@@ -5170,6 +6072,20 @@ Format: `application/json`
 
 **Method**: `DELETE`
 
+**Description**:
+
+彻底删除盘点任务（硬删除，不可恢复）。
+
+仅限超级管理员访问。
+
+Args:
+audit_id (UUID): 盘点任务 ID。
+service (InventoryAuditService): 资产盘点服务。
+active_superuser (User): 超级管理员权限验证。
+
+Returns:
+ResponseBase[dict]: 删除结果。
+
 #### Requests Parameters (Query/Path)
 
 | 参数名     | 位置   | 类型     | 必填 | 描述     | Default |
@@ -5204,6 +6120,20 @@ Format: `application/json`
 
 **Method**: `DELETE`
 
+**Description**:
+
+批量彻底删除盘点任务（硬删除，不可恢复）。
+
+仅限超级管理员访问。
+
+Args:
+request (BatchDeleteRequest): 批量删除请求体。
+service (InventoryAuditService): 资产盘点服务。
+active_superuser (User): 超级管理员权限验证。
+
+Returns:
+ResponseBase[BatchOperationResult]: 批量删除结果。
+
 #### Request Body (application/json)
 
 | 参数名        | 类型            | 必填 | 描述                    |
@@ -5222,6 +6152,48 @@ Format: `application/json`
 | `code`    | `integer`              | 否   | Code    |
 | `message` | `string`               | 否   | Message |
 | `data`    | `BatchOperationResult` | 否   |         |
+
+**Status Code**: `422` - Validation Error
+
+Format: `application/json`
+
+| 参数名   | 类型                     | 必填 | 描述   |
+| :------- | :----------------------- | :--- | :----- |
+| `detail` | `Array[ValidationError]` | 否   | Detail |
+
+---
+
+### 导出盘点任务列表
+
+**URL**: `/api/v1/inventory_audit/export`
+
+**Method**: `GET`
+
+**Description**:
+
+导出盘点任务列表为 CSV/XLSX 文件。
+
+Args:
+db (Session): 数据库会话。
+current_user (User): 当前登录用户。
+fmt (str): 导出格式，csv 或 xlsx。
+
+Returns:
+FileResponse: 文件下载响应，后台自动清理临时文件。
+
+#### Requests Parameters (Query/Path)
+
+| 参数名 | 位置    | 类型     | 必填 | 描述     | Default |
+| :----- | :------ | :------- | :--- | :------- | :------ |
+| `fmt`  | `query` | `string` | 否   | 导出格式 | csv     |
+
+#### Responses
+
+**Status Code**: `200` - Successful Response
+
+Format: `application/json`
+
+No properties (Empty Object)
 
 **Status Code**: `422` - Validation Error
 
@@ -5374,6 +6346,90 @@ Format: `application/json`
 | `code`    | `integer`                                 | 否   | Code    |
 | `message` | `string`                                  | 否   | Message |
 | `data`    | `PaginatedResponse_OperationLogResponse_` | 否   |         |
+
+**Status Code**: `422` - Validation Error
+
+Format: `application/json`
+
+| 参数名   | 类型                     | 必填 | 描述   |
+| :------- | :----------------------- | :--- | :----- |
+| `detail` | `Array[ValidationError]` | 否   | Detail |
+
+---
+
+### 导出登录日志
+
+**URL**: `/api/v1/logs/login/export`
+
+**Method**: `GET`
+
+**Description**:
+
+导出登录日志列表为 CSV/XLSX 文件。
+
+Args:
+db (Session): 数据库会话。
+current_user (User): 当前登录用户。
+fmt (str): 导出格式，csv 或 xlsx。
+
+Returns:
+FileResponse: 文件下载响应，后台自动清理临时文件。
+
+#### Requests Parameters (Query/Path)
+
+| 参数名 | 位置    | 类型     | 必填 | 描述     | Default |
+| :----- | :------ | :------- | :--- | :------- | :------ |
+| `fmt`  | `query` | `string` | 否   | 导出格式 | csv     |
+
+#### Responses
+
+**Status Code**: `200` - Successful Response
+
+Format: `application/json`
+
+No properties (Empty Object)
+
+**Status Code**: `422` - Validation Error
+
+Format: `application/json`
+
+| 参数名   | 类型                     | 必填 | 描述   |
+| :------- | :----------------------- | :--- | :----- |
+| `detail` | `Array[ValidationError]` | 否   | Detail |
+
+---
+
+### 导出操作日志
+
+**URL**: `/api/v1/logs/operation/export`
+
+**Method**: `GET`
+
+**Description**:
+
+导出操作日志列表为 CSV/XLSX 文件。
+
+Args:
+db (Session): 数据库会话。
+current_user (User): 当前登录用户。
+fmt (str): 导出格式，csv 或 xlsx。
+
+Returns:
+FileResponse: 文件下载响应，后台自动清理临时文件。
+
+#### Requests Parameters (Query/Path)
+
+| 参数名 | 位置    | 类型     | 必填 | 描述     | Default |
+| :----- | :------ | :------- | :--- | :------- | :------ |
+| `fmt`  | `query` | `string` | 否   | 导出格式 | csv     |
+
+#### Responses
+
+**Status Code**: `200` - Successful Response
+
+Format: `application/json`
+
+No properties (Empty Object)
 
 **Status Code**: `422` - Validation Error
 
@@ -6798,6 +7854,48 @@ Format: `application/json`
 
 ---
 
+### 导出在线会话
+
+**URL**: `/api/v1/sessions/export`
+
+**Method**: `GET`
+
+**Description**:
+
+导出在线会话列表为 CSV/XLSX 文件。
+
+Args:
+db (Session): 数据库会话。
+current_user (User): 当前登录用户。
+fmt (str): 导出格式，csv 或 xlsx。
+
+Returns:
+FileResponse: 文件下载响应，后台自动清理临时文件。
+
+#### Requests Parameters (Query/Path)
+
+| 参数名 | 位置    | 类型     | 必填 | 描述     | Default |
+| :----- | :------ | :------- | :--- | :------- | :------ |
+| `fmt`  | `query` | `string` | 否   | 导出格式 | csv     |
+
+#### Responses
+
+**Status Code**: `200` - Successful Response
+
+Format: `application/json`
+
+No properties (Empty Object)
+
+**Status Code**: `422` - Validation Error
+
+Format: `application/json`
+
+| 参数名   | 类型                     | 必填 | 描述   |
+| :------- | :----------------------- | :--- | :----- |
+| `detail` | `Array[ValidationError]` | 否   | Detail |
+
+---
+
 ## Snmp_credentials
 
 ### 获取部门 SNMP 凭据列表
@@ -6805,6 +7903,20 @@ Format: `application/json`
 **URL**: `/api/v1/snmp_credentials/`
 
 **Method**: `GET`
+
+**Description**:
+
+获取部门 SNMP 凭据列表。
+
+Args:
+db (Session): 数据库会话。
+current_user (User): 当前登录用户。
+page (int): 页码。
+page_size (int): 每页数量。
+dept_id (UUID | None): 部门 ID 筛选。
+
+Returns:
+ResponseBase[PaginatedResponse[DeptSnmpCredentialResponse]]: 分页后的凭据列表。
 
 #### Requests Parameters (Query/Path)
 
@@ -6841,6 +7953,18 @@ Format: `application/json`
 **URL**: `/api/v1/snmp_credentials/`
 
 **Method**: `POST`
+
+**Description**:
+
+创建新的部门 SNMP 凭据。
+
+Args:
+db (Session): 数据库会话。
+request (DeptSnmpCredentialCreate): 创建请求体。
+current_user (User): 当前登录用户。
+
+Returns:
+ResponseBase[DeptSnmpCredentialResponse]: 创建成功的凭据信息。
 
 #### Request Body (application/json)
 
@@ -6885,6 +8009,19 @@ Format: `application/json`
 **URL**: `/api/v1/snmp_credentials/{snmp_cred_id}`
 
 **Method**: `PUT`
+
+**Description**:
+
+更新部门 SNMP 凭据。
+
+Args:
+db (Session): 数据库会话。
+snmp_cred_id (UUID): 凭据 ID。
+request (DeptSnmpCredentialUpdate): 更新请求体。
+current_user (User): 当前登录用户。
+
+Returns:
+ResponseBase[DeptSnmpCredentialResponse]: 更新后的凭据信息。
 
 #### Requests Parameters (Query/Path)
 
@@ -6935,6 +8072,18 @@ Format: `application/json`
 
 **Method**: `DELETE`
 
+**Description**:
+
+删除部门 SNMP 凭据（软删除）。
+
+Args:
+db (Session): 数据库会话。
+snmp_cred_id (UUID): 凭据 ID。
+current_user (User): 当前登录用户。
+
+Returns:
+ResponseBase[dict]: 删除结果。
+
 #### Requests Parameters (Query/Path)
 
 | 参数名         | 位置   | 类型     | 必填 | 描述         | Default |
@@ -6973,6 +8122,14 @@ Format: `application/json`
 
 批量删除 SNMP 凭据（软删除）。
 
+Args:
+db (Session): 数据库会话。
+request (SnmpCredentialBatchRequest): 批量删除请求体。
+current_user (User): 当前登录用户。
+
+Returns:
+ResponseBase[SnmpCredentialBatchResult]: 批量删除结果。
+
 #### Request Body (application/json)
 
 | 参数名 | 类型            | 必填 | 描述            |
@@ -7010,6 +8167,16 @@ Format: `application/json`
 **Description**:
 
 获取回收站 SNMP 凭据列表（已删除的凭据）。
+
+Args:
+db (Session): 数据库会话。
+current_user (User): 当前登录用户。
+page (int): 页码。
+page_size (int): 每页数量。
+keyword (str | None): 关键字搜索。
+
+Returns:
+ResponseBase[PaginatedResponse[DeptSnmpCredentialResponse]]: 回收站中的凭据列表。
 
 #### Requests Parameters (Query/Path)
 
@@ -7051,6 +8218,14 @@ Format: `application/json`
 
 恢复已删除的 SNMP 凭据。
 
+Args:
+db (Session): 数据库会话。
+snmp_cred_id (UUID): 凭据 ID。
+current_user (User): 当前登录用户。
+
+Returns:
+ResponseBase[DeptSnmpCredentialResponse]: 恢复后的凭据信息。
+
 #### Requests Parameters (Query/Path)
 
 | 参数名         | 位置   | 类型     | 必填 | 描述         | Default |
@@ -7088,6 +8263,14 @@ Format: `application/json`
 **Description**:
 
 批量恢复已删除的 SNMP 凭据。
+
+Args:
+db (Session): 数据库会话。
+request (SnmpCredentialBatchRequest): 批量恢复请求体。
+current_user (User): 当前登录用户。
+
+Returns:
+ResponseBase[SnmpCredentialBatchResult]: 批量恢复结果。
 
 #### Request Body (application/json)
 
@@ -7165,6 +8348,14 @@ Format: `application/json`
 
 批量彻底删除 SNMP 凭据（硬删除，不可恢复）。
 
+Args:
+db (Session): 数据库会话。
+request (SnmpCredentialBatchRequest): 批量删除请求体。
+current_user (User): 当前登录用户。
+
+Returns:
+ResponseBase[SnmpCredentialBatchResult]: 批量删除结果。
+
 #### Request Body (application/json)
 
 | 参数名 | 类型            | 必填 | 描述            |
@@ -7182,6 +8373,197 @@ Format: `application/json`
 | `code`    | `integer`                   | 否   | Code    |
 | `message` | `string`                    | 否   | Message |
 | `data`    | `SnmpCredentialBatchResult` | 否   |         |
+
+**Status Code**: `422` - Validation Error
+
+Format: `application/json`
+
+| 参数名   | 类型                     | 必填 | 描述   |
+| :------- | :----------------------- | :--- | :----- |
+| `detail` | `Array[ValidationError]` | 否   | Detail |
+
+---
+
+### 导出 SNMP 凭据
+
+**URL**: `/api/v1/snmp_credentials/export`
+
+**Method**: `GET`
+
+#### Requests Parameters (Query/Path)
+
+| 参数名 | 位置    | 类型     | 必填 | 描述     | Default |
+| :----- | :------ | :------- | :--- | :------- | :------ |
+| `fmt`  | `query` | `string` | 否   | 导出格式 | csv     |
+
+#### Responses
+
+**Status Code**: `200` - Successful Response
+
+Format: `application/json`
+
+No properties (Empty Object)
+
+**Status Code**: `422` - Validation Error
+
+Format: `application/json`
+
+| 参数名   | 类型                     | 必填 | 描述   |
+| :------- | :----------------------- | :--- | :----- |
+| `detail` | `Array[ValidationError]` | 否   | Detail |
+
+---
+
+### 下载 SNMP 凭据导入模板
+
+**URL**: `/api/v1/snmp_credentials/import/template`
+
+**Method**: `GET`
+
+**Description**:
+
+下载 SNMP 凭据导入模板。
+
+Args:
+db (Session): 数据库会话。
+current_user (User): 当前登录用户。
+
+Returns:
+FileResponse: 模板文件下载响应。
+
+#### Responses
+
+**Status Code**: `200` - Successful Response
+
+Format: `application/json`
+
+No properties (Empty Object)
+
+---
+
+### 上传并校验 SNMP 凭据导入文件
+
+**URL**: `/api/v1/snmp_credentials/import/upload`
+
+**Method**: `POST`
+
+**Description**:
+
+上传并校验 SNMP 凭据导入文件。
+
+Args:
+db (Session): 数据库会话。
+current_user (User): 当前登录用户。
+file (UploadFile): 上传的文件。
+allow_overwrite (bool): 是否允许覆盖同名数据。
+
+Returns:
+ResponseBase[ImportValidateResponse]: 校验结果响应。
+
+#### Request Body (multipart/form-data)
+
+| 参数名            | 类型      | 必填 | 描述            |
+| :---------------- | :-------- | :--- | :-------------- |
+| `file`            | `string`  | 是   | File            |
+| `allow_overwrite` | `boolean` | 否   | Allow Overwrite |
+
+#### Responses
+
+**Status Code**: `200` - Successful Response
+
+Format: `application/json`
+
+| 参数名    | 类型                     | 必填 | 描述    |
+| :-------- | :----------------------- | :--- | :------ |
+| `code`    | `integer`                | 否   | Code    |
+| `message` | `string`                 | 否   | Message |
+| `data`    | `ImportValidateResponse` | 否   |         |
+
+**Status Code**: `422` - Validation Error
+
+Format: `application/json`
+
+| 参数名   | 类型                     | 必填 | 描述   |
+| :------- | :----------------------- | :--- | :----- |
+| `detail` | `Array[ValidationError]` | 否   | Detail |
+
+---
+
+### 预览 SNMP 凭据导入数据
+
+**URL**: `/api/v1/snmp_credentials/import/preview`
+
+**Method**: `GET`
+
+#### Requests Parameters (Query/Path)
+
+| 参数名      | 位置    | 类型      | 必填 | 描述       | Default |
+| :---------- | :------ | :-------- | :--- | :--------- | :------ |
+| `import_id` | `query` | `string`  | 是   | 导入ID     |         |
+| `checksum`  | `query` | `string`  | 是   | 文件校验和 |         |
+| `page`      | `query` | `integer` | 否   | 页码       | 1       |
+| `page_size` | `query` | `integer` | 否   | 每页数量   | 20      |
+| `kind`      | `query` | `string`  | 否   | 预览类型   | all     |
+
+#### Responses
+
+**Status Code**: `200` - Successful Response
+
+Format: `application/json`
+
+| 参数名    | 类型                    | 必填 | 描述    |
+| :-------- | :---------------------- | :--- | :------ |
+| `code`    | `integer`               | 否   | Code    |
+| `message` | `string`                | 否   | Message |
+| `data`    | `ImportPreviewResponse` | 否   |         |
+
+**Status Code**: `422` - Validation Error
+
+Format: `application/json`
+
+| 参数名   | 类型                     | 必填 | 描述   |
+| :------- | :----------------------- | :--- | :----- |
+| `detail` | `Array[ValidationError]` | 否   | Detail |
+
+---
+
+### 提交 SNMP 凭据导入
+
+**URL**: `/api/v1/snmp_credentials/import/commit`
+
+**Method**: `POST`
+
+**Description**:
+
+提交 SNMP 凭据导入，将数据写入数据库。
+
+Args:
+db (Session): 数据库会话。
+current_user (User): 当前登录用户。
+body (ImportCommitRequest): 提交请求体。
+
+Returns:
+ResponseBase[ImportCommitResponse]: 提交结果响应。
+
+#### Request Body (application/json)
+
+| 参数名            | 类型      | 必填 | 描述            |
+| :---------------- | :-------- | :--- | :-------------- |
+| `import_id`       | `string`  | 是   | Import Id       |
+| `checksum`        | `string`  | 是   | Checksum        |
+| `allow_overwrite` | `boolean` | 否   | Allow Overwrite |
+
+#### Responses
+
+**Status Code**: `200` - Successful Response
+
+Format: `application/json`
+
+| 参数名    | 类型                   | 必填 | 描述    |
+| :-------- | :--------------------- | :--- | :------ |
+| `code`    | `integer`              | 否   | Code    |
+| `message` | `string`               | 否   | Message |
+| `data`    | `ImportCommitResponse` | 否   |         |
 
 **Status Code**: `422` - Validation Error
 
@@ -7823,7 +9205,25 @@ Format: `application/json`
 
 **Description**:
 
-对指定模板进行单级审批操作（三级审批）。
+对指定模板执行单级审批（支持三级串行审批）。
+
+三个审批级别依次进行，只有在前一等级通过后才可进入下一等级。
+审批通过到达最高等级后，模板状态将变更为“已批准”；若任一级拒绝，
+模板将回到“已拒绝”并记录审批备注。
+
+Args:
+template_id (UUID): 目标模板的唯一标识。
+body (TemplateApproveRequest): 审批请求体，包含审批等级、是否通过、备注。
+service (TemplateService): 模板服务依赖，用于执行业务流程。
+user (User): 当前审批人，用于审计和权限判断。
+
+Returns:
+ResponseBase[TemplateResponse]: 返回最新的模板详情（含状态与审批轨迹）。
+
+Raises:
+NotFoundException: 当模板不存在时。
+ForbiddenException: 当审批等级或审批人不具备操作权限时。
+ConflictException: 当模板状态不满足当前审批操作（如未提交或已终态）。
 
 #### Requests Parameters (Query/Path)
 
@@ -7869,7 +9269,17 @@ Format: `application/json`
 
 **Description**:
 
-批量删除模板（软删除）。
+批量软删除模板（可从回收站恢复）。
+
+Args:
+request (TemplateBatchRequest): 批量请求体，包含待删除模板的 ID 列表。
+service (TemplateService): 模板服务依赖。
+
+Returns:
+ResponseBase[TemplateBatchResult]: 返回批量操作结果（成功数、失败数、失败ID）。
+
+Raises:
+ForbiddenException: 当无删除权限或部分模板不允许删除时。
 
 #### Request Body (application/json)
 
@@ -7907,7 +9317,16 @@ Format: `application/json`
 
 **Description**:
 
-获取回收站模板列表（已删除的模板）。
+获取回收站中的模板（软删除后保留，可恢复）。
+
+Args:
+service (TemplateService): 模板服务依赖。
+page (int): 页码（从 1 开始）。
+page_size (int): 每页数量（1-500）。
+keyword (str | None): 关键字模糊匹配名称/描述。
+
+Returns:
+ResponseBase[PaginatedResponse[TemplateResponse]]: 回收站模板分页列表。
 
 #### Requests Parameters (Query/Path)
 
@@ -7947,7 +9366,17 @@ Format: `application/json`
 
 **Description**:
 
-恢复已删除的模板。
+从回收站恢复已删除的模板到原有状态。
+
+Args:
+template_id (UUID): 目标模板 ID。
+service (TemplateService): 模板服务依赖。
+
+Returns:
+ResponseBase[TemplateResponse]: 恢复后的模板详情。
+
+Raises:
+NotFoundException: 模板不存在或未处于可恢复状态时。
 
 #### Requests Parameters (Query/Path)
 
@@ -7985,7 +9414,14 @@ Format: `application/json`
 
 **Description**:
 
-批量恢复已删除的模板。
+批量恢复模板（从回收站恢复至正常状态）。
+
+Args:
+request (TemplateBatchRequest): 批量请求体，包含模板 ID 列表。
+service (TemplateService): 模板服务依赖。
+
+Returns:
+ResponseBase[TemplateBatchResult]: 批量恢复的结果统计。
 
 #### Request Body (application/json)
 
@@ -8023,7 +9459,18 @@ Format: `application/json`
 
 **Description**:
 
-彻底删除模板（硬删除，不可恢复）。
+彻底删除模板（物理删除，不可恢复）。
+
+Args:
+template_id (UUID): 目标模板 ID。
+service (TemplateService): 模板服务依赖。
+
+Returns:
+ResponseBase[dict]: 操作结果消息。
+
+Raises:
+NotFoundException: 模板不存在时。
+ForbiddenException: 无权限或模板处于不可删除状态时。
 
 #### Requests Parameters (Query/Path)
 
@@ -8061,7 +9508,14 @@ Format: `application/json`
 
 **Description**:
 
-批量彻底删除模板（硬删除，不可恢复）。
+批量彻底删除模板（物理删除，不可恢复）。
+
+Args:
+request (TemplateBatchRequest): 批量请求体，包含模板 ID 列表。
+service (TemplateService): 模板服务依赖。
+
+Returns:
+ResponseBase[TemplateBatchResult]: 批量硬删除的结果统计。
 
 #### Request Body (application/json)
 
@@ -8080,6 +9534,48 @@ Format: `application/json`
 | `code`    | `integer`             | 否   | Code    |
 | `message` | `string`              | 否   | Message |
 | `data`    | `TemplateBatchResult` | 否   |         |
+
+**Status Code**: `422` - Validation Error
+
+Format: `application/json`
+
+| 参数名   | 类型                     | 必填 | 描述   |
+| :------- | :----------------------- | :--- | :----- |
+| `detail` | `Array[ValidationError]` | 否   | Detail |
+
+---
+
+### 导出模板库
+
+**URL**: `/api/v1/templates/export`
+
+**Method**: `GET`
+
+**Description**:
+
+导出模板列表为 CSV/XLSX 文件。
+
+Args:
+db (Session): 数据库会话。
+current_user (User): 当前登录用户。
+fmt (str): 导出格式，csv 或 xlsx。
+
+Returns:
+FileResponse: 文件下载响应，后台自动清理临时文件。
+
+#### Requests Parameters (Query/Path)
+
+| 参数名 | 位置    | 类型     | 必填 | 描述     | Default |
+| :----- | :------ | :------- | :--- | :------- | :------ |
+| `fmt`  | `query` | `string` | 否   | 导出格式 | csv     |
+
+#### Responses
+
+**Status Code**: `200` - Successful Response
+
+Format: `application/json`
+
+No properties (Empty Object)
 
 **Status Code**: `422` - Validation Error
 
@@ -9431,6 +10927,20 @@ Format: `application/json`
 
 **Method**: `GET`
 
+**Description**:
+
+获取已删除的下发任务列表（回收站）。
+
+仅超级管理员可查看，用于审计与批量恢复。
+
+Args:
+service (DeployService): 下发服务依赖。
+page (int): 页码（从 1 开始）。
+page_size (int): 每页数量（1-500）。
+
+Returns:
+ResponseBase[PaginatedResponse[DeployTaskResponse]]: 回收站任务分页列表。
+
 #### Requests Parameters (Query/Path)
 
 | 参数名      | 位置    | 类型      | 必填 | 描述      | Default |
@@ -9466,6 +10976,20 @@ Format: `application/json`
 
 **Method**: `DELETE`
 
+**Description**:
+
+批量删除下发任务（支持软/硬删除）。
+
+当 `hard_delete` 为 True 时执行物理删除，不可恢复；否则为软删除，可在回收站恢复。
+
+Args:
+request (BatchDeleteRequest): 批量删除请求体（包含 ID 列表与是否硬删除）。
+service (DeployService): 下发服务依赖。
+user (User): 操作人信息。
+
+Returns:
+ResponseBase[BatchOperationResult]: 批量操作结果（成功数与失败ID）。
+
 #### Request Body (application/json)
 
 | 参数名        | 类型            | 必填 | 描述                    |
@@ -9500,6 +11024,18 @@ Format: `application/json`
 **URL**: `/api/v1/deploy/{task_id}`
 
 **Method**: `DELETE`
+
+**Description**:
+
+删除单个下发任务（软删除）。
+
+Args:
+task_id (UUID): 任务 ID。
+service (DeployService): 下发服务依赖。
+user (User): 操作人信息。
+
+Returns:
+ResponseBase[DeployTaskResponse]: 被标记删除后的任务详情。
 
 #### Requests Parameters (Query/Path)
 
@@ -9580,6 +11116,17 @@ Format: `application/json`
 
 **Method**: `POST`
 
+**Description**:
+
+批量恢复已删除的下发任务（从回收站恢复）。
+
+Args:
+request (BatchRestoreRequest): 批量恢复请求体（包含 ID 列表）。
+service (DeployService): 下发服务依赖。
+
+Returns:
+ResponseBase[BatchOperationResult]: 批量恢复结果。
+
 #### Request Body (application/json)
 
 | 参数名 | 类型            | 必填 | 描述             |
@@ -9613,6 +11160,17 @@ Format: `application/json`
 **URL**: `/api/v1/deploy/{task_id}/restore`
 
 **Method**: `POST`
+
+**Description**:
+
+恢复单个已删除的下发任务至正常状态。
+
+Args:
+task_id (UUID): 任务 ID。
+service (DeployService): 下发服务依赖。
+
+Returns:
+ResponseBase[DeployTaskResponse]: 恢复后的任务详情。
 
 #### Requests Parameters (Query/Path)
 
@@ -9648,6 +11206,17 @@ Format: `application/json`
 
 **Method**: `DELETE`
 
+**Description**:
+
+彻底删除单个下发任务（物理删除，不可恢复）。
+
+Args:
+task_id (UUID): 任务 ID。
+service (DeployService): 下发服务依赖。
+
+Returns:
+ResponseBase[dict]: 操作结果消息。
+
 #### Requests Parameters (Query/Path)
 
 | 参数名    | 位置   | 类型     | 必填 | 描述    | Default |
@@ -9681,6 +11250,17 @@ Format: `application/json`
 **URL**: `/api/v1/deploy/batch/hard`
 
 **Method**: `DELETE`
+
+**Description**:
+
+批量彻底删除任务（物理删除，不可恢复）。
+
+Args:
+request (BatchDeleteRequest): 批量请求体（包含 ID 列表）。
+service (DeployService): 下发服务依赖。
+
+Returns:
+ResponseBase[BatchOperationResult]: 批量硬删除结果。
 
 #### Request Body (application/json)
 
@@ -10081,7 +11661,25 @@ Format: `application/json`
 
 **Description**:
 
-对指定模板进行单级审批操作（三级审批）。
+对指定模板执行单级审批（支持三级串行审批）。
+
+三个审批级别依次进行，只有在前一等级通过后才可进入下一等级。
+审批通过到达最高等级后，模板状态将变更为“已批准”；若任一级拒绝，
+模板将回到“已拒绝”并记录审批备注。
+
+Args:
+template_id (UUID): 目标模板的唯一标识。
+body (TemplateApproveRequest): 审批请求体，包含审批等级、是否通过、备注。
+service (TemplateService): 模板服务依赖，用于执行业务流程。
+user (User): 当前审批人，用于审计和权限判断。
+
+Returns:
+ResponseBase[TemplateResponse]: 返回最新的模板详情（含状态与审批轨迹）。
+
+Raises:
+NotFoundException: 当模板不存在时。
+ForbiddenException: 当审批等级或审批人不具备操作权限时。
+ConflictException: 当模板状态不满足当前审批操作（如未提交或已终态）。
 
 #### Requests Parameters (Query/Path)
 
@@ -10127,7 +11725,17 @@ Format: `application/json`
 
 **Description**:
 
-批量删除模板（软删除）。
+批量软删除模板（可从回收站恢复）。
+
+Args:
+request (TemplateBatchRequest): 批量请求体，包含待删除模板的 ID 列表。
+service (TemplateService): 模板服务依赖。
+
+Returns:
+ResponseBase[TemplateBatchResult]: 返回批量操作结果（成功数、失败数、失败ID）。
+
+Raises:
+ForbiddenException: 当无删除权限或部分模板不允许删除时。
 
 #### Request Body (application/json)
 
@@ -10165,7 +11773,16 @@ Format: `application/json`
 
 **Description**:
 
-获取回收站模板列表（已删除的模板）。
+获取回收站中的模板（软删除后保留，可恢复）。
+
+Args:
+service (TemplateService): 模板服务依赖。
+page (int): 页码（从 1 开始）。
+page_size (int): 每页数量（1-500）。
+keyword (str | None): 关键字模糊匹配名称/描述。
+
+Returns:
+ResponseBase[PaginatedResponse[TemplateResponse]]: 回收站模板分页列表。
 
 #### Requests Parameters (Query/Path)
 
@@ -10205,7 +11822,17 @@ Format: `application/json`
 
 **Description**:
 
-恢复已删除的模板。
+从回收站恢复已删除的模板到原有状态。
+
+Args:
+template_id (UUID): 目标模板 ID。
+service (TemplateService): 模板服务依赖。
+
+Returns:
+ResponseBase[TemplateResponse]: 恢复后的模板详情。
+
+Raises:
+NotFoundException: 模板不存在或未处于可恢复状态时。
 
 #### Requests Parameters (Query/Path)
 
@@ -10243,7 +11870,14 @@ Format: `application/json`
 
 **Description**:
 
-批量恢复已删除的模板。
+批量恢复模板（从回收站恢复至正常状态）。
+
+Args:
+request (TemplateBatchRequest): 批量请求体，包含模板 ID 列表。
+service (TemplateService): 模板服务依赖。
+
+Returns:
+ResponseBase[TemplateBatchResult]: 批量恢复的结果统计。
 
 #### Request Body (application/json)
 
@@ -10281,7 +11915,18 @@ Format: `application/json`
 
 **Description**:
 
-彻底删除模板（硬删除，不可恢复）。
+彻底删除模板（物理删除，不可恢复）。
+
+Args:
+template_id (UUID): 目标模板 ID。
+service (TemplateService): 模板服务依赖。
+
+Returns:
+ResponseBase[dict]: 操作结果消息。
+
+Raises:
+NotFoundException: 模板不存在时。
+ForbiddenException: 无权限或模板处于不可删除状态时。
 
 #### Requests Parameters (Query/Path)
 
@@ -10319,7 +11964,14 @@ Format: `application/json`
 
 **Description**:
 
-批量彻底删除模板（硬删除，不可恢复）。
+批量彻底删除模板（物理删除，不可恢复）。
+
+Args:
+request (TemplateBatchRequest): 批量请求体，包含模板 ID 列表。
+service (TemplateService): 模板服务依赖。
+
+Returns:
+ResponseBase[TemplateBatchResult]: 批量硬删除的结果统计。
 
 #### Request Body (application/json)
 
@@ -10338,6 +11990,48 @@ Format: `application/json`
 | `code`    | `integer`             | 否   | Code    |
 | `message` | `string`              | 否   | Message |
 | `data`    | `TemplateBatchResult` | 否   |         |
+
+**Status Code**: `422` - Validation Error
+
+Format: `application/json`
+
+| 参数名   | 类型                     | 必填 | 描述   |
+| :------- | :----------------------- | :--- | :----- |
+| `detail` | `Array[ValidationError]` | 否   | Detail |
+
+---
+
+### 导出模板库
+
+**URL**: `/api/v1/templates/export`
+
+**Method**: `GET`
+
+**Description**:
+
+导出模板列表为 CSV/XLSX 文件。
+
+Args:
+db (Session): 数据库会话。
+current_user (User): 当前登录用户。
+fmt (str): 导出格式，csv 或 xlsx。
+
+Returns:
+FileResponse: 文件下载响应，后台自动清理临时文件。
+
+#### Requests Parameters (Query/Path)
+
+| 参数名 | 位置    | 类型     | 必填 | 描述     | Default |
+| :----- | :------ | :------- | :--- | :------- | :------ |
+| `fmt`  | `query` | `string` | 否   | 导出格式 | csv     |
+
+#### Responses
+
+**Status Code**: `200` - Successful Response
+
+Format: `application/json`
+
+No properties (Empty Object)
 
 **Status Code**: `422` - Validation Error
 
@@ -10778,12 +12472,14 @@ Format: `application/json`
 获取通过网络扫描发现的所有设备记录。
 
 Args:
-db (Session): 数据库会话。
+service (DiscoveryService): 发现服务依赖。
 page (int): 当前页码。
 page_size (int): 每页限制。
 status (DiscoveryStatus | None): 状态过滤（如：NEW, IGNORED, MATCHED）。
 keyword (str | None): 匹配 IP、MAC、主机名的搜索关键词。
 scan_source (str | None): 识别扫描的具体来源标识。
+sort_by (str | None): 排序字段。
+sort_order (str | None): 排序方向。
 
 Returns:
 ResponseBase[PaginatedResponse[DiscoveryResponse]]: 包含发现资产详情的分页响应。
@@ -10833,8 +12529,8 @@ Format: `application/json`
 获取单个扫描发现记录的完整属性。
 
 Args:
-db (Session): 数据库会话。
 discovery_id (UUID): 扫描结果主键 ID。
+service (DiscoveryService): 发现服务依赖。
 
 Returns:
 ResponseBase[DiscoveryResponse]: 发现资产及 CMDB 匹配关联信息。
@@ -10878,9 +12574,9 @@ Format: `application/json`
 物理删除或隐藏特定的扫描发现结果。
 
 Args:
-db (Session): 数据库会话。
 discovery_id (UUID): 扫描记录 ID。
 current_user (CurrentUser): 当前执行操作的用户。
+service (DiscoveryService): 发现服务依赖。
 
 Returns:
 ResponseBase[DeleteResponse]: 确认删除的消息。
@@ -10918,6 +12614,25 @@ Format: `application/json`
 **URL**: `/api/v1/discovery/recycle-bin`
 
 **Method**: `GET`
+
+**Description**:
+
+获取已删除的发现记录列表（回收站）。
+
+仅限超级管理员访问。
+
+Args:
+service (DiscoveryService): 发现服务依赖。
+page (int): 页码。
+page_size (int): 每页数量。
+status (DiscoveryStatus | None): 状态筛选。
+keyword (str | None): 关键词搜索。
+scan_source (str | None): 扫描来源筛选。
+sort_by (str | None): 排序字段。
+sort_order (str | None): 排序方向。
+
+Returns:
+ResponseBase[PaginatedResponse[DiscoveryResponse]]: 回收站中的发现记录列表。
 
 #### Requests Parameters (Query/Path)
 
@@ -10959,6 +12674,18 @@ Format: `application/json`
 
 **Method**: `DELETE`
 
+**Description**:
+
+批量删除发现记录（软删除）。
+
+Args:
+request (BatchDeleteRequest): 批量删除请求体。
+service (DiscoveryService): 发现服务依赖。
+current_user (CurrentUser): 当前操作用户。
+
+Returns:
+ResponseBase[BatchOperationResult]: 批量操作结果。
+
 #### Request Body (application/json)
 
 | 参数名        | 类型            | 必填 | 描述                    |
@@ -10994,6 +12721,19 @@ Format: `application/json`
 
 **Method**: `POST`
 
+**Description**:
+
+批量恢复发现记录。
+
+仅限超级管理员访问。
+
+Args:
+request (BatchRestoreRequest): 批量恢复请求体。
+service (DiscoveryService): 发现服务依赖。
+
+Returns:
+ResponseBase[BatchOperationResult]: 批量恢复结果。
+
 #### Request Body (application/json)
 
 | 参数名 | 类型            | 必填 | 描述             |
@@ -11027,6 +12767,19 @@ Format: `application/json`
 **URL**: `/api/v1/discovery/{discovery_id}/restore`
 
 **Method**: `POST`
+
+**Description**:
+
+恢复已删除的发现记录。
+
+仅限超级管理员访问。
+
+Args:
+discovery_id (UUID): 发现记录 ID。
+service (DiscoveryService): 发现服务依赖。
+
+Returns:
+ResponseBase[DiscoveryResponse]: 恢复后的发现记录详情。
 
 #### Requests Parameters (Query/Path)
 
@@ -11062,6 +12815,19 @@ Format: `application/json`
 
 **Method**: `DELETE`
 
+**Description**:
+
+彻底删除发现记录（硬删除，不可恢复）。
+
+仅限超级管理员访问。
+
+Args:
+discovery_id (UUID): 发现记录 ID。
+service (DiscoveryService): 发现服务依赖。
+
+Returns:
+ResponseBase[dict]: 删除结果。
+
 #### Requests Parameters (Query/Path)
 
 | 参数名         | 位置   | 类型     | 必填 | 描述         | Default |
@@ -11095,6 +12861,19 @@ Format: `application/json`
 **URL**: `/api/v1/discovery/batch/hard`
 
 **Method**: `DELETE`
+
+**Description**:
+
+批量彻底删除发现记录（硬删除，不可恢复）。
+
+仅限超级管理员访问。
+
+Args:
+request (BatchDeleteRequest): 批量删除请求体。
+service (DiscoveryService): 发现服务依赖。
+
+Returns:
+ResponseBase[BatchOperationResult]: 批量删除结果。
 
 #### Request Body (application/json)
 
@@ -11141,8 +12920,8 @@ Args:
 db (Session): 数据库会话。
 discovery_id (UUID): 发现记录关联 ID。
 request (AdoptDeviceRequest): 纳管配置，包含名称、分组、凭据等。
-scan_service (ScanService): 扫描资产服务。
 current_user (CurrentUser): 当前操作人。
+scan_service (ScanService): 扫描资产服务。
 
 Returns:
 ResponseBase[AdoptResponse]: 包含新设备 ID 的确认响应。
@@ -11329,6 +13108,48 @@ Format: `application/json`
 
 ---
 
+### 导出发现记录
+
+**URL**: `/api/v1/discovery/export`
+
+**Method**: `GET`
+
+**Description**:
+
+导出发现记录为 CSV/XLSX 文件。
+
+Args:
+db (Session): 数据库会话。
+current_user (CurrentUser): 当前登录用户。
+fmt (str): 导出格式，csv 或 xlsx。
+
+Returns:
+FileResponse: 文件下载响应，后台自动清理临时文件。
+
+#### Requests Parameters (Query/Path)
+
+| 参数名 | 位置    | 类型     | 必填 | 描述     | Default |
+| :----- | :------ | :------- | :--- | :------- | :------ |
+| `fmt`  | `query` | `string` | 否   | 导出格式 | csv     |
+
+#### Responses
+
+**Status Code**: `200` - Successful Response
+
+Format: `application/json`
+
+No properties (Empty Object)
+
+**Status Code**: `422` - Validation Error
+
+Format: `application/json`
+
+| 参数名   | 类型                     | 必填 | 描述   |
+| :------- | :----------------------- | :--- | :----- |
+| `detail` | `Array[ValidationError]` | 否   | Detail |
+
+---
+
 ## 配置备份
 
 ### 获取备份列表
@@ -11402,6 +13223,48 @@ Format: `application/json`
 | `code`    | `integer`                           | 否   | Code    |
 | `message` | `string`                            | 否   | Message |
 | `data`    | `PaginatedResponse_BackupResponse_` | 否   |         |
+
+**Status Code**: `422` - Validation Error
+
+Format: `application/json`
+
+| 参数名   | 类型                     | 必填 | 描述   |
+| :------- | :----------------------- | :--- | :----- |
+| `detail` | `Array[ValidationError]` | 否   | Detail |
+
+---
+
+### 导出配置备份列表
+
+**URL**: `/api/v1/backups/export`
+
+**Method**: `GET`
+
+**Description**:
+
+导出配置备份列表为 CSV/XLSX 文件。
+
+Args:
+current_user (User): 当前登录用户。
+db (Session): 数据库会话。
+fmt (str): 导出格式，csv 或 xlsx。
+
+Returns:
+FileResponse: 下载文件响应，后台自动删除临时文件。
+
+#### Requests Parameters (Query/Path)
+
+| 参数名 | 位置    | 类型     | 必填 | 描述     | Default |
+| :----- | :------ | :------- | :--- | :------- | :------ |
+| `fmt`  | `query` | `string` | 否   | 导出格式 | csv     |
+
+#### Responses
+
+**Status Code**: `200` - Successful Response
+
+Format: `application/json`
+
+No properties (Empty Object)
 
 **Status Code**: `422` - Validation Error
 

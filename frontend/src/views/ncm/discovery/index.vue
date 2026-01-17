@@ -36,6 +36,7 @@ import {
   batchRestoreDiscoveryRecords,
   hardDeleteDiscoveryRecord,
   batchHardDeleteDiscoveryRecords,
+  exportDiscoveryRecords,
   type DiscoveryRecord,
   type DiscoverySearchParams,
   type DiscoveryStatus,
@@ -47,6 +48,7 @@ import { getDeptTree, type Dept } from '@/api/depts'
 import { formatDateTime } from '@/utils/date'
 import ProTable, { type FilterConfig } from '@/components/common/ProTable.vue'
 import RecycleBinModal from '@/components/common/RecycleBinModal.vue'
+import DataImportExport from '@/components/common/DataImportExport.vue'
 import { usePersistentTaskPolling } from '@/composables'
 
 defineOptions({
@@ -755,6 +757,8 @@ const handleCompareCMDB = () => {
           </n-button>
           <n-button type="info" @click="handleShowExtra">影子资产/离线设备</n-button>
           <n-button @click="handleCompareCMDB">CMDB 比对</n-button>
+          <DataImportExport title="发现记录" show-export export-name="discovery_export.csv"
+            :export-api="exportDiscoveryRecords" />
         </n-space>
       </template>
     </ProTable>

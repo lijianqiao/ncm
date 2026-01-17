@@ -9,6 +9,9 @@ import {
   NUpload,
   NUploadDragger,
   NSpace,
+  NTabs,
+  NTabPane,
+  type DataTableColumns,
 } from 'naive-ui'
 import { CloudUploadOutline as ImportIcon, DownloadOutline as ExportIcon } from '@vicons/ionicons5'
 import { $alert } from '@/utils/alert'
@@ -17,8 +20,10 @@ import type {
   ImportValidateResponse,
   ImportCommitRequest,
   ImportCommitResponse,
+  ImportPreviewResponse,
 } from '@/types/api'
 import type { AxiosResponse } from 'axios'
+import ProTable from '@/components/common/ProTable.vue'
 
 // ==================== Props & Emits ====================
 
@@ -47,6 +52,13 @@ const props = withDefaults(
       file: File,
       allowOverwrite: boolean,
     ) => Promise<ResponseBase<ImportValidateResponse>>
+    /** 预览数据 API */
+    importPreviewApi?: (params: {
+      import_id: string
+      checksum: string
+      page?: number
+      page_size?: number
+    }) => Promise<ResponseBase<ImportPreviewResponse>>
     /** 确认导入 API */
     importCommitApi?: (data: ImportCommitRequest) => Promise<ResponseBase<ImportCommitResponse>>
   }>(),
@@ -120,6 +132,13 @@ const importFile = ref<File | null>(null)
 const importResult = ref<ImportValidateResponse | null>(null)
 const allowOverwrite = ref(false)
 
+// Preview State
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const previewData = ref<any[]>([])
+const previewColumns = ref<DataTableColumns>([])
+const previewTableRef = ref()
+const activeTab = ref('upload') // upload | preview
+
 const handleDownloadImportTemplate = async () => {
   if (!props.importTemplateApi) return
 
@@ -137,6 +156,9 @@ const resetImportState = () => {
   importFile.value = null
   importResult.value = null
   allowOverwrite.value = false
+  previewData.value = []
+  previewColumns.value = []
+  activeTab.value = 'upload'
 }
 
 const handleOpenImport = () => {
@@ -147,6 +169,41 @@ const handleOpenImport = () => {
 const handleImportFileChange = (options: { file: { file?: File | null } }) => {
   importFile.value = options.file.file || null
   importResult.value = null
+  previewData.value = []
+}
+
+const loadPreviewData = async (params: { page: number; page_size: number }) => {
+  if (!props.importPreviewApi || !importResult.value) return { data: [], total: 0 }
+
+  try {
+    const res = await props.importPreviewApi({
+      import_id: importResult.value.import_id,
+      checksum: importResult.value.checksum,
+      page: params.page,
+      page_size: params.page_size,
+    })
+
+    if (res.data.rows.length > 0) {
+      // Dynamically generate columns from the first row data
+      const firstRow = res.data.rows[0]
+      const firstRowData = firstRow ? firstRow.data : {}
+      previewColumns.value = Object.keys(firstRowData).map((key) => ({
+        title: key,
+        key: key,
+        ellipsis: { tooltip: true },
+        width: 150, // Default width to support scrolling
+      }))
+    }
+
+    return {
+      data: res.data.rows.map((r) => r.data),
+      total: res.data.total_rows,
+    }
+  } catch (e) {
+    console.error(e)
+    $alert.error('加载预览数据失败')
+    return { data: [], total: 0 }
+  }
 }
 
 const handleUploadAndValidate = async () => {
@@ -160,10 +217,19 @@ const handleUploadAndValidate = async () => {
   try {
     const res = await props.importValidateApi(importFile.value, allowOverwrite.value)
     importResult.value = res.data
+
     if (importResult.value.error_rows > 0) {
       $alert.warning('存在校验错误，整批不可导入')
     } else {
       $alert.success('校验通过，可确认导入')
+      // If validation passes and preview API exists, switch to preview tab and reload
+      if (props.importPreviewApi) {
+        activeTab.value = 'preview'
+        // Allow time for tab switch and component mount
+        setTimeout(() => {
+          previewTableRef.value?.reload()
+        }, 100)
+      }
     }
   } catch (e) {
     console.error(e)
@@ -223,53 +289,82 @@ const handleCommitImport = async () => {
     </n-space>
 
     <!-- Import Modal -->
-    <n-modal v-model:show="showImportModal" preset="dialog" :title="`导入${title}`" style="width: 720px"
+    <n-modal v-model:show="showImportModal" preset="card" :title="`导入${title}`" style="
+        width: 1000px;
+        max-height: 90vh;
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+      " :content-style="{ overflow: 'hidden', display: 'flex', flexDirection: 'column', flex: 1 }"
       @after-leave="resetImportState">
-      <n-space vertical>
-        <n-alert type="info" title="导入流程" :bordered="false">
-          上传文件后会进行全量校验；只要有一行错误，整批不会导入。
-        </n-alert>
+      <n-tabs v-model:value="activeTab" type="segment" animated
+        style="flex: 1; display: flex; flex-direction: column; overflow: hidden"
+        pane-style="flex: 1; display: flex; flex-direction: column; overflow: hidden;">
+        <n-tab-pane name="upload" tab="1. 上传与校验">
+          <n-space vertical>
+            <n-alert type="info" title="导入流程" :bordered="false">
+              上传文件后会进行全量校验；只要有一行错误，整批不会导入。
+            </n-alert>
 
-        <n-upload :default-upload="false" :max="1" accept=".csv,.xlsx,.xlsm,.xls" @change="handleImportFileChange">
-          <n-upload-dragger>
-            <div style="padding: 12px 0">点击或拖拽上传 CSV / Excel</div>
-          </n-upload-dragger>
-        </n-upload>
+            <n-upload :default-upload="false" :max="1" accept=".csv,.xlsx,.xlsm,.xls" @change="handleImportFileChange">
+              <n-upload-dragger>
+                <div style="padding: 12px 0">点击或拖拽上传 CSV / Excel</div>
+              </n-upload-dragger>
+            </n-upload>
 
-        <n-space justify="space-between">
-          <n-button tertiary @click="handleDownloadImportTemplate" :disabled="!importTemplateApi">
-            下载模板
-          </n-button>
-          <n-space>
-            <n-checkbox v-model:checked="allowOverwrite">{{ overwriteText }}</n-checkbox>
-            <n-button type="primary" :loading="importUploading" :disabled="importUploading || !importFile"
-              @click="handleUploadAndValidate">
-              上传并校验
-            </n-button>
-          </n-space>
-        </n-space>
+            <n-space justify="space-between">
+              <n-button tertiary @click="handleDownloadImportTemplate" :disabled="!importTemplateApi">
+                下载模板
+              </n-button>
+              <n-space>
+                <n-checkbox v-model:checked="allowOverwrite">{{ overwriteText }}</n-checkbox>
+                <n-button type="primary" :loading="importUploading" :disabled="importUploading || !importFile"
+                  @click="handleUploadAndValidate">
+                  上传并校验
+                </n-button>
+              </n-space>
+            </n-space>
 
-        <n-alert v-if="importResult" :type="importResult.error_rows > 0 ? 'warning' : 'success'" :bordered="false">
-          总行数：{{ importResult.total_rows }}；可导入：{{ importResult.valid_rows }}；错误行：{{
-            importResult.error_rows
-          }}
-        </n-alert>
+            <n-alert v-if="importResult" :type="importResult.error_rows > 0 ? 'warning' : 'success'" :bordered="false">
+              总行数：{{ importResult.total_rows }}；可导入：{{
+                importResult.valid_rows
+              }}；错误行：{{ importResult.error_rows }}
+            </n-alert>
 
-        <div v-if="importResult?.errors?.length">
-          <n-alert type="warning" :bordered="false" title="错误明细（最多展示前 200 条）">
-            <div v-for="(e, idx) in importResult.errors" :key="idx">
-              第 {{ e.row_number }} 行：{{ e.field ? e.field + ' - ' : '' }}{{ e.message }}
+            <div v-if="importResult?.errors?.length">
+              <n-alert type="warning" :bordered="false" title="错误明细（最多展示前 200 条）">
+                <div v-for="(e, idx) in importResult.errors" :key="idx">
+                  第 {{ e.row_number }} 行：{{ e.field ? e.field + ' - ' : '' }}{{ e.message }}
+                </div>
+              </n-alert>
             </div>
-          </n-alert>
-        </div>
-      </n-space>
+          </n-space>
+        </n-tab-pane>
 
-      <template #action>
-        <n-button @click="showImportModal = false">取消</n-button>
-        <n-button type="primary" :loading="importCommitting" :disabled="!importResult || importResult.error_rows > 0 || importUploading || importCommitting
-          " @click="handleCommitImport">
-          确认导入
-        </n-button>
+        <n-tab-pane name="preview" tab="2. 数据预览" :disabled="!importResult || importResult.error_rows > 0">
+          <n-space vertical style="flex: 1; overflow: hidden; display: flex; flex-direction: column" :wrap-item="false">
+            <n-alert type="success" :bordered="false" v-if="importResult">
+              校验通过！共 {{ importResult.valid_rows }} 条数据待导入。
+            </n-alert>
+            <!-- Use ProTable for preview -->
+            <div style="flex: 1; overflow: hidden; display: flex; flex-direction: column">
+              <ProTable ref="previewTableRef" :columns="previewColumns" :request="loadPreviewData" :scroll-x="1000"
+                :show-export="false" :show-add="false" :show-batch-delete="false" :show-recycle-bin="false"
+                :density-options="false" :column-configurable="false" :fullscreen-enabled="false" :show-search="false"
+                :show-refresh="false" :min-height="400" />
+            </div>
+          </n-space>
+        </n-tab-pane>
+      </n-tabs>
+
+      <template #footer>
+        <n-space justify="end">
+          <n-button @click="showImportModal = false">取消</n-button>
+          <n-button type="primary" :loading="importCommitting" :disabled="!importResult || importResult.error_rows > 0 || importUploading || importCommitting
+            " @click="handleCommitImport">
+            确认导入
+          </n-button>
+        </n-space>
       </template>
     </n-modal>
   </div>

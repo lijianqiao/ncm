@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, h } from 'vue'
+import { AddOutline as AddIcon } from '@vicons/ionicons5'
 import {
   NButton,
   NFormItem,
@@ -25,6 +26,11 @@ import {
   batchRestoreCredentials,
   hardDeleteCredential,
   batchHardDeleteCredentials,
+  exportCredentials,
+  downloadCredentialImportTemplate,
+  uploadCredentialImportFile,
+  previewCredentialImport,
+  commitCredentialImport,
   type Credential,
   type CredentialSearchParams,
 } from '@/api/credentials'
@@ -39,6 +45,7 @@ import { getDeptTree, type Dept } from '@/api/depts'
 import { formatDateTime } from '@/utils/date'
 import ProTable, { type FilterConfig } from '@/components/common/ProTable.vue'
 import RecycleBinModal from '@/components/common/RecycleBinModal.vue'
+import DataImportExport from '@/components/common/DataImportExport.vue'
 
 defineOptions({
   name: 'CredentialManagement',
@@ -435,99 +442,58 @@ const submitCacheOTP = async () => {
 
 <template>
   <div class="credential-management p-4">
-    <ProTable
-      ref="tableRef"
-      title="凭据列表"
-      :columns="columns"
-      :request="loadData"
-      :row-key="(row: Credential) => row.id"
-      :context-menu-options="contextMenuOptions"
-      search-placeholder="搜索用户名/描述"
-      :search-filters="searchFilters"
-      v-model:checked-row-keys="selectedRowKeys"
-      @add="handleCreate"
-      @batch-delete="handleBatchDelete"
-      @context-menu-select="handleContextMenuSelect"
-      @recycle-bin="handleRecycleBin"
-      show-add
-      show-batch-delete
-      show-recycle-bin
-      :scroll-x="1200"
-    />
+    <ProTable ref="tableRef" title="凭据列表" :columns="columns" :request="loadData" :row-key="(row: Credential) => row.id"
+      :context-menu-options="contextMenuOptions" search-placeholder="搜索用户名/描述" :search-filters="searchFilters"
+      v-model:checked-row-keys="selectedRowKeys" @add="handleCreate" @batch-delete="handleBatchDelete"
+      @context-menu-select="handleContextMenuSelect" @recycle-bin="handleRecycleBin" show-batch-delete show-recycle-bin
+      :show-export="false" :scroll-x="1200">
+      <template #toolbar>
+        <n-button type="primary" @click="handleCreate">
+          <template #icon>
+            <n-icon>
+              <AddIcon />
+            </n-icon>
+          </template>
+          新建
+        </n-button>
+        <DataImportExport title="凭据" show-import show-export export-name="credentials_export.csv"
+          template-name="credential_import_template.xlsx" :export-api="exportCredentials"
+          :import-template-api="downloadCredentialImportTemplate" :import-validate-api="uploadCredentialImportFile"
+          :import-preview-api="previewCredentialImport" :import-commit-api="commitCredentialImport"
+          @success="() => tableRef?.reload()" />
+      </template>
+    </ProTable>
 
     <!-- 回收站 Modal -->
-    <RecycleBinModal
-      ref="recycleBinRef"
-      v-model:show="showRecycleBin"
-      title="回收站 (已删除凭据)"
-      :columns="recycleBinColumns"
-      :request="loadRecycleBinData"
-      :row-key="(row: Credential) => row.id"
-      search-placeholder="搜索用户名/描述..."
-      :scroll-x="900"
-      @restore="handleRestore"
-      @batch-restore="handleBatchRestore"
-      @hard-delete="handleHardDelete"
-      @batch-hard-delete="handleBatchHardDelete"
-    />
+    <RecycleBinModal ref="recycleBinRef" v-model:show="showRecycleBin" title="回收站 (已删除凭据)" :columns="recycleBinColumns"
+      :request="loadRecycleBinData" :row-key="(row: Credential) => row.id" search-placeholder="搜索用户名/描述..."
+      :scroll-x="900" @restore="handleRestore" @batch-restore="handleBatchRestore" @hard-delete="handleHardDelete"
+      @batch-hard-delete="handleBatchHardDelete" />
 
     <!-- 创建/编辑凭据 Modal -->
-    <n-modal
-      v-model:show="showCreateModal"
-      preset="dialog"
-      :title="modalType === 'create' ? '新建凭据' : '编辑凭据'"
-      style="width: 500px"
-    >
-      <n-form
-        ref="createFormRef"
-        :model="createModel"
-        :rules="createRules"
-        label-placement="left"
-        label-width="100"
-      >
+    <n-modal v-model:show="showCreateModal" preset="dialog" :title="modalType === 'create' ? '新建凭据' : '编辑凭据'"
+      style="width: 500px">
+      <n-form ref="createFormRef" :model="createModel" :rules="createRules" label-placement="left" label-width="100">
         <n-form-item label="所属部门" path="dept_id">
-          <n-tree-select
-            v-model:value="createModel.dept_id"
-            :options="deptTreeOptions"
-            placeholder="请选择部门"
-            :disabled="modalType === 'edit'"
-            key-field="key"
-            label-field="label"
-          />
+          <n-tree-select v-model:value="createModel.dept_id" :options="deptTreeOptions" placeholder="请选择部门"
+            :disabled="modalType === 'edit'" key-field="key" label-field="label" />
         </n-form-item>
         <n-form-item label="设备分组" path="device_group">
-          <n-select
-            v-model:value="createModel.device_group"
-            :options="deviceGroupOptions"
-            placeholder="请选择设备分组"
-            :disabled="modalType === 'edit'"
-          />
+          <n-select v-model:value="createModel.device_group" :options="deviceGroupOptions" placeholder="请选择设备分组"
+            :disabled="modalType === 'edit'" />
         </n-form-item>
         <n-form-item label="SSH 用户名" path="username">
           <n-input v-model:value="createModel.username" placeholder="请输入SSH用户名" />
         </n-form-item>
         <n-form-item label="OTP 种子">
-          <n-input
-            v-model:value="createModel.otp_seed"
-            type="password"
-            show-password-on="click"
-            placeholder="OTP 种子（留空则保持不变）"
-          />
+          <n-input v-model:value="createModel.otp_seed" type="password" show-password-on="click"
+            placeholder="OTP 种子（留空则保持不变）" />
         </n-form-item>
         <n-form-item label="认证类型">
-          <n-select
-            v-model:value="createModel.auth_type"
-            :options="authTypeOptions"
-            placeholder="请选择认证类型"
-          />
+          <n-select v-model:value="createModel.auth_type" :options="authTypeOptions" placeholder="请选择认证类型" />
         </n-form-item>
         <n-form-item label="描述">
-          <n-input
-            v-model:value="createModel.description"
-            type="textarea"
-            placeholder="凭据描述"
-            :rows="2"
-          />
+          <n-input v-model:value="createModel.description" type="textarea" placeholder="凭据描述" :rows="2" />
         </n-form-item>
       </n-form>
       <template #action>
@@ -537,23 +503,14 @@ const submitCacheOTP = async () => {
     </n-modal>
 
     <!-- 缓存 OTP Modal -->
-    <n-modal
-      v-model:show="showOTPModal"
-      preset="dialog"
-      title="缓存 OTP 验证码"
-      style="width: 400px"
-    >
+    <n-modal v-model:show="showOTPModal" preset="dialog" title="缓存 OTP 验证码" style="width: 400px">
       <div style="margin-bottom: 16px">
         <p>部门: {{ otpModel.dept_name }}</p>
         <p>设备分组: {{ groupLabelMap[otpModel.device_group] }}</p>
       </div>
       <n-form label-placement="left" label-width="100">
         <n-form-item label="OTP 验证码">
-          <n-input
-            v-model:value="otpModel.otp_code"
-            placeholder="请输入6位OTP验证码"
-            maxlength="6"
-          />
+          <n-input v-model:value="otpModel.otp_code" placeholder="请输入6位OTP验证码" maxlength="6" />
         </n-form-item>
       </n-form>
       <template #action>

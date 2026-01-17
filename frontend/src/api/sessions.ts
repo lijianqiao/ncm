@@ -8,6 +8,7 @@
 
 import { request } from '@/utils/request'
 import type { ResponseBase, PaginatedResponse } from '@/types/api'
+import type { AxiosResponse } from 'axios'
 
 /**
  * 在线会话信息
@@ -77,5 +78,14 @@ export function batchKickUsers(userIds: string[]) {
     url: '/sessions/kick/batch',
     method: 'post',
     data: { user_ids: userIds },
+  })
+}
+
+export function exportSessions(fmt: 'csv' | 'xlsx' = 'csv') {
+  return request<AxiosResponse<Blob>>({
+    url: '/sessions/export',
+    method: 'get',
+    params: { fmt },
+    responseType: 'blob',
   })
 }

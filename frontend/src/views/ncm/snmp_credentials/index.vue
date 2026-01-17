@@ -2,6 +2,7 @@
 import { ref, h, computed, onMounted, reactive } from 'vue'
 import {
   NButton,
+  NIcon,
   NForm,
   NFormItem,
   NInput,
@@ -30,11 +31,18 @@ import {
   batchRestoreSnmpCredentials,
   hardDeleteSnmpCredential,
   batchHardDeleteSnmpCredentials,
+  exportSnmpCredentials,
+  downloadSnmpCredentialImportTemplate,
+  uploadSnmpCredentialImportFile,
+  previewSnmpCredentialImport,
+  commitSnmpCredentialImport,
   type DeptSnmpCredential,
   type SnmpCredentialSearchParams,
   type SnmpVersion,
 } from '@/api/snmp_credentials'
 import RecycleBinModal from '@/components/common/RecycleBinModal.vue'
+import DataImportExport from '@/components/common/DataImportExport.vue'
+import { AddOutline as AddIcon } from '@vicons/ionicons5'
 
 defineOptions({
   name: 'SnmpCredentials',
@@ -206,10 +214,10 @@ const columns: DataTableColumns<DeptSnmpCredential> = [
     render: (row) =>
       row.snmp_version === 'v2c'
         ? h(
-            NTag,
-            { type: row.has_community ? 'success' : 'default', bordered: false, size: 'small' },
-            { default: () => (row.has_community ? '已配置' : '未配置') },
-          )
+          NTag,
+          { type: row.has_community ? 'success' : 'default', bordered: false, size: 'small' },
+          { default: () => (row.has_community ? '已配置' : '未配置') },
+        )
         : '-',
   },
   {
@@ -420,58 +428,40 @@ const handleDelete = (row: DeptSnmpCredential) => {
 
 <template>
   <div class="snmp-credentials p-4">
-    <ProTable
-      ref="tableRef"
-      title="SNMP 凭据"
-      :columns="columns"
-      :request="loadData"
-      :row-key="(row: DeptSnmpCredential) => row.id"
-      :context-menu-options="contextMenuOptions"
-      search-placeholder="搜索部门/描述"
-      :search-filters="searchFilters"
-      v-model:checked-row-keys="selectedRowKeys"
-      @add="handleCreate"
-      @batch-delete="handleBatchDelete"
-      @context-menu-select="handleContextMenuSelect"
-      @recycle-bin="handleRecycleBin"
-      show-add
-      show-batch-delete
-      show-recycle-bin
-      :scroll-x="1100"
-    />
+    <ProTable ref="tableRef" title="SNMP 凭据" :columns="columns" :request="loadData"
+      :row-key="(row: DeptSnmpCredential) => row.id" :context-menu-options="contextMenuOptions"
+      search-placeholder="搜索部门/描述" :search-filters="searchFilters" v-model:checked-row-keys="selectedRowKeys"
+      @add="handleCreate" @batch-delete="handleBatchDelete" @context-menu-select="handleContextMenuSelect"
+      @recycle-bin="handleRecycleBin" show-batch-delete show-recycle-bin :show-export="false" :scroll-x="1100">
+      <template #toolbar>
+        <n-button type="primary" @click="handleCreate">
+          <template #icon>
+            <n-icon>
+              <AddIcon />
+            </n-icon>
+          </template>
+          新建
+        </n-button>
+        <DataImportExport title="SNMP凭据" show-import show-export export-name="snmp_credentials_export.csv"
+          template-name="snmp_credential_import_template.xlsx" :export-api="exportSnmpCredentials"
+          :import-template-api="downloadSnmpCredentialImportTemplate"
+          :import-validate-api="uploadSnmpCredentialImportFile" :import-preview-api="previewSnmpCredentialImport"
+          :import-commit-api="commitSnmpCredentialImport" @success="() => tableRef?.reload()" />
+      </template>
+    </ProTable>
 
     <!-- 回收站 Modal -->
-    <RecycleBinModal
-      ref="recycleBinRef"
-      v-model:show="showRecycleBin"
-      title="回收站 (已删除 SNMP 凭据)"
-      :columns="recycleBinColumns"
-      :request="loadRecycleBinData"
-      :row-key="(row: DeptSnmpCredential) => row.id"
-      search-placeholder="搜索部门/描述..."
-      :scroll-x="700"
-      @restore="handleRestore"
-      @batch-restore="handleBatchRestore"
-      @hard-delete="handleHardDelete"
-      @batch-hard-delete="handleBatchHardDelete"
-    />
+    <RecycleBinModal ref="recycleBinRef" v-model:show="showRecycleBin" title="回收站 (已删除 SNMP 凭据)"
+      :columns="recycleBinColumns" :request="loadRecycleBinData" :row-key="(row: DeptSnmpCredential) => row.id"
+      search-placeholder="搜索部门/描述..." :scroll-x="700" @restore="handleRestore" @batch-restore="handleBatchRestore"
+      @hard-delete="handleHardDelete" @batch-hard-delete="handleBatchHardDelete" />
 
-    <n-modal
-      v-model:show="showModal"
-      preset="dialog"
-      :title="modalType === 'create' ? '新建 SNMP 凭据' : '编辑 SNMP 凭据'"
-      style="width: 520px"
-    >
+    <n-modal v-model:show="showModal" preset="dialog" :title="modalType === 'create' ? '新建 SNMP 凭据' : '编辑 SNMP 凭据'"
+      style="width: 520px">
       <n-form ref="formRef" :model="model" :rules="rules" label-placement="left" label-width="120">
         <n-form-item label="所属部门" path="dept_id">
-          <n-tree-select
-            v-model:value="model.dept_id"
-            :options="deptTreeOptions"
-            placeholder="请选择部门"
-            :disabled="modalType === 'edit'"
-            key-field="key"
-            label-field="label"
-          />
+          <n-tree-select v-model:value="model.dept_id" :options="deptTreeOptions" placeholder="请选择部门"
+            :disabled="modalType === 'edit'" key-field="key" label-field="label" />
         </n-form-item>
 
         <n-form-item label="SNMP 版本" path="snmp_version">
@@ -479,25 +469,13 @@ const handleDelete = (row: DeptSnmpCredential) => {
         </n-form-item>
 
         <n-form-item label="端口" path="port">
-          <n-input-number
-            v-model:value="model.port"
-            :min="1"
-            :max="65535"
-            :update-value-on-input="true"
-            placeholder="161"
-            style="width: 100%"
-          />
+          <n-input-number v-model:value="model.port" :min="1" :max="65535" :update-value-on-input="true"
+            placeholder="161" style="width: 100%" />
         </n-form-item>
 
         <n-form-item v-if="model.snmp_version === 'v2c'" label="Community">
-          <n-input
-            v-model:value="model.community"
-            type="password"
-            show-password-on="click"
-            :placeholder="
-              modalType === 'edit' ? '留空则保持不变；填空字符串将清空' : '请输入 community'
-            "
-          />
+          <n-input v-model:value="model.community" type="password" show-password-on="click" :placeholder="modalType === 'edit' ? '留空则保持不变；填空字符串将清空' : '请输入 community'
+            " />
         </n-form-item>
 
         <template v-if="model.snmp_version === 'v3'">
@@ -505,20 +483,12 @@ const handleDelete = (row: DeptSnmpCredential) => {
             <n-input v-model:value="model.v3_username" placeholder="用户名" />
           </n-form-item>
           <n-form-item label="v3 Auth Key">
-            <n-input
-              v-model:value="model.v3_auth_key"
-              type="password"
-              show-password-on="click"
-              placeholder="Auth Key（留空则保持不变）"
-            />
+            <n-input v-model:value="model.v3_auth_key" type="password" show-password-on="click"
+              placeholder="Auth Key（留空则保持不变）" />
           </n-form-item>
           <n-form-item label="v3 Priv Key">
-            <n-input
-              v-model:value="model.v3_priv_key"
-              type="password"
-              show-password-on="click"
-              placeholder="Priv Key（留空则保持不变）"
-            />
+            <n-input v-model:value="model.v3_priv_key" type="password" show-password-on="click"
+              placeholder="Priv Key（留空则保持不变）" />
           </n-form-item>
           <n-form-item label="v3 Auth 协议">
             <n-input v-model:value="model.v3_auth_proto" placeholder="例如: SHA" />

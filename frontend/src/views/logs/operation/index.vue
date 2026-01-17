@@ -1,9 +1,22 @@
 <script setup lang="ts">
 import { ref } from 'vue'
-import { NDrawer, NDrawerContent, NDescriptions, NDescriptionsItem, type DataTableColumns, type DropdownOption } from 'naive-ui'
-import { getOperationLogs, type LogSearchParams, type OperationLog } from '@/api/logs'
+import {
+  NDrawer,
+  NDrawerContent,
+  NDescriptions,
+  NDescriptionsItem,
+  type DataTableColumns,
+  type DropdownOption,
+} from 'naive-ui'
+import {
+  getOperationLogs,
+  exportOperationLogs,
+  type LogSearchParams,
+  type OperationLog,
+} from '@/api/logs'
 import { formatDateTime } from '@/utils/date'
 import ProTable from '@/components/common/ProTable.vue'
+import DataImportExport from '@/components/common/DataImportExport.vue'
 import hljs from 'highlight.js/lib/core'
 import json from 'highlight.js/lib/languages/json'
 import 'highlight.js/styles/github.css'
@@ -71,16 +84,14 @@ const loadData = async (params: LogSearchParams) => {
 
 <template>
   <div class="p-4">
-    <ProTable
-      ref="tableRef"
-      title="审计日志"
-      :columns="columns"
-      :request="loadData"
-      :row-key="(row: OperationLog) => row.id"
-      :context-menu-options="contextMenuOptions"
-      search-placeholder="搜索用户名/IP/模块/摘要/路径"
-      @context-menu-select="handleContextMenuSelect"
-    />
+    <ProTable ref="tableRef" title="审计日志" :columns="columns" :request="loadData"
+      :row-key="(row: OperationLog) => row.id" :context-menu-options="contextMenuOptions"
+      search-placeholder="搜索用户名/IP/模块/摘要/路径" @context-menu-select="handleContextMenuSelect">
+      <template #toolbar>
+        <DataImportExport title="审计日志" show-export export-name="operation_logs_export.csv"
+          :export-api="exportOperationLogs" />
+      </template>
+    </ProTable>
 
     <!-- 详情抽屉 -->
     <n-drawer v-model:show="showDrawer" :width="630" placement="right" :native-scrollbar="true">
@@ -96,8 +107,12 @@ const loadData = async (params: LogSearchParams) => {
           <n-descriptions-item label="路径">{{ currentLog.path }}</n-descriptions-item>
           <n-descriptions-item label="状态码">{{ currentLog.response_code }}</n-descriptions-item>
           <n-descriptions-item label="耗时">{{ currentLog.duration?.toFixed(4) }} ms</n-descriptions-item>
-          <n-descriptions-item label="User-Agent">{{ currentLog.user_agent || '-' }}</n-descriptions-item>
-          <n-descriptions-item label="时间">{{ formatDateTime(currentLog.created_at) }}</n-descriptions-item>
+          <n-descriptions-item label="User-Agent">{{
+            currentLog.user_agent || '-'
+            }}</n-descriptions-item>
+          <n-descriptions-item label="时间">{{
+            formatDateTime(currentLog.created_at)
+            }}</n-descriptions-item>
         </n-descriptions>
 
         <div v-if="currentLog" class="json-section">

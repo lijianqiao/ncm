@@ -7,7 +7,15 @@
  */
 
 import { request } from '@/utils/request'
-import type { PaginatedResponse, ResponseBase } from '@/types/api'
+import type {
+  PaginatedResponse,
+  ResponseBase,
+  ImportValidateResponse,
+  ImportPreviewResponse,
+  ImportCommitRequest,
+  ImportCommitResponse,
+} from '@/types/api'
+import type { AxiosResponse } from 'axios'
 
 export type SnmpVersion = 'v2c' | 'v3'
 
@@ -145,5 +153,57 @@ export function batchHardDeleteSnmpCredentials(ids: string[]) {
     url: '/snmp_credentials/batch/hard',
     method: 'delete',
     data: { ids },
+  })
+}
+
+// ==================== 导入导出 API ====================
+
+export function exportSnmpCredentials(fmt: 'csv' | 'xlsx' = 'csv') {
+  return request<AxiosResponse<Blob>>({
+    url: '/snmp_credentials/export',
+    method: 'get',
+    params: { fmt },
+    responseType: 'blob',
+  })
+}
+
+export function downloadSnmpCredentialImportTemplate() {
+  return request<AxiosResponse<Blob>>({
+    url: '/snmp_credentials/import/template',
+    method: 'get',
+    responseType: 'blob',
+  })
+}
+
+export function uploadSnmpCredentialImportFile(file: File, allowOverwrite = false) {
+  const formData = new FormData()
+  formData.append('file', file)
+  formData.append('allow_overwrite', allowOverwrite ? 'true' : 'false')
+  return request<ResponseBase<ImportValidateResponse>>({
+    url: '/snmp_credentials/import/upload',
+    method: 'post',
+    data: formData,
+    headers: { 'Content-Type': 'multipart/form-data' },
+  })
+}
+
+export function previewSnmpCredentialImport(params: {
+  import_id: string
+  checksum: string
+  page?: number
+  page_size?: number
+}) {
+  return request<ResponseBase<ImportPreviewResponse>>({
+    url: '/snmp_credentials/import/preview',
+    method: 'get',
+    params,
+  })
+}
+
+export function commitSnmpCredentialImport(data: ImportCommitRequest) {
+  return request<ResponseBase<ImportCommitResponse>>({
+    url: '/snmp_credentials/import/commit',
+    method: 'post',
+    data,
   })
 }

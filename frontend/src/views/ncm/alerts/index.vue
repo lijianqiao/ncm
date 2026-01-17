@@ -18,6 +18,7 @@ import {
   closeAlert,
   batchAcknowledgeAlerts,
   batchCloseAlerts,
+  exportAlerts,
   type Alert,
   type AlertSearchParams,
   type AlertType,
@@ -26,6 +27,7 @@ import {
 } from '@/api/alerts'
 import { formatDateTime } from '@/utils/date'
 import ProTable, { type FilterConfig } from '@/components/common/ProTable.vue'
+import DataImportExport from '@/components/common/DataImportExport.vue'
 
 defineOptions({
   name: 'AlertManagement',
@@ -306,18 +308,12 @@ const handleBatchClose = () => {
 
 <template>
   <div class="alert-management p-4">
-    <ProTable
-      ref="tableRef"
-      title="告警列表"
-      :columns="columns"
-      :request="loadData"
-      :row-key="(row: Alert) => row.id"
-      :context-menu-options="contextMenuOptions"
-      search-placeholder="搜索告警标题/内容"
-      :search-filters="searchFilters"
-      @context-menu-select="handleContextMenuSelect"
-      :scroll-x="1200"
-    >
+    <ProTable ref="tableRef" title="告警列表" :columns="columns" :request="loadData" :row-key="(row: Alert) => row.id"
+      :context-menu-options="contextMenuOptions" search-placeholder="搜索告警标题/内容" :search-filters="searchFilters"
+      @context-menu-select="handleContextMenuSelect" :scroll-x="1200">
+      <template #toolbar>
+        <DataImportExport title="告警" show-export export-name="alerts_export.csv" :export-api="exportAlerts" />
+      </template>
       <template #search-right>
         <n-button type="info" @click="handleBatchAcknowledge">批量确认</n-button>
         <n-button type="warning" @click="handleBatchClose">批量关闭</n-button>

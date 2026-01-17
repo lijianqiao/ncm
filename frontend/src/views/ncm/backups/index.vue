@@ -28,6 +28,7 @@ import {
   batchRestoreBackups,
   hardDeleteBackup,
   batchHardDeleteBackups,
+  exportBackups,
   type Backup,
   type BackupSearchParams,
   type BackupType,
@@ -41,6 +42,7 @@ import { useTaskPolling } from '@/composables'
 import ProTable, { type FilterConfig } from '@/components/common/ProTable.vue'
 import UnifiedDiffViewer from '@/components/common/UnifiedDiffViewer.vue'
 import OtpModal from '@/components/common/OtpModal.vue'
+import DataImportExport from '@/components/common/DataImportExport.vue'
 
 defineOptions({
   name: 'BackupManagement',
@@ -769,6 +771,7 @@ const closeBatchBackupModal = () => {
           </n-button>
           <n-button type="primary" @click="handleManualBackup">手动备份</n-button>
           <n-button type="info" @click="handleBatchBackup">批量备份</n-button>
+          <DataImportExport title="备份" show-export export-name="backups_export.csv" :export-api="exportBackups" />
         </n-space>
       </template>
     </ProTable>

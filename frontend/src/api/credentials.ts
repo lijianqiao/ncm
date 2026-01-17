@@ -7,8 +7,16 @@
  */
 
 import { request } from '@/utils/request'
-import type { ResponseBase, PaginatedResponse } from '@/types/api'
+import type {
+  ResponseBase,
+  PaginatedResponse,
+  ImportValidateResponse,
+  ImportPreviewResponse,
+  ImportCommitRequest,
+  ImportCommitResponse,
+} from '@/types/api'
 import type { DeviceGroup, AuthType } from './devices'
+import type { AxiosResponse } from 'axios'
 
 // ==================== 接口定义 ====================
 
@@ -178,5 +186,57 @@ export function batchHardDeleteCredentials(ids: string[]) {
     url: '/credentials/batch/hard',
     method: 'delete',
     data: { ids },
+  })
+}
+
+// ==================== 导入导出 API ====================
+
+export function exportCredentials(fmt: 'csv' | 'xlsx' = 'csv') {
+  return request<AxiosResponse<Blob>>({
+    url: '/credentials/export',
+    method: 'get',
+    params: { fmt },
+    responseType: 'blob',
+  })
+}
+
+export function downloadCredentialImportTemplate() {
+  return request<AxiosResponse<Blob>>({
+    url: '/credentials/import/template',
+    method: 'get',
+    responseType: 'blob',
+  })
+}
+
+export function uploadCredentialImportFile(file: File, allowOverwrite = false) {
+  const formData = new FormData()
+  formData.append('file', file)
+  formData.append('allow_overwrite', allowOverwrite ? 'true' : 'false')
+  return request<ResponseBase<ImportValidateResponse>>({
+    url: '/credentials/import/upload',
+    method: 'post',
+    data: formData,
+    headers: { 'Content-Type': 'multipart/form-data' },
+  })
+}
+
+export function previewCredentialImport(params: {
+  import_id: string
+  checksum: string
+  page?: number
+  page_size?: number
+}) {
+  return request<ResponseBase<ImportPreviewResponse>>({
+    url: '/credentials/import/preview',
+    method: 'get',
+    params,
+  })
+}
+
+export function commitCredentialImport(data: ImportCommitRequest) {
+  return request<ResponseBase<ImportCommitResponse>>({
+    url: '/credentials/import/commit',
+    method: 'post',
+    data,
   })
 }

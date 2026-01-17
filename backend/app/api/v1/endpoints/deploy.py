@@ -191,6 +191,18 @@ async def list_deploy_tasks_recycle_bin(
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=500),
 ) -> ResponseBase[PaginatedResponse[DeployTaskResponse]]:
+    """获取已删除的下发任务列表（回收站）。
+
+    仅超级管理员可查看，用于审计与批量恢复。
+
+    Args:
+        service (DeployService): 下发服务依赖。
+        page (int): 页码（从 1 开始）。
+        page_size (int): 每页数量（1-500）。
+
+    Returns:
+        ResponseBase[PaginatedResponse[DeployTaskResponse]]: 回收站任务分页列表。
+    """
     items, total = await service.list_deleted_tasks_paginated(page=page, page_size=page_size)
     return ResponseBase(
         data=PaginatedResponse(
@@ -213,6 +225,18 @@ async def batch_delete_deploy_tasks(
     service: DeployServiceDep,
     user: CurrentUser,
 ) -> ResponseBase[BatchOperationResult]:
+    """批量删除下发任务（支持软/硬删除）。
+
+    当 `hard_delete` 为 True 时执行物理删除，不可恢复；否则为软删除，可在回收站恢复。
+
+    Args:
+        request (BatchDeleteRequest): 批量删除请求体（包含 ID 列表与是否硬删除）。
+        service (DeployService): 下发服务依赖。
+        user (User): 操作人信息。
+
+    Returns:
+        ResponseBase[BatchOperationResult]: 批量操作结果（成功数与失败ID）。
+    """
     success_count, failed_ids = await service.batch_delete_tasks(ids=request.ids, hard_delete=request.hard_delete)
     return ResponseBase(
         data=BatchOperationResult(
@@ -234,6 +258,16 @@ async def delete_deploy_task(
     service: DeployServiceDep,
     user: CurrentUser,
 ) -> ResponseBase[DeployTaskResponse]:
+    """删除单个下发任务（软删除）。
+
+    Args:
+        task_id (UUID): 任务 ID。
+        service (DeployService): 下发服务依赖。
+        user (User): 操作人信息。
+
+    Returns:
+        ResponseBase[DeployTaskResponse]: 被标记删除后的任务详情。
+    """
     task = await service.delete_task(task_id=task_id)
     return ResponseBase(data=DeployTaskResponse.model_validate(task), message="下发任务删除成功")
 
@@ -251,6 +285,15 @@ async def batch_restore_deploy_tasks(
     request: BatchRestoreRequest,
     service: DeployServiceDep,
 ) -> ResponseBase[BatchOperationResult]:
+    """批量恢复已删除的下发任务（从回收站恢复）。
+
+    Args:
+        request (BatchRestoreRequest): 批量恢复请求体（包含 ID 列表）。
+        service (DeployService): 下发服务依赖。
+
+    Returns:
+        ResponseBase[BatchOperationResult]: 批量恢复结果。
+    """
     success_count, failed_ids = await service.batch_restore_tasks(ids=request.ids)
     return ResponseBase(
         data=BatchOperationResult(
@@ -274,6 +317,15 @@ async def restore_deploy_task(
     task_id: UUID,
     service: DeployServiceDep,
 ) -> ResponseBase[DeployTaskResponse]:
+    """恢复单个已删除的下发任务至正常状态。
+
+    Args:
+        task_id (UUID): 任务 ID。
+        service (DeployService): 下发服务依赖。
+
+    Returns:
+        ResponseBase[DeployTaskResponse]: 恢复后的任务详情。
+    """
     task = await service.restore_task(task_id=task_id)
     return ResponseBase(data=DeployTaskResponse.model_validate(task), message="下发任务恢复成功")
 
@@ -291,6 +343,15 @@ async def hard_delete_deploy_task(
     task_id: UUID,
     service: DeployServiceDep,
 ) -> ResponseBase[dict]:
+    """彻底删除单个下发任务（物理删除，不可恢复）。
+
+    Args:
+        task_id (UUID): 任务 ID。
+        service (DeployService): 下发服务依赖。
+
+    Returns:
+        ResponseBase[dict]: 操作结果消息。
+    """
     await service.hard_delete_task(task_id=task_id)
     return ResponseBase(data={"message": "下发任务已彻底删除"}, message="下发任务已彻底删除")
 
@@ -308,6 +369,15 @@ async def batch_hard_delete_deploy_tasks(
     request: BatchDeleteRequest,
     service: DeployServiceDep,
 ) -> ResponseBase[BatchOperationResult]:
+    """批量彻底删除任务（物理删除，不可恢复）。
+
+    Args:
+        request (BatchDeleteRequest): 批量请求体（包含 ID 列表）。
+        service (DeployService): 下发服务依赖。
+
+    Returns:
+        ResponseBase[BatchOperationResult]: 批量硬删除结果。
+    """
     success_count, failed_ids = await service.batch_delete_tasks(ids=request.ids, hard_delete=True)
     return ResponseBase(
         data=BatchOperationResult(
