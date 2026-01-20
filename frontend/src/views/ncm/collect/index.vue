@@ -38,6 +38,7 @@ import { type Device } from '@/api/devices'
 import { formatDateTime } from '@/utils/date'
 import { useDeviceOptions, useOtpFlow, useTaskPolling } from '@/composables'
 import OtpModal from '@/components/common/OtpModal.vue'
+import DeviceSelector from '@/components/common/DeviceSelector.vue'
 
 defineOptions({
   name: 'CollectManagement',
@@ -161,6 +162,7 @@ const batchCollectModel = ref({
   collect_arp: true,
   collect_mac: true,
 })
+const selectedBatchDevices = ref<Device[]>([])
 
 // 使用 useTaskPolling composable
 const {
@@ -174,12 +176,13 @@ const {
 const hasAutoPromptedOtpRetry = ref(false)
 
 const handleBatchCollect = async () => {
-  await loadDevices()
+  // await loadDevices() // DeviceSelector 会自动加载
   batchCollectModel.value = {
     device_ids: [],
     collect_arp: true,
     collect_mac: true,
   }
+  selectedBatchDevices.value = []
   hasAutoPromptedOtpRetry.value = false
   resetBatchTask()
   showBatchCollectModal.value = true
@@ -533,15 +536,8 @@ const submitLocate = async () => {
 
     <div>
       <n-space align="center" style="margin-bottom: 12px">
-        <n-select
-          v-model:value="selectedDeviceForTable"
-          :options="deviceOptions"
-          :loading="deviceLoading"
-          placeholder="选择设备查看表数据"
-          filterable
-          style="width: 360px"
-          @focus="() => loadDevices()"
-        />
+        <n-select v-model:value="selectedDeviceForTable" :options="deviceOptions" :loading="deviceLoading"
+          placeholder="选择设备查看表数据" filterable style="width: 360px" @focus="() => loadDevices()" />
         <n-button type="primary" :loading="tableLoading" @click="fetchTables"> 查询 </n-button>
       </n-space>
 
@@ -557,22 +553,12 @@ const submitLocate = async () => {
                 <div v-else>缓存时间: -</div>
                 <div>条目数: {{ arpTableData?.total ?? 0 }}</div>
               </div>
-              <n-input
-                v-model:value="arpSearch"
-                placeholder="搜索：IP/MAC/接口/VLAN/类型"
-                clearable
-                style="max-width: 360px"
-              />
+              <n-input v-model:value="arpSearch" placeholder="搜索：IP/MAC/接口/VLAN/类型" clearable
+                style="max-width: 360px" />
             </n-space>
 
-            <n-data-table
-              :columns="arpColumns"
-              :data="filterArpEntries"
-              :bordered="false"
-              :single-line="false"
-              :max-height="520"
-              size="small"
-            />
+            <n-data-table :columns="arpColumns" :data="filterArpEntries" :bordered="false" :single-line="false"
+              :max-height="520" size="small" />
           </n-space>
         </n-tab-pane>
 
@@ -587,22 +573,12 @@ const submitLocate = async () => {
                 <div v-else>缓存时间: -</div>
                 <div>条目数: {{ macTableData?.total ?? 0 }}</div>
               </div>
-              <n-input
-                v-model:value="macSearch"
-                placeholder="搜索：MAC/接口/VLAN/类型/状态"
-                clearable
-                style="max-width: 360px"
-              />
+              <n-input v-model:value="macSearch" placeholder="搜索：MAC/接口/VLAN/类型/状态" clearable
+                style="max-width: 360px" />
             </n-space>
 
-            <n-data-table
-              :columns="macColumns"
-              :data="filterMacEntries"
-              :bordered="false"
-              :single-line="false"
-              :max-height="520"
-              size="small"
-            />
+            <n-data-table :columns="macColumns" :data="filterMacEntries" :bordered="false" :single-line="false"
+              :max-height="520" size="small" />
           </n-space>
         </n-tab-pane>
       </n-tabs>
@@ -612,22 +588,14 @@ const submitLocate = async () => {
     <n-modal v-model:show="showCollectModal" preset="card" title="手动采集" style="width: 500px">
       <n-space vertical style="width: 100%">
         <n-form-item label="选择设备">
-          <n-select
-            v-model:value="collectModel.device_id"
-            :options="deviceOptions"
-            :loading="deviceLoading"
-            placeholder="请选择设备"
-            filterable
-          />
+          <n-select v-model:value="collectModel.device_id" :options="deviceOptions" :loading="deviceLoading"
+            placeholder="请选择设备" filterable />
         </n-form-item>
         <n-button type="primary" :loading="collectLoading" @click="submitManualCollect">
           开始采集
         </n-button>
         <template v-if="collectResult">
-          <n-alert
-            :type="collectResult.success ? 'success' : 'error'"
-            :title="collectResult.success ? '采集完成' : '采集失败'"
-          >
+          <n-alert :type="collectResult.success ? 'success' : 'error'" :title="collectResult.success ? '采集完成' : '采集失败'">
             <p>设备: {{ collectResult.device_name }}</p>
             <p>ARP 条目: {{ collectResult.arp_count }}</p>
             <p>MAC 条目: {{ collectResult.mac_count }}</p>
@@ -641,27 +609,13 @@ const submitLocate = async () => {
     </n-modal>
 
     <!-- 批量采集 Modal -->
-    <n-modal
-      v-model:show="showBatchCollectModal"
-      preset="card"
-      title="批量采集"
-      style="width: 600px"
-      :closable="!batchTaskPolling"
-      :mask-closable="!batchTaskPolling"
-      @close="closeBatchCollectModal"
-    >
+    <n-modal v-model:show="showBatchCollectModal" preset="card" title="批量采集" style="width: 600px"
+      :closable="!batchTaskPolling" :mask-closable="!batchTaskPolling" @close="closeBatchCollectModal">
       <template v-if="!batchTaskStatus">
         <n-space vertical style="width: 100%">
           <n-form-item label="选择设备">
-            <n-select
-              v-model:value="batchCollectModel.device_ids"
-              :options="deviceOptions"
-              :loading="deviceLoading"
-              placeholder="请选择设备"
-              filterable
-              multiple
-              max-tag-count="responsive"
-            />
+            <DeviceSelector v-model="batchCollectModel.device_ids"
+              @update:devices="(devs) => (selectedBatchDevices = devs)" placeholder="请选择设备" />
           </n-form-item>
           <n-space>
             <n-checkbox v-model:checked="batchCollectModel.collect_arp">采集 ARP</n-checkbox>
@@ -681,18 +635,13 @@ const submitLocate = async () => {
             <p>任务 ID: {{ batchTaskStatus.task_id }}</p>
             <p>状态: {{ batchTaskStatus.status }}</p>
           </div>
-          <n-progress
-            v-if="batchTaskStatus.progress !== null"
-            type="line"
-            :percentage="batchTaskStatus.progress"
-            :status="
-              batchTaskStatus.status === 'SUCCESS'
+          <n-progress v-if="batchTaskStatus.progress !== null" type="line" :percentage="batchTaskStatus.progress"
+            :status="batchTaskStatus.status === 'SUCCESS'
                 ? 'success'
                 : batchTaskStatus.status === 'FAILURE'
                   ? 'error'
                   : 'default'
-            "
-          />
+              " />
           <template v-if="batchTaskStatus.result">
             <div style="text-align: center">
               <p>总数: {{ batchTaskStatus.result.total_devices }}</p>
@@ -707,28 +656,20 @@ const submitLocate = async () => {
           </template>
           <n-alert v-if="batchTaskStatus.error" type="error" :title="batchTaskStatus.error" />
         </n-space>
-        <div
-          v-if="batchTaskStatus.status === 'SUCCESS' || batchTaskStatus.status === 'FAILURE'"
-          style="margin-top: 20px; text-align: right"
-        >
+        <div v-if="batchTaskStatus.status === 'SUCCESS' || batchTaskStatus.status === 'FAILURE'"
+          style="margin-top: 20px; text-align: right">
           <n-button @click="closeBatchCollectModal">关闭</n-button>
         </div>
       </template>
     </n-modal>
 
     <!-- IP/MAC 定位 Modal -->
-    <n-modal
-      v-model:show="showLocateModal"
-      preset="card"
-      :title="`${locateType.toUpperCase()} 地址定位`"
-      style="width: 500px"
-    >
+    <n-modal v-model:show="showLocateModal" preset="card" :title="`${locateType.toUpperCase()} 地址定位`"
+      style="width: 500px">
       <n-space vertical style="width: 100%">
         <n-form-item :label="`输入 ${locateType.toUpperCase()} 地址`">
-          <n-input
-            v-model:value="locateQuery"
-            :placeholder="locateType === 'ip' ? '例如: 192.168.1.100' : '例如: aa:bb:cc:dd:ee:ff'"
-          />
+          <n-input v-model:value="locateQuery"
+            :placeholder="locateType === 'ip' ? '例如: 192.168.1.100' : '例如: aa:bb:cc:dd:ee:ff'" />
         </n-form-item>
         <n-button type="primary" :loading="locateLoading" @click="submitLocate">定位</n-button>
         <template v-if="locateResult">
@@ -746,13 +687,8 @@ const submitLocate = async () => {
       </n-space>
     </n-modal>
 
-    <OtpModal
-      v-model:show="showOTPModal"
-      :loading="otpLoading"
-      :info-items="otpInfoItems"
-      @update:show="(v) => (!v ? closeOTP() : undefined)"
-      @confirm="submitOTP"
-    />
+    <OtpModal v-model:show="showOTPModal" :loading="otpLoading" :info-items="otpInfoItems"
+      @update:show="(v) => (!v ? closeOTP() : undefined)" @confirm="submitOTP" />
   </div>
 </template>
 

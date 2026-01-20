@@ -43,6 +43,7 @@ import ProTable, { type FilterConfig } from '@/components/common/ProTable.vue'
 import UnifiedDiffViewer from '@/components/common/UnifiedDiffViewer.vue'
 import OtpModal from '@/components/common/OtpModal.vue'
 import DataImportExport from '@/components/common/DataImportExport.vue'
+import DeviceSelector from '@/components/common/DeviceSelector.vue'
 
 defineOptions({
   name: 'BackupManagement',
@@ -646,6 +647,8 @@ const batchBackupModel = ref({
   device_ids: [] as string[],
   backup_type: 'scheduled' as BackupType,
 })
+// 存储选中的设备对象，用于 OTP 检查
+const selectedBatchDevices = ref<Device[]>([])
 
 // 使用 useTaskPolling composable
 const {
@@ -752,22 +755,8 @@ const {
 })
 
 const handleBatchBackup = async () => {
-  deviceLoading.value = true
   showBatchBackupModal.value = true
   resetBatchTask()
-  try {
-    const res = await getDeviceOptions({ status: 'active' })
-    // 保存设备信息以便后续检查认证类型
-    deviceMap.value = Object.fromEntries(res.data.items.map((d: Device) => [d.id, d]))
-    deviceOptions.value = res.data.items.map((d: Device) => ({
-      label: `${d.name} (${d.ip_address})`,
-      value: d.id,
-    }))
-  } catch {
-    showBatchBackupModal.value = false
-  } finally {
-    deviceLoading.value = false
-  }
 }
 
 const submitBatchBackup = async () => {
@@ -777,13 +766,9 @@ const submitBatchBackup = async () => {
   }
 
   // 1. 预检查：是否有设备需要 OTP 手动认证
-  const otpManualDevices: Device[] = []
-  for (const id of batchBackupModel.value.device_ids) {
-    const device = deviceMap.value[id]
-    if (device && device.auth_type === 'otp_manual') {
-      otpManualDevices.push(device)
-    }
-  }
+  const otpManualDevices = selectedBatchDevices.value.filter(
+    (d) => d && d.auth_type === 'otp_manual',
+  )
 
   // 如果发现有需要 OTP 手动认证的设备
   if (otpManualDevices.length > 0) {
@@ -851,13 +836,13 @@ const closeBatchBackupModal = () => {
   resetBatchTask()
 }
 
-const selectAllDevices = () => {
-  batchBackupModel.value.device_ids = deviceOptions.value.map((d) => d.value)
-}
+// const selectAllDevices = () => {
+//   batchBackupModel.value.device_ids = deviceOptions.value.map((d) => d.value)
+// }
 
-const clearAllDevices = () => {
-  batchBackupModel.value.device_ids = []
-}
+// const clearAllDevices = () => {
+//   batchBackupModel.value.device_ids = []
+// }
 </script>
 
 <template>
@@ -958,34 +943,7 @@ const clearAllDevices = () => {
     <!-- 批量备份 Modal -->
     <n-modal v-model:show="showBatchBackupModal" preset="card" title="批量备份" style="width: 600px"
       :closable="!batchTaskPolling" :mask-closable="!batchTaskPolling" @close="closeBatchBackupModal">
-      <div v-if="deviceLoading" style="text-align: center; padding: 20px">加载设备列表...</div>
-      <template v-else-if="!batchTaskStatus">
-        <n-space vertical style="width: 100%">
-          <div>
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px">
-              <label>选择设备:</label>
-              <n-space size="small">
-                <n-button size="tiny" type="primary" secondary @click="selectAllDevices">全选</n-button>
-                <n-button size="tiny" secondary @click="clearAllDevices">清空</n-button>
-              </n-space>
-            </div>
-            <n-select v-model:value="batchBackupModel.device_ids" :options="deviceOptions" placeholder="请选择要备份的设备"
-              filterable multiple max-tag-count="responsive" />
-          </div>
-          <div>
-            <label style="display: block; margin-bottom: 8px">备份类型:</label>
-            <n-select v-model:value="batchBackupModel.backup_type" :options="backupTypeOptions" />
-          </div>
-        </n-space>
-        <div style="margin-top: 20px; text-align: right">
-          <n-space>
-            <n-button @click="closeBatchBackupModal">取消</n-button>
-            <n-button type="primary" :loading="otpLoading" :disabled="otpLoading"
-              @click="submitBatchBackup">开始批量备份</n-button>
-          </n-space>
-        </div>
-      </template>
-      <template v-else>
+      <template v-if="batchTaskStatus">
         <n-space vertical style="width: 100%">
           <div style="text-align: center">
             <p>任务 ID: {{ batchTaskStatus.task_id }}</p>
@@ -1044,6 +1002,23 @@ const clearAllDevices = () => {
           <n-button @click="closeBatchBackupModal">关闭</n-button>
         </div>
       </template>
+      <div v-else>
+        <n-space vertical style="width: 100%">
+          <DeviceSelector v-model="batchBackupModel.device_ids"
+            @update:devices="(devs) => (selectedBatchDevices = devs)" label="选择设备" />
+          <div>
+            <label style="display: block; margin-bottom: 8px">备份类型:</label>
+            <n-select v-model:value="batchBackupModel.backup_type" :options="backupTypeOptions" />
+          </div>
+        </n-space>
+        <div style="margin-top: 20px; text-align: right">
+          <n-space>
+            <n-button @click="closeBatchBackupModal">取消</n-button>
+            <n-button type="primary" :loading="otpLoading" :disabled="otpLoading"
+              @click="submitBatchBackup">开始批量备份</n-button>
+          </n-space>
+        </div>
+      </div>
     </n-modal>
 
     <!-- OTP 输入 Modal（通用组件） -->

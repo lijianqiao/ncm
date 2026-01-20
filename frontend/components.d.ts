@@ -12,6 +12,7 @@ export {}
 declare module 'vue' {
   export interface GlobalComponents {
     DataImportExport: typeof import('./src/components/common/DataImportExport.vue')['default']
+    DeviceSelector: typeof import('./src/components/common/DeviceSelector.vue')['default']
     GlobalAlerts: typeof import('./src/components/common/GlobalAlerts.vue')['default']
     NAlert: typeof import('naive-ui')['NAlert']
     NButton: typeof import('naive-ui')['NButton']

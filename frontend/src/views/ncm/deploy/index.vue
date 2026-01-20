@@ -45,8 +45,9 @@ import { formatUserDisplayName } from '@/utils/user'
 import ProTable, { type FilterConfig } from '@/components/common/ProTable.vue'
 import RecycleBinModal from '@/components/common/RecycleBinModal.vue'
 import OtpModal from '@/components/common/OtpModal.vue'
+import DeviceSelector from '@/components/common/DeviceSelector.vue'
 import type { DeviceGroupType } from '@/types/enums'
-import { useDeviceOptions, useOtpFlow } from '@/composables'
+import { useOtpFlow } from '@/composables'
 
 /** OTP 所需分组信息 */
 interface OtpRequiredGroup {
@@ -412,7 +413,6 @@ const createModel = ref({
 })
 const templateOptions = ref<{ label: string; value: string }[]>([])
 const userOptions = ref<{ label: string; value: string }[]>([])
-const { deviceOptions, load: loadDeviceOptions } = useDeviceOptions({ status: 'active' })
 
 const handleCreate = async () => {
   createLoading.value = true
@@ -429,9 +429,8 @@ const handleCreate = async () => {
     approver_ids: [],
   }
   try {
-    const [templatesRes, , usersRes] = await Promise.all([
+    const [templatesRes, usersRes] = await Promise.all([
       getTemplates({ status: 'approved', page_size: 100 }),
-      loadDeviceOptions(),
       getUsers({ page_size: 100 }),
     ])
     templateOptions.value = templatesRes.data.items.map((t: Template) => ({
@@ -827,8 +826,7 @@ const handleRollback = (row: DeployTask) => {
               :rows="3" style="font-family: monospace" />
           </n-form-item>
           <n-form-item label="目标设备">
-            <n-select v-model:value="createModel.device_ids" :options="deviceOptions" placeholder="请选择目标设备" filterable
-              multiple max-tag-count="responsive" />
+            <DeviceSelector v-model="createModel.device_ids" placeholder="请选择目标设备" />
           </n-form-item>
           <n-form-item label="审批人 (三级)">
             <n-select v-model:value="createModel.approver_ids" :options="userOptions" placeholder="请选择审批人（按顺序）"

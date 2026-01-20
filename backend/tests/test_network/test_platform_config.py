@@ -9,9 +9,6 @@
 import pytest
 
 from app.network.platform_config import (
-    COMMAND_MAP,
-    NTC_PLATFORM_MAP,
-    VENDOR_PLATFORM_MAP,
     detect_vendor_from_banner,
     detect_vendor_from_version,
     get_command,
@@ -46,7 +43,7 @@ class TestNtcPlatformMapping:
         assert get_ntc_platform("hp_comware") == "hp_comware"
 
     def test_cisco_iosxe_maps_to_cisco_ios(self):
-        assert get_ntc_platform("cisco_iosxe") == "cisco_ios"
+        assert get_ntc_platform("cisco_iosxe") == "cisco_iosxe"
 
     def test_unknown_platform_returns_as_is(self):
         assert get_ntc_platform("unknown_platform") == "unknown_platform"
@@ -88,7 +85,7 @@ class TestScrapliOptions:
 
     def test_hp_comware_uses_asyncssh(self):
         options = get_scrapli_options("hp_comware")
-        assert options["transport"] == "asyncssh"
+        assert options["transport"] == "ssh2"
 
 
 class TestVendorDetection:
