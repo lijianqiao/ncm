@@ -133,11 +133,47 @@ COMMAND_MAP: dict[str, dict[str, str]] = {
 # ===== Scrapli 连接默认参数 =====
 SCRAPLI_DEFAULTS: dict[str, Any] = {
     "auth_strict_key": False,
-    "ssh_config_file": False,
-    "transport": "asyncssh",
+    "ssh_config_file": "",
+    "transport": "ssh2",
     "timeout_socket": 15,
     "timeout_transport": 30,
     "timeout_ops": 60,
+}
+
+
+# ===== 关闭分页命令 =====
+PAGING_DISABLE_COMMANDS: dict[str, list[str]] = {
+    "cisco_iosxe": [
+        "terminal length 0",
+        "terminal pager 0",
+        "no page",
+        "terminal length 0\nterminal width 512",
+    ],
+    "cisco_ios": [
+        "terminal length 0",
+        "terminal pager 0",
+        "no page",
+        "terminal length 0\nterminal width 512",
+    ],
+    "cisco_nxos": [
+        "terminal length 0",
+        "terminal pager 0",
+        "no page",
+    ],
+    "huawei_vrp": [
+        "screen-length 0 temporary",
+        "screen-length 0",
+    ],
+    "hp_comware": [
+        "screen-length disable",
+        "screen-length 0 temporary",
+    ],
+    "arista_eos": [
+        "terminal length 0",
+    ],
+    "juniper_junos": [
+        "set cli screen-length 0",
+    ],
 }
 
 
@@ -145,28 +181,29 @@ SCRAPLI_DEFAULTS: dict[str, Any] = {
 PLATFORM_SCRAPLI_OPTIONS: dict[str, dict[str, Any]] = {
     "hp_comware": {
         "auth_strict_key": False,
-        "ssh_config_file": False,
-        "transport": "asyncssh",
-        "transport_options": {
-            "encoding": "gb18030",
-            "errors": "replace",
-        },
+        "ssh_config_file": "",
+        "transport": "ssh2",
     },
     "huawei_vrp": {
         "auth_strict_key": False,
-        "ssh_config_file": False,
-        "transport": "asyncssh",
-        "transport_options": {
-            "encoding": "gb18030",
-            "errors": "replace",
-        },
+        "ssh_config_file": "",
+        "transport": "ssh2",
     },
     "cisco_iosxe": {
         "auth_strict_key": False,
-        "ssh_config_file": False,
-        "transport": "asyncssh",
-        "timeout_transport": 90,
-        "timeout_ops": 90,
+        "ssh_config_file": "",
+        "transport": "ssh2",
+        "timeout_socket": 10,
+        "timeout_transport": 60,
+        "timeout_ops": 60,
+    },
+    "cisco_ios": {
+        "auth_strict_key": False,
+        "ssh_config_file": "",
+        "transport": "ssh2",
+        "timeout_socket": 10,
+        "timeout_transport": 60,
+        "timeout_ops": 60,
     },
 }
 
@@ -181,7 +218,34 @@ def get_platform_for_vendor(vendor: str) -> str:
     Returns:
         str: Scrapli 平台标识 (hp_comware, huawei_vrp, cisco_iosxe 等)
     """
-    return VENDOR_PLATFORM_MAP.get(vendor.lower(), "cisco_iosxe")
+    v = (vendor or "").strip().lower()
+    v = v.replace("-", "_").replace(" ", "_")
+
+    aliases: dict[str, str] = {
+        "vrp": "huawei_vrp",
+        "huawei_vrp": "huawei_vrp",
+        "huawei": "huawei_vrp",
+        "comware": "hp_comware",
+        "hp_comware": "hp_comware",
+        "h3c": "hp_comware",
+        "iosxe": "cisco_iosxe",
+        "cisco_iosxe": "cisco_iosxe",
+        "nxos": "cisco_nxos",
+        "cisco_nxos": "cisco_nxos",
+        "cisco": "cisco_iosxe",
+        "arista": "arista_eos",
+        "arista_eos": "arista_eos",
+        "juniper": "juniper_junos",
+        "juniper_junos": "juniper_junos",
+    }
+
+    if v in aliases:
+        return aliases[v]
+    if v in PLATFORM_SCRAPLI_OPTIONS:
+        return v
+    if v in VENDOR_PLATFORM_MAP:
+        return VENDOR_PLATFORM_MAP[v]
+    raise ValueError(f"不支持的平台/厂商: {vendor}")
 
 
 def get_ntc_platform(scrapli_platform: str) -> str:
@@ -238,6 +302,24 @@ def get_scrapli_options(platform: str) -> dict[str, Any]:
     if platform in PLATFORM_SCRAPLI_OPTIONS:
         options.update(PLATFORM_SCRAPLI_OPTIONS[platform])
     return options
+
+
+def get_paging_disable_commands(platform: str) -> list[str]:
+    """
+    获取关闭分页的命令列表。
+
+    Args:
+        platform: Scrapli 平台标识
+
+    Returns:
+        list[str]: 关闭分页命令列表
+    """
+    p = (platform or "").strip().lower()
+    if p in PAGING_DISABLE_COMMANDS:
+        return PAGING_DISABLE_COMMANDS[p]
+    if p.startswith("cisco_"):
+        return PAGING_DISABLE_COMMANDS.get("cisco_iosxe", [])
+    return []
 
 
 def detect_vendor_from_banner(banner: str) -> str | None:

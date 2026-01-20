@@ -9,8 +9,10 @@
 from uuid import UUID
 
 from fastapi import APIRouter, Depends
+from fastapi.responses import JSONResponse
 
 from app.api.deps import CollectServiceDep, CurrentUser, require_permissions
+from app.core.otp_notice import build_otp_required_response, is_otp_error_text
 from app.core.permissions import PermissionCode
 from app.schemas.collect import (
     ARPTableResponse,
@@ -84,7 +86,7 @@ async def batch_collect(
     request: CollectBatchRequest,
     service: CollectServiceDep,
     current_user: CurrentUser,
-) -> ResponseBase[CollectResult]:
+) -> ResponseBase[CollectResult] | JSONResponse:
     """批量同步采集多台设备的 ARP/MAC 表。
 
     该接口会阻塞直到所有选定设备处理完毕。推荐在设备数量较少时使用。
@@ -99,6 +101,14 @@ async def batch_collect(
         ResponseBase[CollectResult]: 包含批量采集统计信息（成功/失败计数）的响应。
     """
     result = await service.batch_collect(request)
+
+    failed_otp_device_ids = [
+        str(item.device_id) for item in result.results if (not item.success) and is_otp_error_text(item.error_message)
+    ]
+    if failed_otp_device_ids:
+        return build_otp_required_response(
+            details={"otp_required": True, "failed_devices": failed_otp_device_ids},
+        )
 
     return ResponseBase(
         data=result,
@@ -158,7 +168,7 @@ async def batch_collect_async(
     summary="查询采集任务状态",
     description="查询 Celery 异步采集任务的执行状态。",
 )
-async def get_task_status(task_id: str) -> ResponseBase[CollectTaskStatus]:
+async def get_task_status(task_id: str) -> ResponseBase[CollectTaskStatus] | JSONResponse:
     """根据任务 ID 查询 Celery 异步任务的当前状态和结果。
 
     如果在任务完成后调用，将返回详细的采集结果或错误信息。
@@ -184,8 +194,22 @@ async def get_task_status(task_id: str) -> ResponseBase[CollectTaskStatus]:
     if result.ready():
         if result.successful():
             status.result = CollectResult(**result.result)
+            failed_otp_device_ids = [
+                str(item.device_id)
+                for item in status.result.results
+                if (not item.success) and is_otp_error_text(item.error_message)
+            ]
+            if failed_otp_device_ids:
+                return build_otp_required_response(
+                    details={"otp_required": True, "failed_devices": failed_otp_device_ids},
+                )
         else:
             status.error = str(result.result)
+            if is_otp_error_text(status.error):
+                return build_otp_required_response(
+                    message=status.error,
+                    details={"otp_required": True},
+                )
 
     return ResponseBase(data=status)
 

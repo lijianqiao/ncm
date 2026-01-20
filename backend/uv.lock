@@ -203,9 +203,11 @@ dependencies = [
     { name = "pytest" },
     { name = "python-nmap" },
     { name = "redis" },
-    { name = "scrapli", extra = ["asyncssh", "paramiko"] },
+    { name = "scrapli", extra = ["paramiko"] },
+    { name = "scrapli-community" },
     { name = "slowapi" },
     { name = "sqlalchemy" },
+    { name = "ssh2-python" },
     { name = "structlog" },
     { name = "textfsm" },
     { name = "ttp" },
@@ -255,9 +257,11 @@ requires-dist = [
     { name = "pytest", specifier = ">=9.0.2" },
     { name = "python-nmap", specifier = ">=0.7.1" },
     { name = "redis", specifier = ">=7.1.0" },
-    { name = "scrapli", extras = ["asyncssh", "paramiko"], specifier = ">=2025.1.30" },
+    { name = "scrapli", extras = ["paramiko", "ssh2"], specifier = ">=2025.1.30" },
+    { name = "scrapli-community", specifier = ">=2025.1.30" },
     { name = "slowapi", specifier = ">=0.1.9" },
     { name = "sqlalchemy", specifier = ">=2.0.45" },
+    { name = "ssh2-python", specifier = ">=1.2.0.post1" },
     { name = "structlog", specifier = ">=25.5.0" },
     { name = "textfsm", specifier = ">=2.1.0" },
     { name = "ttp", specifier = ">=0.10.0" },
@@ -1975,9 +1979,6 @@ wheels = [
 ]
 
 [package.optional-dependencies]
-asyncssh = [
-    { name = "asyncssh" },
-]
 paramiko = [
     { name = "paramiko" },
 ]
@@ -2098,6 +2099,21 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/42/39/f05f0ed54d451156bbed0e23eb0516bcad7cbb9f18b3bf219c786371b3f0/sqlalchemy-2.0.45-cp314-cp314t-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:cd337d3526ec5298f67d6a30bbbe4ed7e5e68862f0bf6dd21d289f8d37b7d60b", size = 3522029, upload-time = "2025-12-09T22:13:32.09Z" },
     { url = "https://files.pythonhosted.org/packages/54/0f/d15398b98b65c2bce288d5ee3f7d0a81f77ab89d9456994d5c7cc8b2a9db/sqlalchemy-2.0.45-cp314-cp314t-musllinux_1_2_x86_64.whl", hash = "sha256:9a62b446b7d86a3909abbcd1cd3cc550a832f99c2bc37c5b22e1925438b9367b", size = 3475142, upload-time = "2025-12-09T22:13:33.739Z" },
     { url = "https://files.pythonhosted.org/packages/bf/e1/3ccb13c643399d22289c6a9786c1a91e3dcbb68bce4beb44926ac2c557bf/sqlalchemy-2.0.45-py3-none-any.whl", hash = "sha256:5225a288e4c8cc2308dbdd874edad6e7d0fd38eac1e9e5f23503425c8eee20d0", size = 1936672, upload-time = "2025-12-09T21:54:52.608Z" },
+]
+
+[[package]]
+name = "ssh2-python"
+version = "1.2.0.post1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/e3/ab/8105fdee39bee50e505c9c97e117353e19ab18c250307ec29a7dee46e46c/ssh2_python-1.2.0.post1.tar.gz", hash = "sha256:f981465ace35f96e0935b36091b61d17689d9e0e4f29b33a50882b92c45ddcbd", size = 2242329, upload-time = "2025-10-12T13:21:17.877Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/75/a0/aa9f1e6e42d3e3ceb2d8de3ac85535966efba08f45c0f88bff71013a4ba6/ssh2_python-1.2.0.post1-cp313-cp313-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:9026146fbeba2439263d29131850e4c02b8845ae5f81c7f0c21421bba92b3a1a", size = 5360692, upload-time = "2025-10-12T13:21:42.868Z" },
+    { url = "https://files.pythonhosted.org/packages/d9/ff/5055064dab6b273c2fd3ae969050423f223828006a9611eeaf588977e204/ssh2_python-1.2.0.post1-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:de3456b4940e5822bb65a526d7881af552f0a0de7dc69714526e294623c549b7", size = 4984822, upload-time = "2025-10-12T13:21:09.685Z" },
+    { url = "https://files.pythonhosted.org/packages/eb/87/19a49ea7e81bab56f726da04d17bb9d3eb7ee2e32bf7de1b77186d05b2d9/ssh2_python-1.2.0.post1-cp313-cp313-win_amd64.whl", hash = "sha256:3558f8cbb5934a8e15c1de1c89214d952007be6937029c21960956f3417ef5f5", size = 4224015, upload-time = "2025-10-12T13:19:07.629Z" },
+    { url = "https://files.pythonhosted.org/packages/cb/a6/2f5c757d826492ffdc73c4e8b426db693cb6fee1af3c9606ad1401e392a1/ssh2_python-1.2.0.post1-cp314-cp314-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:6abfd574f557767a6e9bccd717cb2906b1fe6f56dace4aa62e1cebe002048665", size = 5346267, upload-time = "2025-10-12T13:21:44.484Z" },
+    { url = "https://files.pythonhosted.org/packages/77/3b/966a19024c35749f2acb58c07623e754d031ebbe8c759b972a3417ba7d58/ssh2_python-1.2.0.post1-cp314-cp314-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:42ac53dc85bc84573fae559090badb39732014f296cc213cc6cc2d9925f28685", size = 4951927, upload-time = "2025-10-12T13:21:11.216Z" },
+    { url = "https://files.pythonhosted.org/packages/75/98/55cd51f1b08b2c78abfa48f92cb53161a947d76e85bf05d66a249cd87867/ssh2_python-1.2.0.post1-cp314-cp314t-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:cb7376604f64df06fcc397dd38337fe7271b807c2d3b8394459ffcccb7f38b84", size = 5725241, upload-time = "2025-10-12T13:21:46.047Z" },
+    { url = "https://files.pythonhosted.org/packages/80/e4/9436676cee8592978a646c9adcbe4412f69d1cd750bef9d4f2c795979220/ssh2_python-1.2.0.post1-cp314-cp314t-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:4a2f49996543b21af7e94b4296695ef5a3da59394f07c4e1178172533a3a46ee", size = 5266355, upload-time = "2025-10-12T13:21:12.775Z" },
 ]
 
 [[package]]

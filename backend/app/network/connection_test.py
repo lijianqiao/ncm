@@ -9,12 +9,19 @@
 """
 
 import asyncio
+import time
 from dataclasses import dataclass
 from typing import Any
 
-from scrapli import AsyncScrapli
-from scrapli.exceptions import ScrapliAuthenticationFailed, ScrapliConnectionError, ScrapliTimeout
+from scrapli import Scrapli
+from scrapli.exceptions import (
+    ScrapliAuthenticationFailed,
+    ScrapliConnectionError,
+    ScrapliConnectionNotOpened,
+    ScrapliTimeout,
+)
 
+from app.core.config import settings
 from app.core.logger import logger
 from app.network.platform_config import (
     detect_vendor_from_version,
@@ -22,6 +29,7 @@ from app.network.platform_config import (
     get_platform_for_vendor,
     get_scrapli_options,
 )
+from app.network.scrapli_utils import disable_paging, is_command_error, send_command_with_paging
 
 
 @dataclass
@@ -63,110 +71,62 @@ async def test_device_connection(
         port=port,
     )
 
-    # 获取平台特定的 Scrapli 配置
-    scrapli_options = get_scrapli_options(platform)
-    scrapli_options["timeout_socket"] = timeout
-    scrapli_options["timeout_transport"] = timeout
+    def _sync() -> ConnectionTestResult:
+        scrapli_options = get_scrapli_options(platform)
+        scrapli_options["timeout_socket"] = timeout
+        scrapli_options["timeout_transport"] = timeout
 
-    device_config = {
-        "host": host,
-        "auth_username": username,
-        "auth_password": password,
-        "port": port,
-        "platform": platform,
-        **scrapli_options,
-    }
+        device_config = {
+            "host": host,
+            "auth_username": username,
+            "auth_password": password,
+            "port": port,
+            "platform": platform,
+            **scrapli_options,
+        }
 
-    try:
-        async with AsyncScrapli(**device_config) as conn:
-            # 连接成功，尝试获取设备信息
-            device_info: dict[str, Any] = {
-                "host": host,
-                "platform": platform,
-                "port": port,
-            }
+        try:
+            with Scrapli(**device_config) as conn:
+                device_info: dict[str, Any] = {
+                    "host": host,
+                    "platform": platform,
+                    "port": port,
+                }
 
-            # 获取 version 信息
-            try:
-                version_cmd = get_command("version", platform)
-                response = await conn.send_command(version_cmd)
-                if response.failed:
-                    logger.warning(
-                        "获取版本信息失败",
-                        host=host,
-                        error=response.result,
-                    )
-                else:
-                    device_info["version_output"] = response.result[:500]  # 限制长度
+                try:
+                    version_cmd = get_command("version", platform)
+                    response = conn.send_command(version_cmd)
+                    if response.failed:
+                        logger.warning("获取版本信息失败", host=host, error=response.result)
+                    else:
+                        device_info["version_output"] = response.result[:500]
+                        detected_vendor = detect_vendor_from_version(response.result)
+                        if detected_vendor:
+                            device_info["detected_vendor"] = detected_vendor
+                except Exception as e:
+                    logger.warning("获取版本信息异常", host=host, error=str(e))
 
-                    # 尝试从 version 输出检测厂商
-                    detected_vendor = detect_vendor_from_version(response.result)
-                    if detected_vendor:
-                        device_info["detected_vendor"] = detected_vendor
-            except Exception as e:
-                logger.warning("获取版本信息异常", host=host, error=str(e))
+                logger.info("设备连接测试成功", host=host, platform=platform)
 
-            logger.info(
-                "设备连接测试成功",
-                host=host,
-                platform=platform,
-            )
+                return ConnectionTestResult(
+                    success=True,
+                    message="连接成功",
+                    device_info=device_info,
+                )
+        except ScrapliAuthenticationFailed as e:
+            logger.warning("设备认证失败", host=host, error=str(e))
+            return ConnectionTestResult(success=False, message="认证失败: 用户名或密码错误", error_type="auth_failed")
+        except ScrapliTimeout as e:
+            logger.warning("设备连接超时", host=host, timeout=timeout, error=str(e))
+            return ConnectionTestResult(success=False, message=f"连接超时: {timeout}秒内未响应", error_type="timeout")
+        except ScrapliConnectionError as e:
+            logger.warning("设备连接错误", host=host, error=str(e))
+            return ConnectionTestResult(success=False, message=f"连接错误: {str(e)}", error_type="connection_error")
+        except Exception as e:
+            logger.error("设备连接测试异常", host=host, error=str(e), exc_info=True)
+            return ConnectionTestResult(success=False, message=f"未知错误: {str(e)}", error_type="unknown")
 
-            return ConnectionTestResult(
-                success=True,
-                message="连接成功",
-                device_info=device_info,
-            )
-
-    except ScrapliAuthenticationFailed as e:
-        logger.warning(
-            "设备认证失败",
-            host=host,
-            error=str(e),
-        )
-        return ConnectionTestResult(
-            success=False,
-            message="认证失败: 用户名或密码错误",
-            error_type="auth_failed",
-        )
-
-    except ScrapliTimeout as e:
-        logger.warning(
-            "设备连接超时",
-            host=host,
-            timeout=timeout,
-            error=str(e),
-        )
-        return ConnectionTestResult(
-            success=False,
-            message=f"连接超时: {timeout}秒内未响应",
-            error_type="timeout",
-        )
-
-    except ScrapliConnectionError as e:
-        logger.warning(
-            "设备连接错误",
-            host=host,
-            error=str(e),
-        )
-        return ConnectionTestResult(
-            success=False,
-            message=f"连接错误: {str(e)}",
-            error_type="connection_error",
-        )
-
-    except Exception as e:
-        logger.error(
-            "设备连接测试异常",
-            host=host,
-            error=str(e),
-            exc_info=True,
-        )
-        return ConnectionTestResult(
-            success=False,
-            message=f"未知错误: {str(e)}",
-            error_type="unknown",
-        )
+    return await asyncio.to_thread(_sync)
 
 
 async def test_device_connection_by_vendor(
@@ -222,45 +182,144 @@ async def execute_command_on_device(
         platform: Scrapli 平台
         port: SSH 端口
         timeout: 命令执行超时时间（秒）
-
+     disable_paging(conn, platform)
     Returns:
         dict: 执行结果 {"success": bool, "output": str, "error": str | None}
     """
-    scrapli_options = get_scrapli_options(platform)
-    scrapli_options["timeout_ops"] = timeout
 
-    device_config = {
-        "host": host,
-        "auth_username": username,
-        "auth_password": password,
-        "port": port,
-        "platform": platform,
-        **scrapli_options,
-    }
+    def _is_cisco_backup_command(cmd: str, plat: str) -> bool:
+        if not str(plat).startswith("cisco_"):
+            return False
+        cmd_norm = (cmd or "").strip().lower()
+        return cmd_norm in {"show running-config", "show run"}
 
-    try:
-        async with AsyncScrapli(**device_config) as conn:
-            response = await conn.send_command(command)
+    def _build_device_config(timeout_ops: int) -> dict[str, Any]:
+        scrapli_options = get_scrapli_options(platform)
+        base_timeout_transport = int(scrapli_options.get("timeout_transport") or 0)
+        base_timeout_socket = int(scrapli_options.get("timeout_socket") or 0)
+        effective_timeout_ops = max(int(timeout_ops), int(settings.ASYNC_SSH_TIMEOUT or 0))
 
-            if response.failed:
-                return {
-                    "success": False,
-                    "output": "",
-                    "error": f"命令执行失败: {response.result}",
-                }
+        scrapli_options["timeout_transport"] = max(base_timeout_transport, effective_timeout_ops)
+        scrapli_options["timeout_socket"] = max(
+            base_timeout_socket,
+            int(settings.ASYNC_SSH_CONNECT_TIMEOUT),
+            effective_timeout_ops,
+        )
+        scrapli_options["timeout_ops"] = effective_timeout_ops
 
-            return {
-                "success": True,
-                "output": response.result,
-                "error": None,
-            }
-
-    except Exception as e:
-        return {
-            "success": False,
-            "output": "",
-            "error": str(e),
+        device_config = {
+            "host": host,
+            "auth_username": username,
+            "auth_password": password,
+            "port": port,
+            "platform": platform,
+            **scrapli_options,
         }
+        if platform.startswith("cisco_") and not device_config.get("auth_secondary"):
+            device_config["auth_secondary"] = password
+        return device_config
+
+    start = time.monotonic()
+    stage = "init"
+    safe_command = (command or "").strip().splitlines()[0][:120]
+
+    def _sync(device_config: dict[str, Any], timeout_ops: int, attempt: int) -> dict[str, Any]:
+        nonlocal stage
+        conn = Scrapli(**device_config)
+        try:
+            logger.info(
+                "Scrapli 执行开始",
+                host=host,
+                platform=platform,
+                port=port,
+                timeout_socket=device_config.get("timeout_socket"),
+                timeout_transport=device_config.get("timeout_transport"),
+                timeout_ops=timeout_ops,
+                command=safe_command,
+                attempt=attempt,
+            )
+
+            stage = "open"
+            logger.info("Scrapli 打开连接", host=host, platform=platform)
+            conn.open()
+            logger.info(
+                "Scrapli 连接已打开", host=host, platform=platform, elapsed_ms=int((time.monotonic() - start) * 1000)
+            )
+
+            stage = "prompt"
+            prompt = conn.get_prompt()
+            logger.info("Scrapli 获取提示符", host=host, platform=platform, prompt=prompt)
+
+            stage = "disable_paging"
+            disable_paging(conn, platform)
+
+            stage = "send_command"
+            logger.info("Scrapli 发送命令", host=host, platform=platform, command=safe_command)
+            output = send_command_with_paging(conn, command, timeout_ops=timeout_ops, prompt=prompt)
+            logger.info(
+                "Scrapli 命令返回",
+                host=host,
+                platform=platform,
+                command=safe_command,
+                failed=is_command_error(output),
+                elapsed_ms=int((time.monotonic() - start) * 1000),
+                result_len=len(output or ""),
+            )
+
+            if is_command_error(output):
+                return {"success": False, "output": "", "error": f"命令执行失败: {output}"}
+
+            return {"success": True, "output": output, "error": None}
+        except ScrapliAuthenticationFailed as e:
+            logger.warning("设备认证失败", host=host, platform=platform, error=str(e))
+            return {"success": False, "output": "", "error": f"认证失败: {e}"}
+        except ScrapliTimeout as e:
+            logger.warning("设备执行超时", host=host, platform=platform, stage=stage, timeout=timeout_ops, error=str(e))
+            return {"success": False, "output": "", "error": f"命令执行超时: {e}"}
+        except ScrapliConnectionNotOpened as e:
+            logger.warning("设备连接未打开", host=host, platform=platform, error=str(e))
+            return {"success": False, "output": "", "error": f"连接未打开: {e}"}
+        except ScrapliConnectionError as e:
+            logger.warning("设备连接错误", host=host, platform=platform, error=str(e))
+            return {"success": False, "output": "", "error": f"连接错误: {e}"}
+        except Exception as e:
+            logger.error("设备命令执行异常", host=host, platform=platform, error=str(e), exc_info=True)
+            return {"success": False, "output": "", "error": str(e)}
+        finally:
+            try:
+                stage = "close"
+                conn.close()
+                logger.info(
+                    "Scrapli 连接已关闭",
+                    host=host,
+                    platform=platform,
+                    elapsed_ms=int((time.monotonic() - start) * 1000),
+                )
+            except Exception:
+                pass
+
+    base_timeout_ops = max(int(timeout), int(settings.ASYNC_SSH_TIMEOUT or 0))
+    retry_timeout_ops = max(base_timeout_ops * 2, base_timeout_ops + 120)
+    timeout_candidates = [base_timeout_ops]
+    is_cisco_backup_cmd = _is_cisco_backup_command(command, platform)
+    if is_cisco_backup_cmd:
+        timeout_candidates.append(retry_timeout_ops)
+
+    last_result: dict[str, Any] | None = None
+    for idx, timeout_ops in enumerate(timeout_candidates, start=1):
+        device_config = _build_device_config(timeout_ops)
+        last_result = await asyncio.to_thread(_sync, device_config, timeout_ops, idx)
+        if last_result.get("success"):
+            return last_result
+
+        error_text = str(last_result.get("error") or "")
+        if not is_cisco_backup_cmd:
+            return last_result
+
+        if "timed out" not in error_text and "超时" not in error_text:
+            return last_result
+
+    return last_result or {"success": False, "output": "", "error": "命令执行失败"}
 
 
 async def execute_commands_on_device(
@@ -287,7 +346,10 @@ async def execute_commands_on_device(
         return {"success": False, "output": "", "error": "命令为空"}
 
     scrapli_options = get_scrapli_options(platform)
-    scrapli_options["timeout_ops"] = timeout
+    base_timeout_transport = int(scrapli_options.get("timeout_transport") or 0)
+    scrapli_options["timeout_transport"] = max(base_timeout_transport, timeout)
+    base_timeout_socket = int(scrapli_options.get("timeout_socket") or 0)
+    scrapli_options["timeout_socket"] = max(base_timeout_socket, int(settings.ASYNC_SSH_CONNECT_TIMEOUT))
 
     device_config = {
         "host": host,
@@ -297,29 +359,119 @@ async def execute_commands_on_device(
         "platform": platform,
         **scrapli_options,
     }
+    if platform.startswith("cisco_") and not device_config.get("auth_secondary"):
+        device_config["auth_secondary"] = password
 
-    try:
-        async with AsyncScrapli(**device_config) as conn:
+    start = time.monotonic()
+    stage = "init"
+    safe_first = safe_commands[0][:120] if safe_commands else ""
+    logger.info(
+        "Scrapli 执行开始",
+        host=host,
+        platform=platform,
+        port=port,
+        timeout_socket=device_config.get("timeout_socket"),
+        timeout_transport=device_config.get("timeout_transport"),
+        timeout_ops=timeout,
+        commands_count=len(safe_commands),
+        first_command=safe_first,
+        is_config=is_config,
+    )
+
+    def _sync_commands() -> dict[str, Any]:
+        nonlocal stage
+        conn = Scrapli(**device_config)
+        try:
+            stage = "open"
+            logger.info("Scrapli 打开连接", host=host, platform=platform)
+            conn.open()
+            logger.info(
+                "Scrapli 连接已打开", host=host, platform=platform, elapsed_ms=int((time.monotonic() - start) * 1000)
+            )
+
+            stage = "prompt"
+            prompt = conn.get_prompt()
+            logger.info("Scrapli 获取提示符", host=host, platform=platform, prompt=prompt)
+
+            stage = "disable_paging"
+            disable_paging(conn, platform)
+
             if is_config:
-                response = await conn.send_configs(safe_commands)
+                stage = "send_configs"
+                logger.info("Scrapli 下发配置", host=host, platform=platform, commands_count=len(safe_commands))
+                response = conn.send_configs(safe_commands, timeout_ops=timeout)
+                logger.info(
+                    "Scrapli 配置返回",
+                    host=host,
+                    platform=platform,
+                    failed=response.failed,
+                    elapsed_ms=int((time.monotonic() - start) * 1000),
+                    result_len=len(response.result or ""),
+                )
                 if response.failed:
                     return {"success": False, "output": "", "error": f"配置下发失败: {response.result}"}
                 return {"success": True, "output": response.result, "error": None}
 
-            # 查看类
             if len(safe_commands) == 1:
-                response = await conn.send_command(safe_commands[0])
+                stage = "send_command"
+                logger.info("Scrapli 发送命令", host=host, platform=platform, command=safe_first)
+                response = conn.send_command(safe_commands[0], timeout_ops=timeout)
+                logger.info(
+                    "Scrapli 命令返回",
+                    host=host,
+                    platform=platform,
+                    command=safe_first,
+                    failed=response.failed,
+                    elapsed_ms=int((time.monotonic() - start) * 1000),
+                    result_len=len(response.result or ""),
+                )
                 if response.failed:
                     return {"success": False, "output": "", "error": f"命令执行失败: {response.result}"}
                 return {"success": True, "output": response.result, "error": None}
 
-            response = await conn.send_commands(safe_commands)
+            stage = "send_commands"
+            logger.info("Scrapli 执行多条命令", host=host, platform=platform, commands_count=len(safe_commands))
+            response = conn.send_commands(safe_commands, timeout_ops=timeout)
+            logger.info(
+                "Scrapli 多命令返回",
+                host=host,
+                platform=platform,
+                failed=response.failed,
+                elapsed_ms=int((time.monotonic() - start) * 1000),
+                result_len=len(response.result or ""),
+            )
             if response.failed:
                 return {"success": False, "output": "", "error": f"命令执行失败: {response.result}"}
             return {"success": True, "output": response.result, "error": None}
+        except ScrapliAuthenticationFailed as e:
+            logger.warning("设备认证失败", host=host, platform=platform, error=str(e))
+            return {"success": False, "output": "", "error": f"认证失败: {e}"}
+        except ScrapliTimeout as e:
+            logger.warning("设备执行超时", host=host, platform=platform, stage=stage, timeout=timeout, error=str(e))
+            return {"success": False, "output": "", "error": f"命令执行超时: {e}"}
+        except ScrapliConnectionNotOpened as e:
+            logger.warning("设备连接未打开", host=host, platform=platform, error=str(e))
+            return {"success": False, "output": "", "error": f"连接未打开: {e}"}
+        except ScrapliConnectionError as e:
+            logger.warning("设备连接错误", host=host, platform=platform, error=str(e))
+            return {"success": False, "output": "", "error": f"连接错误: {e}"}
+        except Exception as e:
+            logger.error("设备命令执行异常", host=host, platform=platform, error=str(e), exc_info=True)
+            return {"success": False, "output": "", "error": str(e)}
+        finally:
+            try:
+                stage = "close"
+                conn.close()
+                logger.info(
+                    "Scrapli 连接已关闭",
+                    host=host,
+                    platform=platform,
+                    elapsed_ms=int((time.monotonic() - start) * 1000),
+                )
+            except Exception:
+                pass
 
-    except Exception as e:
-        return {"success": False, "output": "", "error": str(e)}
+    return await asyncio.to_thread(_sync_commands)
 
 
 async def batch_test_connections(

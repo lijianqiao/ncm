@@ -10,8 +10,8 @@
 - Beat 调度的定时备份任务
 """
 
+import asyncio
 import difflib
-import hashlib
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -22,6 +22,7 @@ from app.celery.base import BaseTask, run_async, safe_update_state
 from app.core.config import settings
 from app.core.db import AsyncSessionLocal
 from app.core.enums import AlertSeverity, AlertType, AuthType, BackupStatus, BackupType, DeviceStatus
+from app.core.exceptions import OTPRequiredException
 from app.core.logger import logger
 from app.core.minio_client import delete_object, put_text
 from app.core.otp_service import otp_service
@@ -30,15 +31,11 @@ from app.crud.crud_backup import backup as backup_crud
 from app.crud.crud_credential import credential as credential_crud
 from app.models.backup import Backup
 from app.models.device import Device
-from app.network.nornir_config import init_nornir
-from app.network.nornir_tasks import aggregate_results, backup_config
 from app.schemas.alert import AlertCreate
 from app.schemas.backup import BackupCreate
 from app.services.alert_service import AlertService
 from app.services.notification_service import NotificationService
-
-# 存储阈值：小于 64KB 存 DB
-CONTENT_SIZE_THRESHOLD = 64 * 1024
+from app.utils.validators import compute_text_md5, should_skip_backup_save_due_to_unchanged_md5
 
 
 def _get_keep_count(bt: BackupType) -> int:
@@ -60,7 +57,6 @@ async def _enforce_retention_for_device(db: Any, device_id: str) -> None:
     from uuid import UUID
 
     did = UUID(device_id)
-
     keep_ids: set[UUID] = set()
 
     latest_any_q = (
@@ -197,39 +193,38 @@ def backup_devices(
     Returns:
         dict: 包含备份结果的字典
     """
+    from app.network.nornir_config import init_nornir
+    from app.network.nornir_tasks import aggregate_results, backup_config
+
+    celery_task_id = getattr(self.request, "id", None)
     logger.info(
         "开始配置备份任务",
-        task_id=self.request.id,
+        task_id=celery_task_id,
         hosts_count=len(hosts_data),
         num_workers=num_workers,
         backup_type=backup_type,
     )
 
-    # 更新任务状态
-    self.update_state(
+    safe_update_state(
+        self,
+        celery_task_id,
         state="PROGRESS",
         meta={"stage": "initializing", "message": "正在初始化 Nornir..."},
     )
 
     try:
-        # 初始化 Nornir
         nr = init_nornir(hosts_data, num_workers=num_workers)
 
-        self.update_state(
+        safe_update_state(
+            self,
+            celery_task_id,
             state="PROGRESS",
-            meta={
-                "stage": "executing",
-                "message": f"正在备份 {len(nr.inventory.hosts)} 台设备...",
-            },
+            meta={"stage": "executing", "message": f"正在备份 {len(nr.inventory.hosts)} 台设备..."},
         )
 
-        # 执行备份
         results = nr.run(task=backup_config)
-
-        # 聚合结果
         summary = aggregate_results(results)
 
-        # 保存备份结果到数据库
         run_async(
             _save_backup_results(
                 hosts_data,
@@ -239,17 +234,16 @@ def backup_devices(
             )
         )
 
-        self.update_state(
+        safe_update_state(
+            self,
+            celery_task_id,
             state="PROGRESS",
-            meta={
-                "stage": "completed",
-                "message": f"备份完成: 成功 {summary['success']}, 失败 {summary['failed']}",
-            },
+            meta={"stage": "completed", "message": f"备份完成: 成功 {summary['success']}, 失败 {summary['failed']}"},
         )
 
         logger.info(
             "配置备份任务完成",
-            task_id=self.request.id,
+            task_id=celery_task_id,
             success=summary["success"],
             failed=summary["failed"],
         )
@@ -257,12 +251,7 @@ def backup_devices(
         return summary
 
     except Exception as e:
-        logger.error(
-            "配置备份任务失败",
-            task_id=self.request.id,
-            error=str(e),
-            exc_info=True,
-        )
+        logger.error("配置备份任务失败", task_id=celery_task_id, error=str(e), exc_info=True)
         raise
 
 
@@ -289,8 +278,19 @@ async def _save_backup_results(
             name = host.get("name", host.get("hostname"))
             result = summary.get("results", {}).get(name, {})
             status = result.get("status", "unknown")
-            config_content = result.get("result") if status == "success" else None
             error_message = result.get("error") if status != "success" else None
+            if status == "otp_required" or (
+                error_message
+                and "otp" in error_message.lower()
+                and ("过期" in error_message or "required" in error_message.lower() or "认证" in error_message)
+            ):
+                logger.info(
+                    "OTP 过期导致备份暂停，跳过记录",
+                    device_id=device_id,
+                    device_name=name,
+                )
+                continue
+            config_content = result.get("result") if status == "success" else None
 
             # 计算存储信息
             content = None
@@ -300,7 +300,7 @@ async def _save_backup_results(
 
             if config_content:
                 content_size = len(config_content.encode("utf-8"))
-                md5_hash = hashlib.md5(config_content.encode("utf-8")).hexdigest()
+                md5_hash = compute_text_md5(config_content)
 
                 # md5 去重：仅对 pre/post 变更备份生效
                 if bt in {BackupType.PRE_CHANGE, BackupType.POST_CHANGE}:
@@ -308,7 +308,12 @@ async def _save_backup_results(
                         from uuid import UUID
 
                         old_md5 = await backup_crud.get_latest_md5_by_device(db, UUID(device_id))
-                        if old_md5 and old_md5 == md5_hash:
+                        if should_skip_backup_save_due_to_unchanged_md5(
+                            backup_type=bt.value,
+                            status=BackupStatus.SUCCESS.value,
+                            old_md5=old_md5,
+                            new_md5=md5_hash,
+                        ):
                             logger.info(
                                 f"备份内容未变化，跳过保存: device_id={device_id}, type={bt.value}, md5={md5_hash}"
                             )
@@ -316,7 +321,7 @@ async def _save_backup_results(
                     except Exception as e:
                         logger.warning(f"md5 去重检查失败，继续保存: device_id={device_id}, error={e}")
 
-                if content_size < CONTENT_SIZE_THRESHOLD:
+                if content_size < settings.BACKUP_CONTENT_SIZE_THRESHOLD_BYTES:
                     content = config_content
                 else:
                     # 存储到 MinIO
@@ -412,6 +417,9 @@ def backup_single_device(
     ]
 
     try:
+        from app.network.nornir_config import init_nornir
+        from app.network.nornir_tasks import aggregate_results, backup_config
+
         nr = init_nornir(hosts_data, num_workers=1)
         results = nr.run(task=backup_config)
         summary = aggregate_results(results)
@@ -504,13 +512,21 @@ def scheduled_backup_all(self) -> dict[str, Any]:
             },
         )
 
-        # 初始化 Nornir 并执行备份
+        from app.network.nornir_config import init_nornir
+        from app.network.nornir_tasks import aggregate_results, backup_config
+
         nr = init_nornir(hosts_data, num_workers=min(50, len(hosts_data)))
         results = nr.run(task=backup_config)
         summary = aggregate_results(results)
 
-        # 保存备份结果
-        run_async(_save_scheduled_backup_results(hosts_data, summary))
+        run_async(
+            _save_backup_results(
+                hosts_data,
+                summary,
+                backup_type=BackupType.SCHEDULED.value,
+                operator_id=None,
+            )
+        )
 
         end_time = datetime.now(UTC)
         result = {
@@ -584,6 +600,14 @@ async def _get_devices_for_scheduled_backup() -> tuple[list[dict], list[str]]:
                         username=device.username,
                         encrypted_password=device.password_encrypted,
                     )
+                    username = credential.username
+                    password = credential.password
+                    extra_data = {
+                        "auth_type": "static",
+                        "device_id": str(device.id),
+                        "device_name": device.name,
+                        "vendor": device.vendor,
+                    }
                 elif auth_type == AuthType.OTP_SEED:
                     # 从 DeviceGroupCredential 获取
                     if not device.dept_id:
@@ -596,11 +620,17 @@ async def _get_devices_for_scheduled_backup() -> tuple[list[dict], list[str]]:
                         logger.warning(f"设备 {device.name} 的凭据未配置 OTP 种子，跳过")
                         skipped_devices.append(device.name)
                         continue
-
-                    credential = await otp_service.get_credential_for_otp_seed_device(
-                        username=cred.username,
-                        encrypted_seed=cred.otp_seed_encrypted,
-                    )
+                    username = cred.username
+                    password = ""
+                    extra_data = {
+                        "auth_type": "otp_seed",
+                        "otp_seed_encrypted": cred.otp_seed_encrypted,
+                        "dept_id": str(device.dept_id),
+                        "device_group": str(device.device_group),
+                        "device_id": str(device.id),
+                        "device_name": device.name,
+                        "vendor": device.vendor,
+                    }
                 else:
                     skipped_devices.append(device.name)
                     continue
@@ -609,11 +639,12 @@ async def _get_devices_for_scheduled_backup() -> tuple[list[dict], list[str]]:
                     {
                         "name": device.name,
                         "hostname": device.ip_address,
-                        "platform": device.vendor,
-                        "username": credential.username,
-                        "password": credential.password,
+                        "platform": device.platform or device.vendor,
+                        "username": username,
+                        "password": password,
                         "port": device.ssh_port,
                         "device_id": str(device.id),
+                        "data": extra_data,
                     }
                 )
 
@@ -626,7 +657,7 @@ async def _get_devices_for_scheduled_backup() -> tuple[list[dict], list[str]]:
 
 async def _save_scheduled_backup_results(hosts_data: list[dict], summary: dict) -> None:
     """保存定时备份结果到数据库。"""
-    await _save_backup_results(hosts_data, summary)
+    await _save_backup_results(hosts_data, summary, backup_type=BackupType.SCHEDULED.value)
 
 
 @celery_app.task(
@@ -748,7 +779,9 @@ async def _perform_incremental_check(task, celery_task_id: str | None) -> dict[s
             },
         )
 
-        # 初始化 Nornir 执行配置采集
+        from app.network.nornir_config import init_nornir
+        from app.network.nornir_tasks import aggregate_results, backup_config
+
         nr = init_nornir(batch, num_workers=min(10, len(batch)))
         results = nr.run(task=backup_config)
         summary = aggregate_results(results)
@@ -769,7 +802,7 @@ async def _perform_incremental_check(task, celery_task_id: str | None) -> dict[s
             if not config:
                 continue
 
-            new_md5 = hashlib.md5(config.encode("utf-8")).hexdigest()
+            new_md5 = compute_text_md5(config)
             old_info = old_info_map.get(UUID(device_id), {})
             old_md5 = old_info.get("md5_hash")
             old_backup_id = old_info.get("backup_id")
@@ -792,7 +825,7 @@ async def _perform_incremental_check(task, celery_task_id: str | None) -> dict[s
                     backup_data = BackupCreate(
                         device_id=UUID(device_id),
                         backup_type=BackupType.INCREMENTAL,
-                        content=config if content_size < CONTENT_SIZE_THRESHOLD else None,
+                        content=config if content_size < settings.BACKUP_CONTENT_SIZE_THRESHOLD_BYTES else None,
                         content_size=content_size,
                         md5_hash=new_md5,
                         status=BackupStatus.SUCCESS,
@@ -871,7 +904,7 @@ def async_backup_devices(
     Returns:
         dict: 包含备份结果的字典
     """
-    from app.network.async_runner import run_async_tasks_sync
+    from app.network.async_runner import run_async_tasks
     from app.network.async_tasks import async_collect_config
     from app.network.nornir_config import init_nornir_async
 
@@ -892,6 +925,57 @@ def async_backup_devices(
         # 初始化异步 Inventory
         inventory = init_nornir_async(hosts_data)
 
+        total_hosts = len(inventory.hosts)
+        progress_lock = asyncio.Lock()
+        completed = 0
+        name_to_id = {h.get("name"): h.get("device_id") for h in hosts_data if h.get("name")}
+        otp_notice_sent = False
+
+        async def _progress_callback(host_name: str, _result: Any) -> None:
+            nonlocal completed
+            nonlocal otp_notice_sent
+
+            otp_meta: dict[str, Any] | None = None
+            if _result.exception and isinstance(_result.exception, OTPRequiredException):
+                otp_notice_sent = True
+                device_id = name_to_id.get(host_name)
+                otp_exc = _result.exception
+                otp_meta = {
+                    "otp_required": True,
+                    "otp_dept_id": str(otp_exc.dept_id),
+                    "otp_device_group": otp_exc.device_group,
+                    "otp_failed_device_ids": [str(device_id)] if device_id else [],
+                }
+                safe_update_state(
+                    self,
+                    self.request.id,
+                    state="PROGRESS",
+                    meta={
+                        "stage": "otp_required",
+                        "message": "需要重新输入 OTP 验证码",
+                        **otp_meta,
+                    },
+                )
+
+            async with progress_lock:
+                completed += 1
+                progress_meta = {
+                    "stage": "executing",
+                    "message": f"已完成 {completed}/{total_hosts}",
+                    "completed": completed,
+                    "total": total_hosts,
+                }
+                if otp_notice_sent:
+                    progress_meta["otp_required"] = True
+                if otp_meta:
+                    progress_meta.update(otp_meta)
+                safe_update_state(
+                    self,
+                    self.request.id,
+                    state="PROGRESS",
+                    meta=progress_meta,
+                )
+
         self.update_state(
             state="PROGRESS",
             meta={
@@ -900,11 +984,13 @@ def async_backup_devices(
             },
         )
 
-        # 使用 AsyncRunner 执行异步任务
-        results = run_async_tasks_sync(
-            inventory.hosts,
-            async_collect_config,
-            num_workers=num_workers,
+        results = run_async(
+            run_async_tasks(
+                inventory.hosts,
+                async_collect_config,
+                num_workers=num_workers,
+                progress_callback=_progress_callback,
+            )
         )
 
         # 聚合结果（转换为与同步版本兼容的格式）
@@ -964,9 +1050,12 @@ def _aggregate_async_results(
     success_count = 0
     failed_count = 0
     results_dict: dict[str, dict[str, Any]] = {}
+    otp_required_info: dict[str, Any] | None = None
+    otp_failed_device_ids: list[str] = []
 
     # 构建 device_id -> name 映射
     id_to_name = {h.get("name"): h.get("name") for h in hosts_data}
+    name_to_id = {h.get("name"): h.get("device_id") for h in hosts_data if h.get("name") and h.get("device_id")}
     for h in hosts_data:
         if h.get("device_id"):
             id_to_name[h.get("device_id")] = h.get("name")
@@ -976,18 +1065,39 @@ def _aggregate_async_results(
         if not multi_result or multi_result.failed:
             failed_count += 1
             error_msg = "执行失败"
+            otp_required: OTPRequiredException | None = None
             if multi_result and len(multi_result) > 0:
                 r = multi_result[0]
                 if r.exception:
                     error_msg = str(r.exception)
+                    if isinstance(r.exception, OTPRequiredException):
+                        otp_required = r.exception
 
             # 尝试映射回设备名
             name = id_to_name.get(host_name) or host_name
-            results_dict[name] = {
-                "status": "failed",
-                "error": error_msg,
-                "result": None,
-            }
+            if otp_required is not None:
+                results_dict[name] = {
+                    "status": "otp_required",
+                    "error": error_msg,
+                    "result": None,
+                    "otp_dept_id": str(otp_required.dept_id),
+                    "otp_device_group": otp_required.device_group,
+                }
+                device_id = name_to_id.get(name)
+                if device_id:
+                    otp_failed_device_ids.append(str(device_id))
+                if otp_required_info is None:
+                    otp_required_info = {
+                        "otp_required": True,
+                        "otp_dept_id": str(otp_required.dept_id),
+                        "otp_device_group": otp_required.device_group,
+                    }
+            else:
+                results_dict[name] = {
+                    "status": "failed",
+                    "error": error_msg,
+                    "result": None,
+                }
         else:
             success_count += 1
             r = multi_result[0]
@@ -1005,4 +1115,6 @@ def _aggregate_async_results(
         "failed": failed_count,
         "total": success_count + failed_count,
         "results": results_dict,
+        "otp_failed_device_ids": otp_failed_device_ids,
+        **(otp_required_info or {}),
     }

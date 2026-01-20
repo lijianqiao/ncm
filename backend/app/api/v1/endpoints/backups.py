@@ -10,7 +10,8 @@ from io import BytesIO
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.encoders import jsonable_encoder
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from starlette.background import BackgroundTask
 
 from app.api.deps import BackupServiceDep, CurrentUser, SessionDep, require_permissions
@@ -406,7 +407,7 @@ async def backup_devices_batch(
 async def get_backup_task_status(
     task_id: str,
     service: BackupServiceDep,
-) -> ResponseBase[BackupTaskStatus]:
+) -> ResponseBase[BackupTaskStatus] | JSONResponse:
     """根据任务 ID 查询后台异步任务的处理状态和进度。
 
     Args:
@@ -414,10 +415,13 @@ async def get_backup_task_status(
         service (BackupService): 备份服务依赖。
 
     Returns:
-        ResponseBase[BackupTaskStatus]: 包含任务状态、进度、成功/失败数量的对象。
+        ResponseBase[BackupTaskStatus] | JSONResponse: 包含任务状态、进度、成功/失败数量的对象，或需要 OTP 验证的响应。
     """
     status = await service.get_task_status(task_id)
 
+    if status.otp_notice:
+        payload = ResponseBase(code=428, message="OTP_REQUIRED", data=status).model_dump()
+        return JSONResponse(status_code=428, content=jsonable_encoder(payload))
     return ResponseBase(data=status)
 
 

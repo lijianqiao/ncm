@@ -144,7 +144,13 @@ const submitManualCollect = async () => {
     return
   }
 
-  await runManualCollect(collectModel.value.device_id)
+  try {
+    await runManualCollect(collectModel.value.device_id)
+  } catch (error) {
+    otpFlow.tryHandleOtpRequired(error, async (otpCode) => {
+      await runManualCollect(collectModel.value.device_id, otpCode)
+    })
+  }
 }
 
 // ==================== 批量采集 ====================

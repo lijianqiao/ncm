@@ -14,10 +14,41 @@ from nornir.core import Nornir
 from nornir.core.exceptions import NornirSubTaskError
 from nornir.core.task import AggregatedResult, MultiResult, Result, Task
 from nornir_scrapli.tasks import send_command, send_commands, send_configs
+from scrapli.exceptions import ScrapliAuthenticationFailed
 
+from app.celery.base import run_async
+from app.core.config import settings
+from app.core.exceptions import OTPRequiredException
 from app.core.logger import logger
+from app.network.otp_utils import get_manual_otp_or_raise, get_seed_otp, invalidate_manual_otp
 from app.network.platform_config import get_command
+from app.network.scrapli_utils import disable_paging, is_command_error, send_command_with_paging
 from app.network.textfsm_parser import parse_command_output
+
+
+def _apply_dynamic_auth(task: Task) -> None:
+    auth_type = task.host.data.get("auth_type")
+    if auth_type == "otp_seed":
+        encrypted_seed = task.host.data.get("otp_seed_encrypted")
+        if not encrypted_seed:
+            raise ValueError("缺少 OTP 种子，无法生成验证码")
+        task.host.password = run_async(get_seed_otp(str(encrypted_seed)))
+        return
+
+    if auth_type != "otp_manual":
+        return
+
+    dept_id_raw = task.host.data.get("dept_id")
+    device_group = task.host.data.get("device_group")
+    if not dept_id_raw or not device_group:
+        raise ValueError("缺少 OTP 所需的部门/分层信息，无法获取验证码")
+
+    from uuid import UUID
+
+    dept_id = UUID(str(dept_id_raw))
+    failed_id = task.host.data.get("device_id") or task.host.name
+    otp_code = run_async(get_manual_otp_or_raise(dept_id, str(device_group), str(failed_id)))
+    task.host.password = otp_code
 
 
 def backup_config(task: Task) -> Result:
@@ -30,6 +61,7 @@ def backup_config(task: Task) -> Result:
         Result: 包含配置内容的结果
     """
     platform = task.host.platform or "cisco_iosxe"
+    _apply_dynamic_auth(task)
 
     # 使用统一的命令映射
     try:
@@ -37,12 +69,45 @@ def backup_config(task: Task) -> Result:
     except ValueError:
         command = "show running-config"
 
-    result = task.run(task=send_command, command=command)
+    timeout_ops = max(int(settings.ASYNC_SSH_TIMEOUT or 0), 30)
+
+    try:
+        scrapli_conn = task.host.get_connection("scrapli", task.nornir.config)
+    except ScrapliAuthenticationFailed as e:
+        auth_type = task.host.data.get("auth_type")
+        if auth_type == "otp_manual":
+            dept_id_raw = task.host.data.get("dept_id")
+            device_group = task.host.data.get("device_group")
+            if dept_id_raw and device_group:
+                from uuid import UUID
+
+                dept_id = UUID(str(dept_id_raw))
+                run_async(invalidate_manual_otp(dept_id, str(device_group)))
+                failed_id = task.host.data.get("device_id") or task.host.name
+                raise OTPRequiredException(
+                    dept_id=dept_id,
+                    device_group=str(device_group),
+                    failed_devices=[str(failed_id)],
+                    message="OTP 认证失败，可能已过期，请重新输入验证码",
+                ) from e
+        raise
+
+    disable_paging(scrapli_conn, platform)
+    prompt = None
+    try:
+        prompt = scrapli_conn.get_prompt()
+    except Exception as e:
+        logger.debug("获取提示符失败", host=str(task.host), error=str(e))
+        if platform.startswith("cisco_"):
+            prompt = "#"
+
+    output = send_command_with_paging(scrapli_conn, command, timeout_ops=timeout_ops, prompt=prompt)
 
     return Result(
         host=task.host,
-        result=result.result,
+        result=output,
         changed=False,
+        failed=is_command_error(output),
     )
 
 
@@ -102,6 +167,7 @@ def execute_commands(task: Task, commands: list[str]) -> Result:
 
 def deploy_from_host_data(task: Task) -> Result:
     """根据 host.data['deploy_configs'] 下发配置（用于每台设备不同配置内容）。"""
+    _apply_dynamic_auth(task)
     configs: list[str] = task.host.data.get("deploy_configs", [])  # type: ignore[assignment]
     if not configs:
         return Result(host=task.host, result={"status": "skipped", "message": "no deploy configs"}, changed=False)
@@ -190,6 +256,12 @@ def aggregate_results(results: AggregatedResult) -> dict[str, Any]:
     success_hosts = []
     failed_hosts = []
     host_results = {}
+    otp_required_info: dict[str, Any] | None = None
+    otp_failed_device_ids: list[str] = []
+
+    def _is_otp_error(error_text: str) -> bool:
+        text = (error_text or "").lower()
+        return "otp" in text and ("过期" in text or "required" in text or "认证" in text)
 
     for host, multi_result in results.items():
         if multi_result.failed:
@@ -198,6 +270,34 @@ def aggregate_results(results: AggregatedResult) -> dict[str, Any]:
             error_text = "Unknown error"
             if multi_result.exception:
                 error_text = str(multi_result.exception)
+                if isinstance(multi_result.exception, OTPRequiredException):
+                    otp_required = multi_result.exception
+                    host_results[host] = {
+                        "status": "otp_required",
+                        "error": error_text,
+                        "result": None,
+                        "otp_dept_id": str(otp_required.dept_id),
+                        "otp_device_group": otp_required.device_group,
+                    }
+                    if otp_required.failed_devices:
+                        for did in otp_required.failed_devices:
+                            otp_failed_device_ids.append(str(did))
+                    if otp_required_info is None:
+                        otp_required_info = {
+                            "otp_required": True,
+                            "otp_dept_id": str(otp_required.dept_id),
+                            "otp_device_group": otp_required.device_group,
+                        }
+                    continue
+                if _is_otp_error(error_text):
+                    host_results[host] = {
+                        "status": "otp_required",
+                        "error": error_text,
+                        "result": None,
+                    }
+                    if otp_required_info is None:
+                        otp_required_info = {"otp_required": True}
+                    continue
             elif multi_result:
                 # 若任务函数内部捕获并返回了 failed Result，则从最后一个结果里取 error
                 last_result = multi_result[-1]
@@ -205,6 +305,34 @@ def aggregate_results(results: AggregatedResult) -> dict[str, Any]:
                     error_text = str(last_result.result.get("error"))
                 elif last_result.exception:
                     error_text = str(last_result.exception)
+                    if isinstance(last_result.exception, OTPRequiredException):
+                        otp_required = last_result.exception
+                        host_results[host] = {
+                            "status": "otp_required",
+                            "error": error_text,
+                            "result": None,
+                            "otp_dept_id": str(otp_required.dept_id),
+                            "otp_device_group": otp_required.device_group,
+                        }
+                        if otp_required.failed_devices:
+                            for did in otp_required.failed_devices:
+                                otp_failed_device_ids.append(str(did))
+                        if otp_required_info is None:
+                            otp_required_info = {
+                                "otp_required": True,
+                                "otp_dept_id": str(otp_required.dept_id),
+                                "otp_device_group": otp_required.device_group,
+                            }
+                        continue
+                    if _is_otp_error(error_text):
+                        host_results[host] = {
+                            "status": "otp_required",
+                            "error": error_text,
+                            "result": None,
+                        }
+                        if otp_required_info is None:
+                            otp_required_info = {"otp_required": True}
+                        continue
 
             host_results[host] = {
                 "status": "failed",
@@ -227,7 +355,10 @@ def aggregate_results(results: AggregatedResult) -> dict[str, Any]:
         "success_hosts": success_hosts,
         "failed_hosts": failed_hosts,
         "results": host_results,
+        "otp_failed_device_ids": otp_failed_device_ids,
     }
+    if otp_required_info:
+        summary.update(otp_required_info)
 
     logger.info(
         "Nornir 任务执行完成",

@@ -14,6 +14,51 @@ from netaddr import EUI, AddrFormatError, IPAddress, mac_unix_expanded
 from app.core.config import settings
 
 
+def compute_text_md5(text: str, *, encoding: str = "utf-8") -> str:
+    """计算文本的 MD5 哈希值。
+
+    Args:
+        text: 待计算哈希的文本内容。
+        encoding: 文本编码方式，默认 utf-8。
+
+    Returns:
+        文本内容的 MD5 十六进制字符串（32 位小写）。
+    """
+    import hashlib
+
+    return hashlib.md5(text.encode(encoding)).hexdigest()
+
+
+def should_skip_backup_save_due_to_unchanged_md5(
+    *,
+    backup_type: str,
+    status: str,
+    old_md5: str | None,
+    new_md5: str | None,
+) -> bool:
+    """判断备份是否应因配置未变化而跳过保存。
+
+    该策略仅用于“变更前/变更后”备份场景：如果本次备份成功且 MD5 与最近一次成功备份一致，
+    则认为配置未变化，可跳过保存以避免重复占用存储。
+
+    Args:
+        backup_type: 备份类型字符串（例如 pre_change/post_change）。
+        status: 备份状态字符串（例如 success/failed）。
+        old_md5: 最近一次成功备份的 MD5（可能为空）。
+        new_md5: 本次备份内容计算出的 MD5（可能为空）。
+
+    Returns:
+        如果应跳过保存返回 True，否则返回 False。
+    """
+    if status != "success":
+        return False
+    if backup_type not in {"pre_change", "post_change"}:
+        return False
+    if not old_md5 or not new_md5:
+        return False
+    return old_md5 == new_md5
+
+
 def validate_ip_address(ip: str) -> str:
     """验证 IP 地址格式（支持 IPv4/IPv6）。
 

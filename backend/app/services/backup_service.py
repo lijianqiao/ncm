@@ -6,14 +6,12 @@
 @Docs: 配置备份服务业务逻辑 (Backup Service Logic).
 """
 
-import hashlib
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.celery.tasks.backup import backup_devices
 from app.core.config import settings
 from app.core.decorator import transactional
 from app.core.enums import AuthType, BackupStatus, BackupType, DeviceStatus
@@ -26,6 +24,7 @@ from app.crud.crud_credential import CRUDCredential
 from app.crud.crud_device import CRUDDevice
 from app.models.backup import Backup
 from app.models.device import Device
+from app.network.platform_config import get_platform_for_vendor
 from app.schemas.backup import (
     BackupBatchDeleteResult,
     BackupBatchRequest,
@@ -34,11 +33,10 @@ from app.schemas.backup import (
     BackupCreate,
     BackupListQuery,
     BackupTaskStatus,
+    OTPNotice,
 )
 from app.services.base import DeviceCredentialMixin
-
-# 配置存储阈值：小于 64KB 存 DB，否则存 MinIO
-CONTENT_SIZE_THRESHOLD = 64 * 1024  # 64KB
+from app.utils.validators import compute_text_md5, should_skip_backup_save_due_to_unchanged_md5
 
 
 class BackupService(DeviceCredentialMixin):
@@ -389,6 +387,7 @@ class BackupService(DeviceCredentialMixin):
                 command=backup_command,
                 platform=platform,
                 port=device.ssh_port,
+                timeout=60,
             )
 
             if not result_dict.get("success"):
@@ -451,12 +450,17 @@ class BackupService(DeviceCredentialMixin):
 
         if config_content:
             content_size = len(config_content.encode("utf-8"))
-            md5_hash = hashlib.md5(config_content.encode("utf-8")).hexdigest()
+            md5_hash = compute_text_md5(config_content)
 
             # md5 去重：仅对 pre/post 变更备份生效，避免前后都备份导致重复存储
             if status == BackupStatus.SUCCESS and backup_type in {BackupType.PRE_CHANGE, BackupType.POST_CHANGE}:
                 old_md5 = await self.backup_crud.get_latest_md5_by_device(self.db, device.id)
-                if old_md5 and old_md5 == md5_hash:
+                if should_skip_backup_save_due_to_unchanged_md5(
+                    backup_type=backup_type.value,
+                    status=status.value,
+                    old_md5=old_md5,
+                    new_md5=md5_hash,
+                ):
                     latest = await self.backup_crud.get_latest_by_device(self.db, device.id)
                     if latest:
                         logger.info(
@@ -464,7 +468,7 @@ class BackupService(DeviceCredentialMixin):
                         )
                         return latest
 
-            if content_size < CONTENT_SIZE_THRESHOLD:
+            if content_size < settings.BACKUP_CONTENT_SIZE_THRESHOLD_BYTES:
                 # 小配置：直接存 DB
                 content = config_content
             else:
@@ -702,17 +706,67 @@ class BackupService(DeviceCredentialMixin):
                 continue
 
             try:
-                credential = await self._get_device_credential(device)
+                auth_type = AuthType(device.auth_type)
+
+                if auth_type == AuthType.OTP_MANUAL:
+                    if not device.dept_id:
+                        raise BadRequestException(message=f"设备 {device.name} 缺少部门关联")
+                    credential_row = await self.credential_crud.get_by_dept_and_group(
+                        self.db, device.dept_id, device.device_group
+                    )
+                    if not credential_row:
+                        raise BadRequestException(message=f"设备 {device.name} 的凭据未配置")
+                    username = credential_row.username
+                    password = ""
+                    extra_data = {
+                        "auth_type": "otp_manual",
+                        "dept_id": str(device.dept_id),
+                        "device_group": str(device.device_group),
+                        "device_id": str(device.id),
+                        "device_name": device.name,
+                        "vendor": device.vendor,
+                    }
+                elif auth_type == AuthType.OTP_SEED:
+                    if not device.dept_id:
+                        raise BadRequestException(message=f"设备 {device.name} 缺少部门关联")
+                    credential_row = await self.credential_crud.get_by_dept_and_group(
+                        self.db, device.dept_id, device.device_group
+                    )
+                    if not credential_row or not credential_row.otp_seed_encrypted:
+                        raise BadRequestException(message=f"设备 {device.name} 的凭据未配置 OTP 种子")
+                    username = credential_row.username
+                    password = ""
+                    extra_data = {
+                        "auth_type": "otp_seed",
+                        "otp_seed_encrypted": credential_row.otp_seed_encrypted,
+                        "dept_id": str(device.dept_id),
+                        "device_group": str(device.device_group),
+                        "device_id": str(device.id),
+                        "device_name": device.name,
+                        "vendor": device.vendor,
+                    }
+                else:
+                    credential = await self._get_device_credential(device)
+                    username = credential.username
+                    password = credential.password
+                    extra_data = {
+                        "auth_type": "static",
+                        "device_id": str(device.id),
+                        "device_name": device.name,
+                        "vendor": device.vendor,
+                    }
+
                 hosts_data.append(
                     {
                         "name": device.name,
                         "hostname": device.ip_address,
-                        "platform": device.vendor,
-                        "username": credential.username,
-                        "password": credential.password,
+                        "platform": device.platform or get_platform_for_vendor(str(device.vendor)),
+                        "username": username,
+                        "password": password,
                         "port": device.ssh_port,
                         "device_id": str(device.id),
                         "operator_id": str(operator_id) if operator_id else None,
+                        "data": extra_data,
                     }
                 )
             except Exception as e:
@@ -721,28 +775,38 @@ class BackupService(DeviceCredentialMixin):
         if not hosts_data:
             raise BadRequestException(message="没有可备份的设备（凭据获取失败）")
 
-        # 6. 提交 Celery 任务（根据配置选择同步或异步）
-        from app.celery.tasks.backup import async_backup_devices
-        from app.core.config import settings
+        # OTP 手动设备优先执行，便于尽早发现 OTP 过期并提示前端
+        def _auth_priority(h: dict) -> int:
+            auth_type = (h.get("data") or {}).get("auth_type")
+            if auth_type == "otp_manual":
+                return 0
+            if auth_type == "otp_seed":
+                return 1
+            return 2
 
+        hosts_data.sort(key=_auth_priority)
+
+        # 6. 提交 Celery 任务（根据配置选择同步或异步）
         if settings.USE_ASYNC_NETWORK_TASKS:
+            from app.celery.tasks.backup import async_backup_devices
+
             task = async_backup_devices.delay(  # type: ignore[attr-defined]
                 hosts_data=hosts_data,
-                num_workers=min(100, len(hosts_data)),  # 异步版本支持更高并发
+                num_workers=min(100, len(hosts_data)),
                 backup_type=request.backup_type.value,
                 operator_id=str(operator_id) if operator_id else None,
             )
+            logger.info(f"批量备份任务已提交: task_id={task.id}, devices={len(hosts_data)}, async=True")
         else:
+            from app.celery.tasks.backup import backup_devices
+
             task = backup_devices.delay(  # type: ignore[attr-defined]
                 hosts_data=hosts_data,
                 num_workers=min(50, len(hosts_data)),
                 backup_type=request.backup_type.value,
                 operator_id=str(operator_id) if operator_id else None,
             )
-
-        logger.info(
-            f"批量备份任务已提交: task_id={task.id}, devices={len(hosts_data)}, async={settings.USE_ASYNC_NETWORK_TASKS}"
-        )
+            logger.info(f"批量备份任务已提交: task_id={task.id}, devices={len(hosts_data)}, async=False")
 
         return BackupBatchResult(
             task_id=task.id,
@@ -788,6 +852,14 @@ class BackupService(DeviceCredentialMixin):
             # 提取进度信息中的数值进度（如有）
             info = result.info or {}
             if isinstance(info, dict):
+                if info.get("otp_required"):
+                    status_response.status = "running"
+                    status_response.otp_notice = OTPNotice(
+                        dept_id=info.get("otp_dept_id"),
+                        device_group=info.get("otp_device_group"),
+                        pending_device_ids=info.get("otp_failed_device_ids") or None,
+                    )
+                    return status_response
                 stage = info.get("stage", "")
                 message = info.get("message", "")
                 status_response.progress = {"stage": stage, "message": message}
@@ -795,6 +867,15 @@ class BackupService(DeviceCredentialMixin):
                 status_response.progress = {"message": str(info)}
         elif result.status == "SUCCESS":
             info = result.result or {}
+            if info.get("otp_required"):
+                status_response.status = "running"
+                status_response.otp_notice = OTPNotice(
+                    dept_id=info.get("otp_dept_id"),
+                    device_group=info.get("otp_device_group"),
+                    pending_device_ids=info.get("otp_failed_device_ids") or None,
+                )
+                return status_response
+
             status_response.total_devices = info.get("total", 0)
             status_response.success_count = info.get("success", 0)
             status_response.failed_count = info.get("failed", 0)
@@ -804,7 +885,30 @@ class BackupService(DeviceCredentialMixin):
                 if v.get("status") == "failed"
             ]
         elif result.status == "FAILURE":
-            status_response.progress = {"error": str(result.result)}
+            from app.core.exceptions import OTPRequiredException
+
+            if isinstance(result.result, OTPRequiredException):
+                status_response.status = "running"
+                pending_device_ids = None
+                if result.result.failed_devices:
+                    parsed = []
+                    for x in result.result.failed_devices:
+                        try:
+                            parsed.append(UUID(str(x)))
+                        except Exception:
+                            pass
+                    if parsed:
+                        pending_device_ids = parsed
+
+                status_response.otp_notice = OTPNotice(
+                    message=str(result.result) or "需要重新输入 OTP 验证码",
+                    dept_id=UUID(str(result.result.dept_id)),
+                    device_group=result.result.device_group,
+                    pending_device_ids=pending_device_ids,
+                )
+                return status_response
+            else:
+                status_response.progress = {"error": str(result.result)}
 
         return status_response
 

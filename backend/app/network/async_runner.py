@@ -9,12 +9,13 @@
 """
 
 import asyncio
-from collections.abc import Callable, Coroutine
+from collections.abc import Awaitable, Callable, Coroutine
 from typing import TYPE_CHECKING, Any
 
 from nornir.core.task import AggregatedResult, MultiResult, Result
 
 from app.core.config import settings
+from app.core.exceptions import OTPRequiredException
 from app.core.logger import logger
 
 if TYPE_CHECKING:
@@ -72,6 +73,7 @@ class AsyncRunner:
         self,
         task: Callable[["Host"], Coroutine[Any, Any, Any]],
         hosts: dict[str, "Host"],
+        progress_callback: Callable[[str, Result], Awaitable[None] | None] | None = None,
         **kwargs: Any,
     ) -> AggregatedResult:
         """
@@ -98,6 +100,8 @@ class AsyncRunner:
                     logger.debug("开始执行异步任务", host=host.name, task=task_name)
                     result_data = await task(host, **kwargs)
                     return host.name, Result(host=host, result=result_data)
+                except OTPRequiredException as e:
+                    return host.name, Result(host=host, exception=e, failed=True)
                 except asyncio.CancelledError:
                     raise
                 except TimeoutError:
@@ -112,14 +116,19 @@ class AsyncRunner:
                     return host.name, Result(host=host, exception=e, failed=True)
 
         # 并行执行所有主机任务
-        tasks = [_execute_host(host) for host in hosts.values()]
-        completed = await asyncio.gather(*tasks, return_exceptions=False)
-
-        # 组装结果
-        for host_name, result in completed:
+        tasks = [asyncio.create_task(_execute_host(host)) for host in hosts.values()]
+        for done in asyncio.as_completed(tasks):
+            host_name, result = await done
             multi = MultiResult(host_name)
             multi.append(result)
             results[host_name] = multi
+            if progress_callback:
+                try:
+                    maybe_awaitable = progress_callback(host_name, result)
+                    if asyncio.iscoroutine(maybe_awaitable):
+                        await maybe_awaitable
+                except Exception as e:
+                    logger.debug("进度回调失败", host=host_name, error=str(e))
 
         # 统计
         failed_count = sum(1 for r in results.values() if r.failed)
@@ -139,6 +148,7 @@ async def run_async_tasks(
     hosts: "dict[str, Host] | Inventory",
     task_fn: "Callable[[Host], Coroutine[Any, Any, Any]]",
     num_workers: "int | None" = None,
+    progress_callback: Callable[[str, Result], Awaitable[None] | None] | None = None,
     **kwargs: Any,
 ) -> AggregatedResult:
     """
@@ -175,13 +185,14 @@ async def run_async_tasks(
         hosts_dict = hosts  # type: ignore[assignment]
 
     runner = AsyncRunner(num_workers=num_workers)
-    return await runner._run_async(task_fn, hosts_dict, **kwargs)
+    return await runner._run_async(task_fn, hosts_dict, progress_callback=progress_callback, **kwargs)
 
 
 def run_async_tasks_sync(
     hosts: "dict[str, Host] | Inventory",
     task_fn: "Callable[[Host], Coroutine[Any, Any, Any]]",
     num_workers: "int | None" = None,
+    progress_callback: Callable[[str, Result], Awaitable[None] | None] | None = None,
     **kwargs: Any,
 ) -> AggregatedResult:
     """
@@ -204,7 +215,7 @@ def run_async_tasks_sync(
         pass
     else:
         raise RuntimeError("当前存在运行中的事件循环，请使用 await run_async_tasks(...) 调用异步执行入口。")
-    return asyncio.run(run_async_tasks(hosts, task_fn, num_workers, **kwargs))
+    return asyncio.run(run_async_tasks(hosts, task_fn, num_workers, progress_callback=progress_callback, **kwargs))
 
 
 class AsyncRunnerWithRetry(AsyncRunner):
@@ -236,6 +247,7 @@ class AsyncRunnerWithRetry(AsyncRunner):
         self,
         task: Callable[["Host"], Coroutine[Any, Any, Any]],
         hosts: dict[str, "Host"],
+        progress_callback: Callable[[str, Result], Awaitable[None] | None] | None = None,
         **kwargs: Any,
     ) -> AggregatedResult:
         """带重试的异步执行。"""
@@ -268,12 +280,19 @@ class AsyncRunnerWithRetry(AsyncRunner):
 
             return host.name, Result(host=host, exception=last_exception, failed=True)
 
-        tasks = [_execute_with_retry(host) for host in hosts.values()]
+        tasks = [asyncio.create_task(_execute_with_retry(host)) for host in hosts.values()]
         completed = await asyncio.gather(*tasks, return_exceptions=False)
 
         for host_name, result in completed:
             multi = MultiResult(host_name)
             multi.append(result)
             results[host_name] = multi
+            if progress_callback:
+                try:
+                    maybe_awaitable = progress_callback(host_name, result)
+                    if asyncio.iscoroutine(maybe_awaitable):
+                        await maybe_awaitable
+                except Exception as e:
+                    logger.debug("进度回调失败", host=host_name, error=str(e))
 
         return results

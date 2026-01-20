@@ -83,6 +83,7 @@ class Settings(BaseSettings):
     REDIS_PORT: int = 6379
     REDIS_DB: int = 0
     REDIS_PASSWORD: str = ""
+    OTP_CACHE_TTL_SECONDS: int = 30
 
     @computed_field
     @property
@@ -141,7 +142,7 @@ class Settings(BaseSettings):
     ASYNC_SSH_SEMAPHORE: int = 100  # 最大并发 SSH 连接数
     ASYNC_SSH_TIMEOUT: int = 30  # 单设备 SSH 命令超时（秒）
     ASYNC_SSH_CONNECT_TIMEOUT: int = 10  # SSH 连接超时（秒）
-    USE_ASYNC_NETWORK_TASKS: bool = False  # 是否使用异步网络任务（AsyncRunner + asyncssh）
+    USE_ASYNC_NETWORK_TASKS: bool = True  # 是否使用异步网络任务（AsyncRunner + asyncssh）
 
     # 告警配置（Phase 3）
     ALERT_OFFLINE_DAYS_THRESHOLD: int = 3  # 离线告警阈值（天）
@@ -172,6 +173,9 @@ class Settings(BaseSettings):
     BACKUP_RETENTION_PRE_CHANGE_KEEP: int = 200  # 变更前备份保留条数
     BACKUP_RETENTION_POST_CHANGE_KEEP: int = 200  # 变更后备份保留条数
     BACKUP_RETENTION_INCREMENTAL_KEEP: int = 1000  # 增量备份保留条数
+
+    # 备份内容存储分流阈值：小于阈值存 DB，达到或超过阈值存 MinIO
+    BACKUP_CONTENT_SIZE_THRESHOLD_BYTES: int = 64 * 1024
 
     # 备份保留策略（按天数）：默认保留最近 30 天的所有备份类型，0 表示不限制
     # 注意：即便超过天数，也至少保留每台设备 1 条备份（优先保留最新成功备份）

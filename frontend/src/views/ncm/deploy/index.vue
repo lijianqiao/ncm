@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, h, computed } from 'vue'
+import { ref, h } from 'vue'
 import {
   NButton,
   NModal,
@@ -46,7 +46,7 @@ import ProTable, { type FilterConfig } from '@/components/common/ProTable.vue'
 import RecycleBinModal from '@/components/common/RecycleBinModal.vue'
 import OtpModal from '@/components/common/OtpModal.vue'
 import type { DeviceGroupType } from '@/types/enums'
-import { useDeviceOptions } from '@/composables'
+import { useDeviceOptions, useOtpFlow } from '@/composables'
 
 /** OTP 所需分组信息 */
 interface OtpRequiredGroup {
@@ -120,11 +120,11 @@ const approvalStatusLabelMap: Record<string, string> = {
 }
 
 const approvalStatusColorMap: Record<string, 'default' | 'info' | 'success' | 'error' | 'warning'> =
-  {
-    pending: 'default',
-    approved: 'success',
-    rejected: 'error',
-  }
+{
+  pending: 'default',
+  approved: 'success',
+  rejected: 'error',
+}
 
 const getTaskDeviceIds = (row: DeployTask): string[] => {
   return row.target_devices?.device_ids || row.device_ids || []
@@ -505,26 +505,7 @@ const approveModel = ref({
 
 // ==================== OTP（手动输入） ====================
 
-const showOtpModal = ref(false)
-const otpLoading = ref(false)
-const otpModel = ref({
-  task_id: '',
-  task_name: '',
-  dept_id: '',
-  device_group: '' as DeviceGroupType | '',
-})
-
-const otpAlertText = computed(() => {
-  const name = otpModel.value.task_name || ''
-  return `任务 "${name}" 需要 OTP 验证码才能继续执行。`
-})
-
-const otpInfoItems = computed(() => {
-  return [
-    { label: '部门ID', value: otpModel.value.dept_id },
-    { label: '设备分组', value: String(otpModel.value.device_group || '-') },
-  ]
-})
+const otpFlow = useOtpFlow()
 
 const extractOtpRequiredGroups = (task: DeployTask): OtpRequiredGroup[] => {
   const taskResult = task.result as Record<string, unknown> | undefined
@@ -551,49 +532,36 @@ const openOtpModal = (task: DeployTask) => {
     return
   }
   const first = groups[0]!
-  otpModel.value = {
-    task_id: task.id,
-    task_name: task.name,
-    dept_id: first.dept_id,
-    device_group: first.device_group,
-  }
-  showOtpModal.value = true
-}
 
-const submitOtpAndRetry = async (otpCode: string) => {
-  if (!/^[0-9]{6,8}$/.test(otpCode)) {
-    $alert.warning('请输入有效 OTP 验证码')
-    return
-  }
+  otpFlow.open(
+    {
+      dept_id: first.dept_id,
+      device_group: first.device_group,
+      failed_devices: [],
+      message: `任务 "${task.name}" 需要 OTP 验证码才能继续执行。`,
+    },
+    async (otpCode) => {
+      const cacheRes = await cacheOTP({
+        dept_id: first.dept_id,
+        device_group: first.device_group,
+        otp_code: otpCode,
+      })
 
-  otpLoading.value = true
-  try {
-    const cacheRes = await cacheOTP({
-      dept_id: otpModel.value.dept_id,
-      device_group: otpModel.value.device_group as DeviceGroupType,
-      otp_code: otpCode,
-    })
+      if (!cacheRes.data?.success) {
+        throw new Error(cacheRes.data?.message || 'OTP 缓存失败')
+      }
 
-    if (!cacheRes.data?.success) {
-      $alert.error(cacheRes.data?.message || 'OTP 缓存失败')
-      return
-    }
+      const execRes = await executeDeployTask(task.id)
+      const updatedTask = execRes.data
+      if (updatedTask.status === 'paused') {
+        openOtpModal(updatedTask)
+        return
+      }
 
-    const execRes = await executeDeployTask(otpModel.value.task_id)
-    const updatedTask = execRes.data
-    if (updatedTask.status === 'paused') {
-      openOtpModal(updatedTask)
-      return
-    }
-
-    showOtpModal.value = false
-    $alert.success('OTP 已提交，下发任务已开始执行')
-    tableRef.value?.reload()
-  } catch {
-    // Error handled
-  } finally {
-    otpLoading.value = false
-  }
+      $alert.success('OTP 已提交，下发任务已开始执行')
+      tableRef.value?.reload()
+    },
+  )
 }
 
 const handleApprove = (row: DeployTask) => {
@@ -652,8 +620,32 @@ const handleExecute = (row: DeployTask) => {
         }
         $alert.success('下发任务已提交执行')
         tableRef.value?.reload()
-      } catch {
-        // Error handled
+      } catch (error) {
+        // 尝试处理 428 OTP
+        otpFlow.tryHandleOtpRequired(error, async (otpCode) => {
+          const d = otpFlow.details.value
+          if (!d) return
+
+          // 1. 缓存 OTP
+          const cacheRes = await cacheOTP({
+            dept_id: d.dept_id,
+            device_group: d.device_group as DeviceGroupType,
+            otp_code: otpCode,
+          })
+          if (!cacheRes.data?.success) {
+            throw new Error(cacheRes.data?.message || 'OTP 缓存失败')
+          }
+
+          // 2. 重试执行
+          const res = await executeDeployTask(row.id)
+          const task = res.data
+          if (task.status === 'paused') {
+            openOtpModal(task)
+          } else {
+            $alert.success('下发任务已提交执行')
+            tableRef.value?.reload()
+          }
+        })
       }
     },
   })
@@ -686,57 +678,30 @@ const handleRollback = (row: DeployTask) => {
 
 <template>
   <div class="deploy-management p-4">
-    <ProTable
-      ref="tableRef"
-      title="配置下发任务"
-      :columns="columns"
-      :request="loadData"
-      :row-key="(row: DeployTask) => row.id"
-      :context-menu-options="contextMenuOptions"
-      search-placeholder="搜索任务名称"
-      :search-filters="searchFilters"
-      @add="handleCreate"
-      @context-menu-select="handleContextMenuSelect"
-      @recycle-bin="handleRecycleBin"
-      @batch-delete="handleBatchDelete"
-      show-add
-      show-recycle-bin
-      show-batch-delete
-      :scroll-x="1500"
-    />
+    <ProTable ref="tableRef" title="配置下发任务" :columns="columns" :request="loadData"
+      :row-key="(row: DeployTask) => row.id" :context-menu-options="contextMenuOptions" search-placeholder="搜索任务名称"
+      :search-filters="searchFilters" @add="handleCreate" @context-menu-select="handleContextMenuSelect"
+      @recycle-bin="handleRecycleBin" @batch-delete="handleBatchDelete" show-add show-recycle-bin show-batch-delete
+      :scroll-x="1500" />
 
-    <RecycleBinModal
-      ref="recycleBinRef"
-      v-model:show="showRecycleBin"
-      title="回收站 (已删除下发任务)"
-      :columns="columns"
-      :request="recycleBinRequest"
-      :row-key="(row: DeployTask) => row.id"
-      search-placeholder="搜索已删除任务..."
-      :scroll-x="1500"
-      @restore="handleRecycleBinRestore"
-      @batch-restore="handleRecycleBinBatchRestore"
-      @hard-delete="handleRecycleBinHardDelete"
-      @batch-hard-delete="handleRecycleBinBatchHardDelete"
-    />
+    <RecycleBinModal ref="recycleBinRef" v-model:show="showRecycleBin" title="回收站 (已删除下发任务)" :columns="columns"
+      :request="recycleBinRequest" :row-key="(row: DeployTask) => row.id" search-placeholder="搜索已删除任务..."
+      :scroll-x="1500" @restore="handleRecycleBinRestore" @batch-restore="handleRecycleBinBatchRestore"
+      @hard-delete="handleRecycleBinHardDelete" @batch-hard-delete="handleRecycleBinBatchHardDelete" />
 
     <!-- 查看详情 Modal -->
-    <n-modal
-      v-model:show="showViewModal"
-      preset="card"
-      title="下发任务详情"
-      style="width: 900px; max-height: 80vh; overflow: auto"
-    >
+    <n-modal v-model:show="showViewModal" preset="card" title="下发任务详情"
+      style="width: 900px; max-height: 80vh; overflow: auto">
       <div v-if="viewLoading" style="text-align: center; padding: 40px">加载中...</div>
       <template v-else-if="viewData">
         <n-space vertical size="large">
           <n-descriptions :column="2" label-placement="left" bordered>
             <n-descriptions-item label="任务名称" :span="2">{{
               viewData.name
-            }}</n-descriptions-item>
+              }}</n-descriptions-item>
             <n-descriptions-item label="模板">{{
               viewData.template_name || '-'
-            }}</n-descriptions-item>
+              }}</n-descriptions-item>
             <n-descriptions-item label="状态">
               <n-tag :type="statusColorMap[viewData.status]" size="small">
                 {{ statusLabelMap[viewData.status] }}
@@ -744,13 +709,13 @@ const handleRollback = (row: DeployTask) => {
             </n-descriptions-item>
             <n-descriptions-item label="Celery任务ID" :span="2">{{
               viewData.celery_task_id || '-'
-            }}</n-descriptions-item>
+              }}</n-descriptions-item>
             <n-descriptions-item label="设备数">{{
               getTaskDeviceCount(viewData)
-            }}</n-descriptions-item>
+              }}</n-descriptions-item>
             <n-descriptions-item label="创建人">{{
               viewData.created_by_name || '-'
-            }}</n-descriptions-item>
+              }}</n-descriptions-item>
             <n-descriptions-item label="变更说明" :span="2">
               <div style="white-space: pre-wrap; word-break: break-word">
                 {{ viewData.change_description || '-' }}
@@ -779,27 +744,18 @@ const handleRollback = (row: DeployTask) => {
             <n-space vertical size="small">
               <div>
                 <div style="font-weight: 600; margin-bottom: 6px">模板参数 (template_params)</div>
-                <n-code
-                  :code="viewData.template_params ? formatJson(viewData.template_params) : '{}'"
-                  language="json"
-                  style="max-height: 220px; overflow: auto"
-                />
+                <n-code :code="viewData.template_params ? formatJson(viewData.template_params) : '{}'" language="json"
+                  style="max-height: 220px; overflow: auto" />
               </div>
               <div>
                 <div style="font-weight: 600; margin-bottom: 6px">下发计划 (deploy_plan)</div>
-                <n-code
-                  :code="viewData.deploy_plan ? formatJson(viewData.deploy_plan) : '{}'"
-                  language="json"
-                  style="max-height: 220px; overflow: auto"
-                />
+                <n-code :code="viewData.deploy_plan ? formatJson(viewData.deploy_plan) : '{}'" language="json"
+                  style="max-height: 220px; overflow: auto" />
               </div>
               <div>
                 <div style="font-weight: 600; margin-bottom: 6px">目标设备 (target_devices)</div>
-                <n-code
-                  :code="viewData.target_devices ? formatJson(viewData.target_devices) : '{}'"
-                  language="json"
-                  style="max-height: 220px; overflow: auto"
-                />
+                <n-code :code="viewData.target_devices ? formatJson(viewData.target_devices) : '{}'" language="json"
+                  style="max-height: 220px; overflow: auto" />
               </div>
             </n-space>
           </div>
@@ -808,18 +764,12 @@ const handleRollback = (row: DeployTask) => {
           <div v-if="(viewData.approvals || []).length > 0">
             <h4>审批流程</h4>
             <n-timeline>
-              <n-timeline-item
-                v-for="approval in viewData.approvals || []"
-                :key="approval.level"
-                :type="
-                  approval.status === 'approved'
-                    ? 'success'
-                    : approval.status === 'rejected'
-                      ? 'error'
-                      : 'default'
-                "
-                :title="`第 ${approval.level} 级审批`"
-              >
+              <n-timeline-item v-for="approval in viewData.approvals || []" :key="approval.level" :type="approval.status === 'approved'
+                  ? 'success'
+                  : approval.status === 'rejected'
+                    ? 'error'
+                    : 'default'
+                " :title="`第 ${approval.level} 级审批`">
                 <p>审批人: {{ approval.approver_name || '待指定' }}</p>
                 <p>
                   状态:
@@ -840,11 +790,7 @@ const handleRollback = (row: DeployTask) => {
           <!-- 渲染后的配置 -->
           <div v-if="viewData.rendered_content">
             <h4>渲染后配置</h4>
-            <n-code
-              :code="viewData.rendered_content"
-              language="text"
-              style="max-height: 300px; overflow: auto"
-            />
+            <n-code :code="viewData.rendered_content" language="text" style="max-height: 300px; overflow: auto" />
           </div>
         </n-space>
       </template>
@@ -859,60 +805,29 @@ const handleRollback = (row: DeployTask) => {
             <n-input v-model:value="createModel.name" placeholder="请输入任务名称" />
           </n-form-item>
           <n-form-item label="选择模板">
-            <n-select
-              v-model:value="createModel.template_id"
-              :options="templateOptions"
-              placeholder="请选择配置模板"
-              filterable
-            />
+            <n-select v-model:value="createModel.template_id" :options="templateOptions" placeholder="请选择配置模板"
+              filterable />
           </n-form-item>
           <n-form-item label="模板参数 (JSON)">
-            <n-input
-              v-model:value="createModel.template_params"
-              type="textarea"
-              placeholder='{"key": "value"}'
-              :rows="3"
-              style="font-family: monospace"
-            />
+            <n-input v-model:value="createModel.template_params" type="textarea" placeholder='{"key": "value"}'
+              :rows="3" style="font-family: monospace" />
           </n-form-item>
           <n-form-item label="目标设备">
-            <n-select
-              v-model:value="createModel.device_ids"
-              :options="deviceOptions"
-              placeholder="请选择目标设备"
-              filterable
-              multiple
-              max-tag-count="responsive"
-            />
+            <n-select v-model:value="createModel.device_ids" :options="deviceOptions" placeholder="请选择目标设备" filterable
+              multiple max-tag-count="responsive" />
           </n-form-item>
           <n-form-item label="审批人 (三级)">
-            <n-select
-              v-model:value="createModel.approver_ids"
-              :options="userOptions"
-              placeholder="请选择审批人（按顺序）"
-              filterable
-              multiple
-              :max-tag-count="3"
-            />
+            <n-select v-model:value="createModel.approver_ids" :options="userOptions" placeholder="请选择审批人（按顺序）"
+              filterable multiple :max-tag-count="3" />
           </n-form-item>
           <n-form-item label="变更说明">
-            <n-input
-              v-model:value="createModel.change_description"
-              type="textarea"
-              placeholder="描述本次变更的内容"
-              :rows="2"
-            />
+            <n-input v-model:value="createModel.change_description" type="textarea" placeholder="描述本次变更的内容" :rows="2" />
           </n-form-item>
           <n-form-item label="影响范围">
             <n-input v-model:value="createModel.impact_scope" placeholder="描述影响范围" />
           </n-form-item>
           <n-form-item label="回退方案">
-            <n-input
-              v-model:value="createModel.rollback_plan"
-              type="textarea"
-              placeholder="描述回退方案"
-              :rows="2"
-            />
+            <n-input v-model:value="createModel.rollback_plan" type="textarea" placeholder="描述回退方案" :rows="2" />
           </n-form-item>
         </n-space>
         <div style="margin-top: 20px; text-align: right">
@@ -925,65 +840,38 @@ const handleRollback = (row: DeployTask) => {
     </n-modal>
 
     <!-- 审批 Modal -->
-    <n-modal
-      v-model:show="showApproveModal"
-      preset="dialog"
-      title="审批下发任务"
-      style="width: 500px"
-    >
+    <n-modal v-model:show="showApproveModal" preset="dialog" title="审批下发任务" style="width: 500px">
       <div style="margin-bottom: 16px">
         <p>任务: {{ approveModel.task_name }}</p>
         <p>审批级别: 第 {{ approveModel.level }} 级</p>
       </div>
       <n-space vertical style="width: 100%">
         <n-form-item label="审批结果">
-          <n-select
-            v-model:value="approveModel.decision"
-            :options="[
-              { label: '批准', value: 'approve' },
-              { label: '拒绝', value: 'reject' },
-            ]"
-          />
+          <n-select v-model:value="approveModel.decision" :options="[
+            { label: '批准', value: 'approve' },
+            { label: '拒绝', value: 'reject' },
+          ]" />
         </n-form-item>
         <n-form-item label="审批意见">
-          <n-input
-            v-model:value="approveModel.comment"
-            type="textarea"
-            placeholder="请输入审批意见（可选）"
-            :rows="2"
-          />
+          <n-input v-model:value="approveModel.comment" type="textarea" placeholder="请输入审批意见（可选）" :rows="2" />
         </n-form-item>
       </n-space>
       <template #action>
         <n-button @click="showApproveModal = false">取消</n-button>
-        <n-button
-          :type="approveModel.decision === 'approve' ? 'success' : 'error'"
-          @click="submitApprove"
-        >
+        <n-button :type="approveModel.decision === 'approve' ? 'success' : 'error'" @click="submitApprove">
           {{ approveModel.decision === 'approve' ? '批准' : '拒绝' }}
         </n-button>
       </template>
     </n-modal>
 
     <!-- OTP 输入 Modal（通用组件） -->
-    <OtpModal
-      v-model:show="showOtpModal"
-      :loading="otpLoading"
-      :title="'需要 OTP 验证码'"
-      :alert-title="'需要 OTP'"
-      :alert-text="otpAlertText"
-      :info-items="otpInfoItems"
-      confirm-text="提交并继续"
-      @confirm="submitOtpAndRetry"
-    />
+    <OtpModal v-model:show="otpFlow.show.value" :loading="otpFlow.loading.value"
+      :title="otpFlow.details.value?.message ? '需要 OTP 验证码' : '需要 OTP 验证码'" :alert-title="'需要 OTP'"
+      :alert-text="otpFlow.details.value?.message || '当前操作需要 OTP 验证'" :info-items="otpFlow.infoItems.value"
+      confirm-text="提交并继续" @confirm="otpFlow.confirm" />
 
     <!-- 查看结果 Modal -->
-    <n-modal
-      v-model:show="showResultModal"
-      preset="card"
-      title="下发执行结果"
-      style="width: 900px; max-height: 80vh"
-    >
+    <n-modal v-model:show="showResultModal" preset="card" title="下发执行结果" style="width: 900px; max-height: 80vh">
       <div v-if="resultLoading" style="text-align: center; padding: 40px">加载中...</div>
       <template v-else-if="resultData">
         <n-space vertical>
@@ -1010,16 +898,12 @@ const handleRollback = (row: DeployTask) => {
               <tr v-for="result in resultData.device_results || []" :key="result.device_id">
                 <td>{{ result.device_name || result.device_id }}</td>
                 <td>
-                  <n-tag
-                    :type="
-                      result.status === 'success'
-                        ? 'success'
-                        : result.status === 'failed'
-                          ? 'error'
-                          : 'default'
-                    "
-                    size="small"
-                  >
+                  <n-tag :type="result.status === 'success'
+                      ? 'success'
+                      : result.status === 'failed'
+                        ? 'error'
+                        : 'default'
+                    " size="small">
                     {{
                       result.status === 'success'
                         ? '成功'
@@ -1030,14 +914,12 @@ const handleRollback = (row: DeployTask) => {
                   </n-tag>
                 </td>
                 <td>{{ formatDateTime(result.executed_at) }}</td>
-                <td
-                  style="
+                <td style="
                     max-width: 300px;
                     overflow: hidden;
                     text-overflow: ellipsis;
                     white-space: nowrap;
-                  "
-                >
+                  ">
                   {{ result.error || (result.output ? '有输出内容' : '-') }}
                 </td>
                 <td>
@@ -1053,28 +935,18 @@ const handleRollback = (row: DeployTask) => {
     </n-modal>
 
     <!-- 设备详细输出 Modal -->
-    <n-modal
-      v-model:show="showDeviceOutputModal"
-      preset="card"
+    <n-modal v-model:show="showDeviceOutputModal" preset="card"
       :title="`设备输出: ${currentDeviceResult?.device_name || currentDeviceResult?.device_id}`"
-      style="width: 800px; max-height: 80vh"
-    >
+      style="width: 800px; max-height: 80vh">
       <template v-if="currentDeviceResult">
         <n-tabs v-model:value="resultTab" type="line">
           <n-tab-pane name="raw" tab="原始输出">
             <div class="code-scroll">
-              <n-code
-                :code="currentDeviceResult.output || currentDeviceResult.error || '(无输出)'"
-                language="text"
-              />
+              <n-code :code="currentDeviceResult.output || currentDeviceResult.error || '(无输出)'" language="text" />
             </div>
           </n-tab-pane>
           <n-tab-pane name="parsed" tab="结构化数据">
-            <n-result
-              status="info"
-              title="暂无结构化数据"
-              description="配置下发任务暂不支持 TextFSM 解析，请查看原始输出。"
-            />
+            <n-result status="info" title="暂无结构化数据" description="配置下发任务暂不支持 TextFSM 解析，请查看原始输出。" />
           </n-tab-pane>
         </n-tabs>
       </template>

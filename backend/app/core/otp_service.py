@@ -17,6 +17,7 @@ from uuid import UUID
 import pyotp
 
 from app.core import cache as cache_module  # 使用模块引用，避免导入时获取 None
+from app.core.config import settings
 from app.core.encryption import decrypt_otp_seed, decrypt_password
 from app.core.enums import AuthType
 from app.core.exceptions import DeviceCredentialNotFoundException, OTPRequiredException
@@ -25,7 +26,7 @@ from app.schemas.credential import DeviceCredential
 
 # OTP 缓存配置
 OTP_CACHE_PREFIX = "ncm:otp"
-OTP_CACHE_TTL = 60  # 60 秒
+OTP_CACHE_TTL = settings.OTP_CACHE_TTL_SECONDS
 
 redis_client = None
 
@@ -42,7 +43,7 @@ class OTPService:
         初始化 OTP 服务。
 
         Args:
-            cache_ttl: OTP 缓存过期时间（秒），默认 60 秒
+            cache_ttl: OTP 缓存过期时间（秒）
         """
         self.cache_ttl = cache_ttl
 
@@ -113,7 +114,7 @@ class OTPService:
 
         Note:
             - 缓存键格式: ncm:otp:{dept_id}:{device_group}
-            - TTL: 60 秒
+            - TTL: 由配置项控制
             - 同一部门下不同设备分组的 OTP 相互隔离
         """
         client = redis_client or cache_module.redis_client

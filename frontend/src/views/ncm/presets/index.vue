@@ -34,6 +34,7 @@ import { backupDevice, batchBackup } from '@/api/backups'
 import { cacheOTP } from '@/api/credentials'
 import OtpModal from '@/components/common/OtpModal.vue'
 import { $alert } from '@/utils/alert'
+import { useOtpFlow } from '@/composables'
 
 defineOptions({
   name: 'PresetOperations',
@@ -65,15 +66,8 @@ const selectedDeviceId = ref<string | null>(null)
 const formParams = ref<Record<string, unknown>>({})
 const executing = ref(false)
 
-// OTP 弹窗
-const showOtpModal = ref(false)
-const otpLoading = ref(false)
-const otpRequiredGroups = ref<Array<{ dept_id: string; device_group: string }>>([])
-const pendingExecute = ref<{
-  preset_id: string
-  device_id: string
-  params: Record<string, unknown>
-} | null>(null)
+// OTP 流程
+const otpFlow = useOtpFlow()
 
 // 执行结果
 const showResultModal = ref(false)
@@ -146,25 +140,16 @@ const filteredDeviceOptions = computed(() => {
   return deviceOptions.value.filter((d) => supportedVendors.includes(d.vendor))
 })
 
-const otpInfoItems = computed(() => {
-  const items: Array<{ label: string; value: string }> = []
-  if (selectedDevice.value) {
-    items.push({ label: '设备', value: `${selectedDevice.value.device_name} (${selectedDevice.value.ip_address})` })
-  }
-  if (otpRequiredGroups.value.length) {
-    const groupText = otpRequiredGroups.value
-      .map((g) => `dept_id=${g.dept_id}, device_group=${g.device_group}`)
-      .join('；')
-    items.push({ label: '凭据组', value: groupText })
-  }
-  return items
-})
-
-const buildOtpGroupsFromSelectedDevice = () => {
-  const d = selectedDevice.value
-  if (!d?.dept_id || !d.device_group) return []
-  return [{ dept_id: d.dept_id, device_group: d.device_group }]
-}
+// const otpInfoItems = computed(() => {
+//   const items: Array<{ label: string; value: string }> = []
+//   if (selectedDevice.value) {
+//     items.push({
+//       label: '设备',
+//       value: `${selectedDevice.value.device_name} (${selectedDevice.value.ip_address})`,
+//     })
+//   }
+//   return items
+// })
 
 const backupBeforeConfigChange = async (deviceId: string) => {
   if (currentPreset.value?.category !== 'config') return
@@ -178,7 +163,11 @@ const backupBeforeConfigChange = async (deviceId: string) => {
   }
 }
 
-const doExecutePreset = async (presetId: string, deviceId: string, params: Record<string, unknown>) => {
+const doExecutePreset = async (
+  presetId: string,
+  deviceId: string,
+  params: Record<string, unknown>,
+) => {
   const res = await executePreset(presetId, {
     device_id: deviceId,
     params,
@@ -186,11 +175,41 @@ const doExecutePreset = async (presetId: string, deviceId: string, params: Recor
 
   // 断点：需要 OTP
   if (res.data?.otp_required) {
-    otpRequiredGroups.value = res.data.otp_required_groups?.length
-      ? (res.data.otp_required_groups as Array<{ dept_id: string; device_group: string }>)
-      : buildOtpGroupsFromSelectedDevice()
+    const groups = res.data.otp_required_groups || []
+    let first = groups[0] as { dept_id: string; device_group: string } | undefined
+
+    if (!first) {
+      // 如果没有分组信息，尝试从当前选中设备构建
+      if (selectedDevice.value?.dept_id && selectedDevice.value?.device_group) {
+        first = {
+          dept_id: selectedDevice.value.dept_id,
+          device_group: selectedDevice.value.device_group,
+        }
+      } else {
+        $alert.warning('需要 OTP 但缺少分组信息')
+        return
+      }
+    }
+
     showExecuteModal.value = false
-    showOtpModal.value = true
+    otpFlow.open(
+      {
+        dept_id: first!.dept_id,
+        device_group: first!.device_group,
+        failed_devices: [],
+        message: '操作需要 OTP 验证码',
+      },
+      async (otpCode) => {
+        await executeWithOtpCache(
+          first!.dept_id,
+          first!.device_group as DeviceGroup,
+          otpCode,
+          presetId,
+          deviceId,
+          params,
+        )
+      },
+    )
     return
   }
 
@@ -258,20 +277,36 @@ const handleExecute = async () => {
     }
   }
 
-  pendingExecute.value = {
-    preset_id: currentPreset.value.id,
-    device_id: selectedDeviceId.value,
-    params: formParams.value,
-  }
+  const currentDev = selectedDevice.value!
+  const presetId = currentPreset.value.id
+  const deviceId = selectedDeviceId.value
+  const params = formParams.value
 
   // otp_manual：执行前先提示输入 OTP
-  if (selectedDevice.value?.auth_type === 'otp_manual') {
-    otpRequiredGroups.value = buildOtpGroupsFromSelectedDevice()
-    if (!otpRequiredGroups.value.length) {
+  if (currentDev.auth_type === 'otp_manual') {
+    if (!currentDev.dept_id || !currentDev.device_group) {
       $alert.warning('当前设备缺少 dept_id 或 device_group，无法缓存 OTP')
       return
     }
-    showOtpModal.value = true
+
+    otpFlow.open(
+      {
+        dept_id: currentDev.dept_id,
+        device_group: currentDev.device_group,
+        failed_devices: [],
+        message: `设备 "${currentDev.device_name}" 需要 OTP 验证码`,
+      },
+      async (otpCode) => {
+        await executeWithOtpCache(
+          currentDev.dept_id!,
+          currentDev.device_group!,
+          otpCode,
+          presetId,
+          deviceId,
+          params,
+        )
+      },
+    )
     return
   }
 
@@ -279,42 +314,46 @@ const handleExecute = async () => {
   try {
     await backupBeforeConfigChange(selectedDeviceId.value)
     await doExecutePreset(currentPreset.value.id, selectedDeviceId.value, formParams.value)
-  } catch {
-    // Error handled
+  } catch (error) {
+    otpFlow.tryHandleOtpRequired(error, async (otpCode) => {
+      const d = otpFlow.details.value
+      if (d) {
+        await executeWithOtpCache(
+          d.dept_id,
+          d.device_group as DeviceGroup,
+          otpCode,
+          presetId,
+          deviceId,
+          params,
+        )
+      }
+    })
   } finally {
     executing.value = false
   }
 }
 
-const handleOtpConfirm = async (otpCode: string) => {
-  if (!otpRequiredGroups.value.length) {
-    $alert.warning('缺少 OTP 缓存目标信息')
-    return
-  }
-  if (!pendingExecute.value) {
-    $alert.warning('缺少待执行请求，请重新执行')
-    return
-  }
+const executeWithOtpCache = async (
+  deptId: string,
+  group: DeviceGroup,
+  otpCode: string,
+  presetId: string,
+  deviceId: string,
+  params: Record<string, unknown>,
+) => {
+  const cacheRes = await cacheOTP({
+    dept_id: deptId,
+    device_group: group,
+    otp_code: otpCode,
+  })
+  if (!cacheRes.data?.success) throw new Error(cacheRes.data?.message || 'OTP 缓存失败')
 
-  otpLoading.value = true
+  // 重新触发执行流程
+  executing.value = true
   try {
-    for (const g of otpRequiredGroups.value) {
-      await cacheOTP({
-        dept_id: g.dept_id,
-        device_group: g.device_group as DeviceGroup,
-        otp_code: otpCode,
-      })
-    }
-
-    showOtpModal.value = false
-
-    executing.value = true
-    await backupBeforeConfigChange(pendingExecute.value.device_id)
-    await doExecutePreset(pendingExecute.value.preset_id, pendingExecute.value.device_id, pendingExecute.value.params)
-  } catch {
-    // Error handled
+    await backupBeforeConfigChange(deviceId)
+    await doExecutePreset(presetId, deviceId, params)
   } finally {
-    otpLoading.value = false
     executing.value = false
   }
 }
@@ -353,12 +392,8 @@ onMounted(() => {
                 <n-popover trigger="hover">
                   <template #trigger>
                     <span>
-                      <n-tag
-                        v-for="v in preset.supported_vendors.slice(0, 3)"
-                        :key="v"
-                        size="tiny"
-                        style="margin-right: 4px"
-                      >
+                      <n-tag v-for="v in preset.supported_vendors.slice(0, 3)" :key="v" size="tiny"
+                        style="margin-right: 4px">
                         {{ v.toUpperCase() }}
                       </n-tag>
                     </span>
@@ -384,12 +419,7 @@ onMounted(() => {
               </template>
               <p class="preset-desc">{{ preset.description }}</p>
               <div class="preset-vendors">
-                <n-tag
-                  v-for="v in preset.supported_vendors.slice(0, 3)"
-                  :key="v"
-                  size="tiny"
-                  style="margin-right: 4px"
-                >
+                <n-tag v-for="v in preset.supported_vendors.slice(0, 3)" :key="v" size="tiny" style="margin-right: 4px">
                   {{ v.toUpperCase() }}
                 </n-tag>
               </div>
@@ -400,46 +430,24 @@ onMounted(() => {
     </n-spin>
 
     <!-- 执行弹窗 -->
-    <n-modal
-      v-model:show="showExecuteModal"
-      preset="dialog"
-      :title="`执行: ${currentPreset?.name || ''}`"
-      style="width: 500px"
-    >
+    <n-modal v-model:show="showExecuteModal" preset="dialog" :title="`执行: ${currentPreset?.name || ''}`"
+      style="width: 500px">
       <n-spin :show="deviceLoading">
         <n-form label-placement="left" label-width="100">
           <n-form-item label="目标设备" required>
-            <n-select
-              v-model:value="selectedDeviceId"
-              :options="filteredDeviceOptions"
-              placeholder="请选择设备"
-              filterable
-            />
+            <n-select v-model:value="selectedDeviceId" :options="filteredDeviceOptions" placeholder="请选择设备"
+              filterable />
           </n-form-item>
 
           <!-- 动态参数表单 -->
-          <n-form-item
-            v-for="prop in schemaProperties"
-            :key="prop.key"
-            :label="prop.title"
-            :required="prop.required"
-          >
+          <n-form-item v-for="prop in schemaProperties" :key="prop.key" :label="prop.title" :required="prop.required">
             <!-- 数字类型 -->
-            <n-input-number
-              v-if="prop.type === 'integer' || prop.type === 'number'"
-              v-model:value="formParams[prop.key] as number"
-              :placeholder="prop.description || `请输入${prop.title}`"
-              :min="prop.minimum"
-              :max="prop.maximum"
-              style="width: 100%"
-            />
+            <n-input-number v-if="prop.type === 'integer' || prop.type === 'number'"
+              v-model:value="formParams[prop.key] as number" :placeholder="prop.description || `请输入${prop.title}`"
+              :min="prop.minimum" :max="prop.maximum" style="width: 100%" />
             <!-- 字符串类型 -->
-            <n-input
-              v-else
-              v-model:value="formParams[prop.key] as string"
-              :placeholder="prop.description || `请输入${prop.title}`"
-              :maxlength="prop.maxLength"
-            />
+            <n-input v-else v-model:value="formParams[prop.key] as string"
+              :placeholder="prop.description || `请输入${prop.title}`" :maxlength="prop.maxLength" />
           </n-form-item>
         </n-form>
       </n-spin>
@@ -447,12 +455,7 @@ onMounted(() => {
       <template #action>
         <n-space justify="end">
           <n-button @click="showExecuteModal = false">取消</n-button>
-          <n-button
-            type="primary"
-            :loading="executing"
-            :disabled="!selectedDeviceId"
-            @click="handleExecute"
-          >
+          <n-button type="primary" :loading="executing" :disabled="!selectedDeviceId" @click="handleExecute">
             执行
           </n-button>
         </n-space>
@@ -460,51 +463,30 @@ onMounted(() => {
     </n-modal>
 
     <!-- OTP 弹窗 -->
-    <OtpModal
-      v-model:show="showOtpModal"
-      :loading="otpLoading"
-      :info-items="otpInfoItems"
-      @confirm="handleOtpConfirm"
-    />
+    <OtpModal v-model:show="otpFlow.show.value" :loading="otpFlow.loading.value"
+      :title="otpFlow.details.value?.message ? '需要 OTP 验证码' : '需要 OTP 验证码'" :alert-title="'需要 OTP'"
+      :alert-text="otpFlow.details.value?.message || '当前操作需要 OTP 验证'" :info-items="otpFlow.infoItems.value"
+      confirm-text="提交并继续" @confirm="otpFlow.confirm" />
 
     <!-- 结果弹窗 -->
-    <n-modal
-      v-model:show="showResultModal"
-      preset="card"
-      title="执行结果"
-      style="width: 800px; max-height: 80vh"
-    >
+    <n-modal v-model:show="showResultModal" preset="card" title="执行结果" style="width: 800px; max-height: 80vh">
       <template v-if="executeResult">
-        <n-result
-          v-if="!executeResult.success"
-          status="error"
-          title="执行失败"
-          :description="executeResult.error_message || '未知错误'"
-        />
+        <n-result v-if="!executeResult.success" status="error" title="执行失败"
+          :description="executeResult.error_message || '未知错误'" />
         <template v-else>
           <n-tabs v-model:value="resultTab" type="line">
             <n-tab-pane name="raw" tab="原始输出">
               <div class="code-scroll">
-                <n-code
-                  :code="executeResult.raw_output || '(无输出)'"
-                  language="text"
-                />
+                <n-code :code="executeResult.raw_output || '(无输出)'" language="text" />
               </div>
             </n-tab-pane>
             <n-tab-pane name="parsed" tab="结构化数据">
               <template v-if="executeResult.parse_error">
-                <n-result
-                  status="warning"
-                  title="解析失败"
-                  :description="executeResult.parse_error"
-                />
+                <n-result status="warning" title="解析失败" :description="executeResult.parse_error" />
               </template>
               <template v-else-if="executeResult.parsed_output">
                 <div class="code-scroll">
-                  <n-code
-                    :code="formattedParsedOutput"
-                    language="json"
-                  />
+                  <n-code :code="formattedParsedOutput" language="json" />
                 </div>
               </template>
               <template v-else>

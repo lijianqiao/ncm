@@ -1,17 +1,24 @@
 import { computed, ref } from 'vue'
 
 export interface OtpRequiredDetails {
+  type?: string
+  message?: string
   dept_id: string
   device_group: string
   failed_devices: string[]
+  pending_device_ids?: string[]
 }
 
 type AxiosLikeError = {
   response?: {
     status?: number
     data?: {
+      code?: number
       message?: string
       details?: unknown
+      data?: {
+        otp_notice?: unknown
+      }
     }
   }
 }
@@ -54,7 +61,26 @@ export function useOtpFlow(options?: { length?: number }) {
 
   const extractOtpRequiredDetails = (error: unknown): OtpRequiredDetails | null => {
     const err = error as AxiosLikeError
-    if (err?.response?.status !== 428) return null
+    const status = err?.response?.status
+    const code = err?.response?.data?.code
+
+    // 支持 HTTP 428 或 业务码 428
+    if (status !== 428 && code !== 428) return null
+
+    // 优先尝试从 data.otp_notice 获取
+    const otpNotice = err?.response?.data?.data?.otp_notice as OtpRequiredDetails | undefined
+    if (otpNotice && otpNotice.dept_id && otpNotice.device_group) {
+      return {
+        type: otpNotice.type,
+        message: otpNotice.message,
+        dept_id: otpNotice.dept_id,
+        device_group: otpNotice.device_group,
+        failed_devices: otpNotice.failed_devices || [],
+        pending_device_ids: otpNotice.pending_device_ids,
+      }
+    }
+
+    // 兼容旧结构 details
     const d = err?.response?.data?.details as OtpRequiredDetails | undefined
     if (!d || !d.dept_id || !d.device_group) return null
     return {

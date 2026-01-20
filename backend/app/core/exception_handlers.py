@@ -14,8 +14,9 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 
-from app.core.exceptions import CustomException
+from app.core.exceptions import CustomException, OTPRequiredException
 from app.core.logger import logger
+from app.core.otp_notice import build_otp_required_response
 from fastapi_import_export.exceptions import ImportExportError
 
 
@@ -38,6 +39,8 @@ async def custom_exception_handler(request: Request, exc: CustomException):
     """
     自定义业务异常处理器。
     """
+    if isinstance(exc, OTPRequiredException):
+        return build_otp_required_response(exc)
     return JSONResponse(
         status_code=exc.code,
         content={"error_code": exc.code, "message": exc.message, "details": exc.details},

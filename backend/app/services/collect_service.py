@@ -15,7 +15,7 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from scrapli import AsyncScrapli
+from scrapli import Scrapli
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import cache as cache_module
@@ -213,29 +213,38 @@ class CollectService:
         mac_count = 0
 
         try:
-            async with AsyncScrapli(**device_config) as conn:
-                # 采集 ARP 表
-                if collect_arp:
-                    arp_cmd = get_command("arp_table", platform)
-                    arp_response = await conn.send_command(arp_cmd)
-                    if not arp_response.failed:
-                        arp_entries = parse_arp_table(platform, arp_response.result)
-                        await self._save_arp_cache(device_id, arp_entries)
-                        arp_count = len(arp_entries)
-                        logger.debug(f"ARP 采集成功: device={device.name}, entries={arp_count}")
+            def _sync_collect() -> tuple[list[dict[str, Any]] | None, list[dict[str, Any]] | None]:
+                with Scrapli(**device_config) as conn:
+                    arp_entries_out = None
+                    mac_entries_out = None
 
-                # 采集 MAC 表
-                if collect_mac:
-                    mac_cmd = get_command("mac_table", platform)
-                    mac_response = await conn.send_command(mac_cmd)
-                    if not mac_response.failed:
-                        mac_entries = parse_mac_table(platform, mac_response.result)
-                        await self._save_mac_cache(device_id, mac_entries)
-                        mac_count = len(mac_entries)
-                        logger.debug(f"MAC 采集成功: device={device.name}, entries={mac_count}")
+                    if collect_arp:
+                        arp_cmd = get_command("arp_table", platform)
+                        arp_response = conn.send_command(arp_cmd, timeout_ops=120)
+                        if arp_response.failed:
+                            raise RuntimeError(str(arp_response.result))
+                        arp_entries_out = parse_arp_table(platform, arp_response.result)
 
-                # 更新最后采集时间
-                await self._update_last_collect_time(device_id)
+                    if collect_mac:
+                        mac_cmd = get_command("mac_table", platform)
+                        mac_response = conn.send_command(mac_cmd, timeout_ops=120)
+                        if mac_response.failed:
+                            raise RuntimeError(str(mac_response.result))
+                        mac_entries_out = parse_mac_table(platform, mac_response.result)
+
+                    return arp_entries_out, mac_entries_out
+
+            arp_entries, mac_entries = await asyncio.to_thread(_sync_collect)
+            if arp_entries is not None:
+                await self._save_arp_cache(device_id, arp_entries)
+                arp_count = len(arp_entries)
+                logger.debug(f"ARP 采集成功: device={device.name}, entries={arp_count}")
+            if mac_entries is not None:
+                await self._save_mac_cache(device_id, mac_entries)
+                mac_count = len(mac_entries)
+                logger.debug(f"MAC 采集成功: device={device.name}, entries={mac_count}")
+
+            await self._update_last_collect_time(device_id)
 
         except Exception as e:
             duration_ms = int((time.time() - start_time) * 1000)

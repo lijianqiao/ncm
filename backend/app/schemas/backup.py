@@ -115,6 +115,16 @@ class BackupBatchByGroupRequest(BaseModel):
     otp_code: str | None = Field(default=None, min_length=6, max_length=8, description="OTP 验证码")
 
 
+class OTPNotice(BaseModel):
+    """OTP 提示信息（用于前端独立处理）。"""
+
+    type: str = Field(default="otp_required", description="提示类型")
+    message: str = Field(default="需要重新输入 OTP 验证码", description="提示消息")
+    dept_id: UUID | None = Field(default=None, description="需要 OTP 的部门ID")
+    device_group: str | None = Field(default=None, description="需要 OTP 的设备分组")
+    pending_device_ids: list[UUID] | None = Field(default=None, description="待继续处理的设备ID列表")
+
+
 class BackupTaskStatus(BaseModel):
     """备份任务状态响应。"""
 
@@ -128,10 +138,16 @@ class BackupTaskStatus(BaseModel):
     failed_count: int | None = Field(default=None, description="失败数量")
     failed_devices: list[dict] | None = Field(default=None, description="失败设备列表")
 
+    otp_notice: OTPNotice | None = Field(
+        default=None,
+        description="OTP 提示信息（独立结构，前端可优先判断并弹窗处理）",
+    )
+
     # OTP 过期信息（需要用户重新输入）
-    otp_required: bool = Field(default=False, description="是否需要重新输入 OTP")
+    otp_required: bool | None = Field(default=None, description="是否需要重新输入 OTP（兼容字段）")
     otp_dept_id: UUID | None = Field(default=None, description="需要 OTP 的部门ID")
     otp_device_group: str | None = Field(default=None, description="需要 OTP 的设备分组")
+    pending_device_ids: list[UUID] | None = Field(default=None, description="待继续处理的设备ID列表")
 
 
 class BackupBatchResult(BaseModel):

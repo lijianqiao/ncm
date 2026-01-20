@@ -85,21 +85,27 @@ def create_nornir_inventory(
             name="cisco",
             platform="cisco_iosxe",
             connection_options={
-                "scrapli": ConnectionOptions(extras={"auth_strict_key": False, "ssh_config_file": False})
+                "scrapli": ConnectionOptions(
+                    extras={"auth_strict_key": False, "ssh_config_file": "", "transport": "ssh2"}
+                )
             },
         ),
         "huawei": Group(
             name="huawei",
             platform="huawei_vrp",
             connection_options={
-                "scrapli": ConnectionOptions(extras={"auth_strict_key": False, "ssh_config_file": False})
+                "scrapli": ConnectionOptions(
+                    extras={"auth_strict_key": False, "ssh_config_file": "", "transport": "ssh2"}
+                )
             },
         ),
         "h3c": Group(
             name="h3c",
             platform="hp_comware",
             connection_options={
-                "scrapli": ConnectionOptions(extras={"auth_strict_key": False, "ssh_config_file": False})
+                "scrapli": ConnectionOptions(
+                    extras={"auth_strict_key": False, "ssh_config_file": "", "transport": "ssh2"}
+                )
             },
         ),
     }
@@ -126,15 +132,9 @@ def create_nornir_inventory(
         platform = host_info.get("platform")
         scrapli_extras: dict[str, Any] = {
             "auth_strict_key": False,
-            "ssh_config_file": False,
-            "transport": "paramiko",
+            "ssh_config_file": "",
+            "transport": "ssh2",
         }
-        # 部分设备（如 H3C/华为）输出常为 GBK 系编码，统一用 gb18030 做兼容，避免中文乱码
-        if platform in {"hp_comware", "huawei_vrp"}:
-            scrapli_extras["transport_options"] = {
-                "encoding": "gb18030",
-                "errors": "replace",
-            }
 
         host_groups = []
         for g in host_info.get("groups", []):
@@ -161,8 +161,8 @@ def create_nornir_inventory(
             "scrapli": ConnectionOptions(
                 extras={
                     "auth_strict_key": False,
-                    "ssh_config_file": False,
-                    "transport": "paramiko",
+                    "ssh_config_file": "",
+                    "transport": "ssh2",
                 }
             )
         },
@@ -250,11 +250,7 @@ def create_nornir_inventory_async(
     groups_data: list[dict[str, Any]] | None = None,
 ) -> Inventory:
     """
-    创建异步模式的 Nornir Inventory（使用 asyncssh 传输层）。
-
-    与同步版本的主要区别：
-    - transport 默认使用 asyncssh
-    - 移除 paramiko 相关配置
+    创建异步模式的 Nornir Inventory。
 
     Args:
         hosts_data: 主机数据列表
@@ -275,21 +271,27 @@ def create_nornir_inventory_async(
             name="cisco",
             platform="cisco_iosxe",
             connection_options={
-                "scrapli": ConnectionOptions(extras={"auth_strict_key": False, "ssh_config_file": False})
+                "scrapli": ConnectionOptions(
+                    extras={"auth_strict_key": False, "ssh_config_file": "", "transport": "ssh2"}
+                )
             },
         ),
         "huawei": Group(
             name="huawei",
             platform="huawei_vrp",
             connection_options={
-                "scrapli": ConnectionOptions(extras={"auth_strict_key": False, "ssh_config_file": False})
+                "scrapli": ConnectionOptions(
+                    extras={"auth_strict_key": False, "ssh_config_file": "", "transport": "ssh2"}
+                )
             },
         ),
         "h3c": Group(
             name="h3c",
             platform="hp_comware",
             connection_options={
-                "scrapli": ConnectionOptions(extras={"auth_strict_key": False, "ssh_config_file": False})
+                "scrapli": ConnectionOptions(
+                    extras={"auth_strict_key": False, "ssh_config_file": "", "transport": "ssh2"}
+                )
             },
         ),
     }
@@ -306,7 +308,7 @@ def create_nornir_inventory_async(
                     data=group_info.get("data", {}),
                 )
 
-    # 创建主机（异步版本使用 asyncssh）
+    # 创建主机
     for host_info in hosts_data:
         host_name = host_info.get("name")
         if not host_name:
@@ -316,16 +318,9 @@ def create_nornir_inventory_async(
         platform = host_info.get("platform")
         scrapli_extras: dict[str, Any] = {
             "auth_strict_key": False,
-            "ssh_config_file": False,
-            # asyncssh 传输层（关键区别）
-            "transport": "asyncssh",
+            "ssh_config_file": "",
+            "transport": "ssh2",
         }
-        # 编码处理
-        if platform in {"hp_comware", "huawei_vrp"}:
-            scrapli_extras["transport_options"] = {
-                "encoding": "gb18030",
-                "errors": "replace",
-            }
 
         host_groups = []
         for g in host_info.get("groups", []):
@@ -344,7 +339,7 @@ def create_nornir_inventory_async(
             connection_options={"scrapli": ConnectionOptions(extras=scrapli_extras)},
         )
 
-    # 默认配置（异步版本）
+    # 默认配置
     defaults = Defaults(
         username=settings.FIRST_SUPERUSER,
         password=settings.FIRST_SUPERUSER_PASSWORD,
@@ -352,8 +347,8 @@ def create_nornir_inventory_async(
             "scrapli": ConnectionOptions(
                 extras={
                     "auth_strict_key": False,
-                    "ssh_config_file": False,
-                    "transport": "asyncssh",
+                    "ssh_config_file": "",
+                    "transport": "ssh2",
                 }
             )
         },

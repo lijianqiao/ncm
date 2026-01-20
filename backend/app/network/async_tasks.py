@@ -9,14 +9,20 @@
 所有函数都是独立的异步函数，接收 Host 对象并返回执行结果。
 """
 
+import asyncio
+import time
 from typing import TYPE_CHECKING, Any
 
-from scrapli import AsyncScrapli
-from scrapli.response import Response
+from scrapli import Scrapli
+from scrapli.exceptions import ScrapliAuthenticationFailed, ScrapliTimeout
+from scrapli.response import MultiResponse, Response
 
 from app.core.config import settings
+from app.core.exceptions import OTPRequiredException
 from app.core.logger import logger
+from app.network.otp_utils import get_manual_otp_or_raise, get_seed_otp, invalidate_manual_otp
 from app.network.platform_config import get_scrapli_options
+from app.network.scrapli_utils import disable_paging, send_command_with_paging
 
 if TYPE_CHECKING:
     from nornir.core.inventory import Host
@@ -39,13 +45,7 @@ def _get_scrapli_kwargs(host: "Host") -> dict[str, Any]:
 
     raw_platform = host.platform or "hp_comware"
 
-    # 如果 platform 是厂商名（如 h3c, huawei），转换为 Scrapli 平台名
-    # get_platform_for_vendor 会处理映射，如果已经是 Scrapli 平台名则直接返回
-    try:
-        platform = get_platform_for_vendor(raw_platform)
-    except ValueError:
-        # 如果无法识别，假设它已经是有效的 Scrapli 平台名
-        platform = raw_platform
+    platform = get_platform_for_vendor(raw_platform)
 
     # 从 platform_config.py 获取平台特定的 Scrapli 配置
     base_options = get_scrapli_options(platform)
@@ -56,6 +56,20 @@ def _get_scrapli_kwargs(host: "Host") -> dict[str, Any]:
         extras = host.connection_options["scrapli"].extras or {}
 
     # 合并配置：base_options → extras → 固定覆盖项
+    base_timeout_socket = base_options.get("timeout_socket")
+    base_timeout_transport = base_options.get("timeout_transport")
+    base_timeout_ops = base_options.get("timeout_ops")
+
+    def _as_int(value: Any) -> int:
+        try:
+            return int(value)
+        except Exception:
+            return 0
+
+    timeout_socket = max(_as_int(base_timeout_socket), int(settings.ASYNC_SSH_CONNECT_TIMEOUT))
+    timeout_transport = max(_as_int(base_timeout_transport), int(settings.ASYNC_SSH_CONNECT_TIMEOUT))
+    timeout_ops = max(_as_int(base_timeout_ops), int(settings.ASYNC_SSH_TIMEOUT))
+
     result = {
         **base_options,
         **extras,
@@ -66,15 +80,105 @@ def _get_scrapli_kwargs(host: "Host") -> dict[str, Any]:
         "port": host.port or 22,
         "platform": platform,
         # 使用配置文件中的超时参数
-        "timeout_socket": settings.ASYNC_SSH_CONNECT_TIMEOUT,
-        "timeout_transport": settings.ASYNC_SSH_CONNECT_TIMEOUT,
-        "timeout_ops": settings.ASYNC_SSH_TIMEOUT,
+        "timeout_socket": timeout_socket,
+        "timeout_transport": timeout_transport,
+        "timeout_ops": timeout_ops,
     }
+    if platform.startswith("cisco_") and not result.get("auth_secondary"):
+        result["auth_secondary"] = result.get("auth_password") or ""
 
     return result
 
 
-async def async_send_command(host: "Host", command: str) -> dict[str, Any]:
+async def _apply_otp_manual_password(host: "Host", kwargs: dict[str, Any]) -> dict[str, Any]:
+    auth_type = host.data.get("auth_type")
+    if auth_type == "otp_seed":
+        encrypted_seed = host.data.get("otp_seed_encrypted")
+        kwargs["auth_password"] = await get_seed_otp(str(encrypted_seed))
+        return kwargs
+
+    if auth_type != "otp_manual":
+        return kwargs
+
+    dept_id_raw = host.data.get("dept_id")
+    device_group = host.data.get("device_group")
+    if not dept_id_raw or not device_group:
+        raise ValueError("缺少 OTP 所需的部门/分层信息，无法获取验证码")
+
+    from uuid import UUID
+
+    dept_id = UUID(str(dept_id_raw))
+    failed_id = host.data.get("device_id") or host.name
+    kwargs["auth_password"] = await get_manual_otp_or_raise(dept_id, str(device_group), str(failed_id))
+    return kwargs
+
+
+async def _run_send_command(
+    host: "Host",
+    kwargs: dict[str, Any],
+    command: str,
+    *,
+    timeout_ops: float | None = None,
+) -> Response:
+    start = time.monotonic()
+    stage = "init"
+    safe_command = (command or "").strip().splitlines()[0][:120]
+
+    def _sync() -> Response:
+        nonlocal stage
+        conn = Scrapli(**kwargs)
+        try:
+            stage = "open"
+            logger.info("Scrapli 打开连接", host=host.name, device=host.hostname, platform=kwargs.get("platform"))
+            conn.open()
+            logger.info(
+                "Scrapli 连接已打开",
+                host=host.name,
+                device=host.hostname,
+                platform=kwargs.get("platform"),
+                elapsed_ms=int((time.monotonic() - start) * 1000),
+            )
+
+            stage = "send_command"
+            logger.info(
+                "Scrapli 发送命令",
+                host=host.name,
+                device=host.hostname,
+                platform=kwargs.get("platform"),
+                command=safe_command,
+                timeout_ops=timeout_ops,
+            )
+            response = conn.send_command(command, timeout_ops=timeout_ops)
+            logger.info(
+                "Scrapli 命令返回",
+                host=host.name,
+                device=host.hostname,
+                platform=kwargs.get("platform"),
+                command=safe_command,
+                failed=response.failed,
+                elapsed_ms=int((time.monotonic() - start) * 1000),
+                result_len=len(response.result or ""),
+            )
+            return response
+        finally:
+            try:
+                stage = "close"
+                conn.close()
+                logger.info(
+                    "Scrapli 连接已关闭",
+                    host=host.name,
+                    device=host.hostname,
+                    platform=kwargs.get("platform"),
+                    stage=stage,
+                    elapsed_ms=int((time.monotonic() - start) * 1000),
+                )
+            except Exception:
+                pass
+
+    return await asyncio.to_thread(_sync)
+
+
+async def async_send_command(host: "Host", command: str, *, timeout_ops: float | None = None) -> dict[str, Any]:
     """
     异步执行单条命令。
 
@@ -90,19 +194,40 @@ async def async_send_command(host: "Host", command: str) -> dict[str, Any]:
         - failed: 是否失败
     """
     kwargs = _get_scrapli_kwargs(host)
+    kwargs = await _apply_otp_manual_password(host, kwargs)
     device_name = host.data.get("device_name", host.name)
 
     try:
-        async with AsyncScrapli(**kwargs) as conn:
-            response: Response = await conn.send_command(command)
-            return {
-                "success": not response.failed,
-                "result": response.result,
-                "elapsed_time": response.elapsed_time,
-                "failed": response.failed,
-            }
-    except TimeoutError:
-        logger.warning("命令执行超时", host=device_name, command=command)
+        response = await _run_send_command(host, kwargs, command, timeout_ops=timeout_ops)
+        return {
+            "success": not response.failed,
+            "result": response.result,
+            "elapsed_time": response.elapsed_time,
+            "failed": response.failed,
+        }
+    except ScrapliAuthenticationFailed as e:
+        if host.data.get("auth_type") == "otp_manual":
+            dept_id_raw = host.data.get("dept_id")
+            device_group = host.data.get("device_group")
+            if dept_id_raw and device_group:
+                from uuid import UUID
+
+                dept_id = UUID(str(dept_id_raw))
+                try:
+                    await invalidate_manual_otp(dept_id, str(device_group))
+                except Exception:
+                    pass
+
+                failed_id = host.data.get("device_id") or host.name
+                raise OTPRequiredException(
+                    dept_id=dept_id,
+                    device_group=str(device_group),
+                    failed_devices=[str(failed_id)],
+                    message="OTP 认证失败，可能已过期，请重新输入验证码",
+                ) from e
+        raise
+    except ScrapliTimeout as e:
+        logger.warning("命令执行超时", host=device_name, command=command, error=str(e))
         raise
     except Exception as e:
         logger.error("命令执行失败", host=device_name, command=command, error=str(e), exc_info=True)
@@ -124,30 +249,96 @@ async def async_send_commands(host: "Host", commands: list[str]) -> dict[str, An
         - failed_commands: 失败的命令列表
     """
     kwargs = _get_scrapli_kwargs(host)
+    kwargs = await _apply_otp_manual_password(host, kwargs)
     device_name = host.data.get("device_name", host.name)
 
-    try:
-        async with AsyncScrapli(**kwargs) as conn:
-            responses = await conn.send_commands(commands)
+    start = time.monotonic()
+    stage = "init"
+    safe_first = (commands[0] or "").strip().splitlines()[0][:120] if commands else ""
 
-            results = []
-            failed_commands = []
+    def _sync() -> dict[str, Any]:
+        nonlocal stage
+        conn = Scrapli(**kwargs)
+        try:
+            stage = "open"
+            logger.info("Scrapli 打开连接", host=device_name, device=host.hostname, platform=kwargs.get("platform"))
+            conn.open()
+            logger.info(
+                "Scrapli 连接已打开",
+                host=device_name,
+                device=host.hostname,
+                platform=kwargs.get("platform"),
+                elapsed_ms=int((time.monotonic() - start) * 1000),
+            )
+
+            stage = "send_commands"
+            logger.info(
+                "Scrapli 执行多条命令",
+                host=device_name,
+                device=host.hostname,
+                platform=kwargs.get("platform"),
+                commands_count=len(commands),
+                first_command=safe_first,
+            )
+            responses: MultiResponse = conn.send_commands(commands)
+            logger.info(
+                "Scrapli 多命令返回",
+                host=device_name,
+                device=host.hostname,
+                platform=kwargs.get("platform"),
+                failed=responses.failed,
+                elapsed_ms=int((time.monotonic() - start) * 1000),
+            )
+
+            results: list[dict[str, Any]] = []
+            failed_commands: list[str] = []
             for cmd, resp in zip(commands, responses, strict=False):
-                results.append(
-                    {
-                        "command": cmd,
-                        "result": resp.result,
-                        "failed": resp.failed,
-                    }
-                )
+                results.append({"command": cmd, "result": resp.result, "failed": resp.failed})
                 if resp.failed:
                     failed_commands.append(cmd)
 
-            return {
-                "success": len(failed_commands) == 0,
-                "results": results,
-                "failed_commands": failed_commands,
-            }
+            return {"success": len(failed_commands) == 0, "results": results, "failed_commands": failed_commands}
+        finally:
+            try:
+                stage = "close"
+                conn.close()
+                logger.info(
+                    "Scrapli 连接已关闭",
+                    host=device_name,
+                    device=host.hostname,
+                    platform=kwargs.get("platform"),
+                    stage=stage,
+                    elapsed_ms=int((time.monotonic() - start) * 1000),
+                )
+            except Exception:
+                pass
+
+    try:
+        return await asyncio.to_thread(_sync)
+    except ScrapliAuthenticationFailed as e:
+        if host.data.get("auth_type") == "otp_manual":
+            dept_id_raw = host.data.get("dept_id")
+            device_group = host.data.get("device_group")
+            if dept_id_raw and device_group:
+                from uuid import UUID
+
+                dept_id = UUID(str(dept_id_raw))
+                try:
+                    await invalidate_manual_otp(dept_id, str(device_group))
+                except Exception:
+                    pass
+
+                failed_id = host.data.get("device_id") or host.name
+                raise OTPRequiredException(
+                    dept_id=dept_id,
+                    device_group=str(device_group),
+                    failed_devices=[str(failed_id)],
+                    message="OTP 认证失败，可能已过期，请重新输入验证码",
+                ) from e
+        raise
+    except ScrapliTimeout as e:
+        logger.warning("批量命令执行超时", host=device_name, stage=stage, error=str(e))
+        raise
     except Exception as e:
         logger.error("批量命令执行失败", host=device_name, error=str(e), exc_info=True)
         raise
@@ -167,8 +358,8 @@ async def async_send_config(host: "Host", config: str | list[str]) -> dict[str, 
         - result: 配置下发输出
     """
     kwargs = _get_scrapli_kwargs(host)
+    kwargs = await _apply_otp_manual_password(host, kwargs)
     device_name = host.data.get("device_name", host.name)
-
     # 配置转为行列表
     if isinstance(config, str):
         config_lines = [line.strip() for line in config.splitlines() if line.strip()]
@@ -176,17 +367,25 @@ async def async_send_config(host: "Host", config: str | list[str]) -> dict[str, 
         config_lines = config
 
     try:
-        async with AsyncScrapli(**kwargs) as conn:
-            response = await conn.send_configs(config_lines)
 
-            # 检查是否有失败的配置行
-            failed_lines = [r for r in response if r.failed]
+        def _sync() -> dict[str, Any]:
+            conn = Scrapli(**kwargs)
+            try:
+                conn.open()
+                response: MultiResponse = conn.send_configs(config_lines)
+                failed_lines = [r for r in response if r.failed]
+                return {
+                    "success": len(failed_lines) == 0,
+                    "result": "\n".join(r.result for r in response),
+                    "failed_count": len(failed_lines),
+                }
+            finally:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
 
-            return {
-                "success": len(failed_lines) == 0,
-                "result": "\n".join(r.result for r in response),
-                "failed_count": len(failed_lines),
-            }
+        return await asyncio.to_thread(_sync)
     except Exception as e:
         logger.error("配置下发失败", host=device_name, error=str(e), exc_info=True)
         raise
@@ -205,14 +404,23 @@ async def async_get_prompt(host: "Host") -> dict[str, Any]:
         - prompt: 设备提示符
     """
     kwargs = _get_scrapli_kwargs(host)
+    kwargs = await _apply_otp_manual_password(host, kwargs)
 
     try:
-        async with AsyncScrapli(**kwargs) as conn:
-            prompt = await conn.get_prompt()
-            return {
-                "success": True,
-                "prompt": prompt,
-            }
+
+        def _sync() -> dict[str, Any]:
+            conn = Scrapli(**kwargs)
+            try:
+                conn.open()
+                prompt = conn.get_prompt()
+                return {"success": True, "prompt": prompt}
+            finally:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+
+        return await asyncio.to_thread(_sync)
     except Exception as e:
         logger.error("获取提示符失败", host=host.name, error=str(e), exc_info=True)
         raise
@@ -237,11 +445,7 @@ async def async_collect_config(host: "Host") -> dict[str, Any]:
 
     raw_platform = host.platform or "hp_comware"
 
-    # 如果 platform 是厂商名（如 h3c, huawei），转换为 Scrapli 平台名
-    try:
-        platform = get_platform_for_vendor(raw_platform)
-    except ValueError:
-        platform = raw_platform
+    platform = get_platform_for_vendor(raw_platform)
 
     # 使用统一的命令映射
     try:
@@ -249,12 +453,52 @@ async def async_collect_config(host: "Host") -> dict[str, Any]:
     except ValueError:
         command = "show running-config"
 
-    result = await async_send_command(host, command)
-    return {
-        "success": result["success"],
-        "config": result["result"],
-        "platform": platform,
-    }
+    timeout_ops = min(60, int(settings.ASYNC_SSH_TIMEOUT or 60))
+
+    kwargs = _get_scrapli_kwargs(host)
+    kwargs = await _apply_otp_manual_password(host, kwargs)
+
+    def _sync() -> dict[str, Any]:
+        conn = Scrapli(**kwargs)
+        try:
+            conn.open()
+            prompt = None
+            try:
+                prompt = conn.get_prompt()
+            except Exception:
+                pass
+            disable_paging(conn, platform)
+            output = send_command_with_paging(conn, command, timeout_ops=timeout_ops, prompt=prompt)
+            return {"success": True, "config": output, "platform": platform}
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+    try:
+        return await asyncio.to_thread(_sync)
+    except ScrapliAuthenticationFailed as e:
+        if host.data.get("auth_type") == "otp_manual":
+            dept_id_raw = host.data.get("dept_id")
+            device_group = host.data.get("device_group")
+            if dept_id_raw and device_group:
+                from uuid import UUID
+
+                dept_id = UUID(str(dept_id_raw))
+                try:
+                    await invalidate_manual_otp(dept_id, str(device_group))
+                except Exception:
+                    pass
+
+                failed_id = host.data.get("device_id") or host.name
+                raise OTPRequiredException(
+                    dept_id=dept_id,
+                    device_group=str(device_group),
+                    failed_devices=[str(failed_id)],
+                    message="OTP 认证失败，可能已过期，请重新输入验证码",
+                ) from e
+        raise
 
 
 async def async_deploy_from_host_data(host: "Host") -> dict[str, Any]:

@@ -473,9 +473,8 @@ def async_deploy_task(self, task_id: str) -> dict[str, Any]:
 
 async def _async_deploy_task_impl(self, task_id: str, *, celery_task_id: str | None) -> dict[str, Any]:
     """异步下发任务的核心实现。"""
-    from app.network.async_runner import run_async_tasks
-    from app.network.async_tasks import async_collect_config, async_deploy_from_host_data
-    from app.network.nornir_config import create_nornir_inventory_async
+    from app.network.nornir_config import init_nornir
+    from app.network.nornir_tasks import backup_config, deploy_from_host_data
 
     render_service = RenderService()
 
@@ -606,16 +605,11 @@ async def _async_deploy_task_impl(self, task_id: str, *, celery_task_id: str | N
             await db.commit()
             return {"status": "failed", "error": task.error_message}
 
-        # 创建异步 Inventory
-        inventory = create_nornir_inventory_async(hosts_data)
+        nr = init_nornir(hosts_data, num_workers=concurrency)
 
         # 变更前备份（异步）
-        _update_progress({"stage": "pre_change_backup", "total": len(inventory.hosts)})
-        backup_results = await run_async_tasks(
-            inventory.hosts,
-            async_collect_config,
-            num_workers=concurrency,
-        )
+        _update_progress({"stage": "pre_change_backup", "total": len(nr.inventory.hosts)})
+        backup_results = nr.run(task=backup_config)
 
         pre_change_backup_ids: dict[str, str] = {}
         for host_name, multi_result in backup_results.items():
@@ -633,12 +627,8 @@ async def _async_deploy_task_impl(self, task_id: str, *, celery_task_id: str | N
         await db.commit()
 
         # 异步下发
-        _update_progress({"stage": "deploying", "total": len(inventory.hosts)})
-        deploy_results = await run_async_tasks(
-            inventory.hosts,
-            async_deploy_from_host_data,
-            num_workers=concurrency,
-        )
+        _update_progress({"stage": "deploying", "total": len(nr.inventory.hosts)})
+        deploy_results = nr.run(task=deploy_from_host_data)
 
         # 聚合结果
         all_results: dict[str, Any] = {"results": {}}

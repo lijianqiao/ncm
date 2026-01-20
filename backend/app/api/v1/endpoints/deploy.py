@@ -10,10 +10,12 @@ from typing import Any, cast
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query
+from fastapi.responses import JSONResponse
 
 from app.api import deps
 from app.api.deps import CurrentUser, DeployServiceDep, require_permissions
 from app.core.enums import TaskStatus
+from app.core.otp_notice import build_otp_required_response
 from app.core.permissions import PermissionCode
 from app.schemas.common import (
     BatchDeleteRequest,
@@ -101,7 +103,7 @@ async def approve_task(
     dependencies=[Depends(require_permissions([PermissionCode.DEPLOY_EXECUTE.value]))],
     summary="执行下发任务（提交 Celery）",
 )
-async def execute_task(task_id: UUID, service: DeployServiceDep) -> ResponseBase[DeployTaskResponse]:
+async def execute_task(task_id: UUID, service: DeployServiceDep) -> ResponseBase[DeployTaskResponse] | JSONResponse:
     """执行已审批通过的下发任务。
 
     该接口会将执行逻辑委托给 Celery 异步队列，避免前端长连接阻塞。
@@ -117,7 +119,18 @@ async def execute_task(task_id: UUID, service: DeployServiceDep) -> ResponseBase
         ResponseBase[DeployTaskResponse]: 已绑定 Celery 任务 ID 的详情。
     """
     task = await service.execute_task(task_id)
-    return ResponseBase(data=DeployTaskResponse.model_validate(task))
+    task_response = DeployTaskResponse.model_validate(task)
+    if task_response.result and task_response.result.get("otp_required"):
+        return build_otp_required_response(
+            message=task_response.error_message or "需要重新输入 OTP 验证码",
+            details={
+                "otp_required": True,
+                "otp_required_groups": task_response.result.get("otp_required_groups"),
+                "expires_in": task_response.result.get("expires_in"),
+                "next_action": task_response.result.get("next_action"),
+            },
+        )
+    return ResponseBase(data=task_response)
 
 
 @router.post(
@@ -394,7 +407,7 @@ async def batch_hard_delete_deploy_tasks(
     dependencies=[Depends(require_permissions([PermissionCode.DEPLOY_VIEW.value]))],
     summary="下发任务详情",
 )
-async def get_deploy_task(task_id: UUID, service: DeployServiceDep) -> ResponseBase[DeployTaskResponse]:
+async def get_deploy_task(task_id: UUID, service: DeployServiceDep) -> ResponseBase[DeployTaskResponse] | JSONResponse:
     """获取下发任务的完整详细信息。
 
     Args:
@@ -407,4 +420,14 @@ async def get_deploy_task(task_id: UUID, service: DeployServiceDep) -> ResponseB
     task = await service.get_task(task_id)
     data = DeployTaskResponse.model_validate(task)
     data.device_results = await service.get_device_results(task)
+    if data.result and data.result.get("otp_required"):
+        return build_otp_required_response(
+            message=data.error_message or "需要重新输入 OTP 验证码",
+            details={
+                "otp_required": True,
+                "otp_required_groups": data.result.get("otp_required_groups"),
+                "expires_in": data.result.get("expires_in"),
+                "next_action": data.result.get("next_action"),
+            },
+        )
     return ResponseBase(data=data)

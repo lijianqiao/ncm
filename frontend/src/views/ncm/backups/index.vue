@@ -552,16 +552,18 @@ const submitManualBackup = async () => {
     tableRef.value?.reload()
   } catch (error: unknown) {
     // 检查是否需要 OTP 输入 (428 状态码)
-    const err = error as { response?: { status?: number; data?: { details?: OTPRequiredDetails } } }
-    if (err?.response?.status === 428 && err?.response?.data?.details) {
-      const details = err.response.data.details
-      otpRequiredInfo.value = {
-        dept_id: details.dept_id,
-        device_group: details.device_group,
-        failed_devices: details.failed_devices || [],
+    const err = error as { response?: { status?: number; data?: { details?: OTPRequiredDetails; data?: { otp_notice?: OTPRequiredDetails } } } }
+    if (err?.response?.status === 428 && (err?.response?.data?.details || err?.response?.data?.data?.otp_notice)) {
+      const details = err.response.data.data?.otp_notice || err.response.data.details
+      if (details) {
+        otpRequiredInfo.value = {
+          dept_id: details.dept_id,
+          device_group: details.device_group,
+          failed_devices: details.failed_devices || [],
+        }
+        pendingBackupDeviceId.value = backupModel.value.device_id
+        showOTPModal.value = true
       }
-      pendingBackupDeviceId.value = backupModel.value.device_id
-      showOTPModal.value = true
     }
   } finally {
     // 2. 无论成功还是失败（或者触发 OTP 流程），都应该恢复 loading 状态
@@ -573,9 +575,12 @@ const submitManualBackup = async () => {
 // ==================== OTP 输入处理 ====================
 
 interface OTPRequiredDetails {
+  type?: string
+  message?: string
   dept_id: string
   device_group: string
-  failed_devices: string[]
+  failed_devices?: string[]
+  pending_device_ids?: string[]
 }
 
 const showOTPModal = ref(false)
@@ -677,6 +682,13 @@ const {
       }
     }
 
+    // 检测任务是否返回了 OTP 要求（通过 status 字段或特定的 result 结构）
+    // 注意：如果是 428 响应，通常会被 request 拦截器捕获；
+    // 但如果后端是在 200 OK 中返回 status: 'running' 且包含 otp_notice，则在此处理。
+    // 根据最新需求，后端也可能通过 428 响应返回 OTP 要求，
+    // 但 useTaskPolling 内部通常只处理 200 响应。
+    // 如果轮询接口本身返回 428，我们需要在 onError 中捕获。
+
     // 任务完成后，1 秒后自动关闭弹窗并刷新列表
     if (status.status === 'success') {
       $alert.success(
@@ -686,11 +698,55 @@ const {
         showBatchBackupModal.value = false
         tableRef.value?.reload()
       }, 1000)
+    } else if (status.status === 'running') {
+      // 检查运行中是否返回了 OTP 要求（兼容旧格式和新格式）
+      // 假设新格式下，getBackupTaskStatus 正常返回 200，但 data 中包含 otp_notice
+      const result = status.result as unknown as Record<string, unknown> | undefined
+      // 兼容旧的 data.result.otp_required 格式
+      if (result && result.otp_required) {
+        stopPollingTaskStatus()
+        $alert.warning('部分设备需要 OTP 验证码，请输入以继续')
+        otpRequiredInfo.value = {
+          dept_id: (result.otp_dept_id as string) || '',
+          device_group: (result.otp_device_group as string) || '',
+          failed_devices: (result.failed_devices as { name: string; error: string }[])?.map(d => d.name) || [],
+        }
+        if (Array.isArray(result.pending_device_ids)) {
+          batchBackupModel.value.device_ids = result.pending_device_ids as string[]
+        }
+        pendingBatchBackup.value = true
+        showOTPModal.value = true
+      }
     } else if (status.status === 'failed') {
       $alert.error(`备份失败: ${status.error || '未知错误'}`)
       setTimeout(() => {
         showBatchBackupModal.value = false
       }, 2000)
+    }
+  },
+  onError: (error) => {
+    // 捕获 428 OTP_REQUIRED 错误
+    const err = error as { response?: { status?: number; data?: { code?: number; data?: { otp_notice?: OTPRequiredDetails } } } }
+    if (err?.response?.status === 428 || err?.response?.data?.code === 428) {
+      const otpNotice = err.response?.data?.data?.otp_notice
+      if (otpNotice) {
+        stopPollingTaskStatus()
+        $alert.warning(otpNotice.message || '需要输入 OTP 验证码')
+        otpRequiredInfo.value = {
+          dept_id: otpNotice.dept_id,
+          device_group: otpNotice.device_group,
+          failed_devices: otpNotice.failed_devices || [],
+          pending_device_ids: otpNotice.pending_device_ids,
+        }
+
+        // 更新待重试设备 ID
+        if (otpNotice.pending_device_ids && otpNotice.pending_device_ids.length > 0) {
+          batchBackupModel.value.device_ids = otpNotice.pending_device_ids
+        }
+
+        pendingBatchBackup.value = true
+        showOTPModal.value = true
+      }
     }
   },
 })
@@ -701,6 +757,8 @@ const handleBatchBackup = async () => {
   resetBatchTask()
   try {
     const res = await getDeviceOptions({ status: 'active' })
+    // 保存设备信息以便后续检查认证类型
+    deviceMap.value = Object.fromEntries(res.data.items.map((d: Device) => [d.id, d]))
     deviceOptions.value = res.data.items.map((d: Device) => ({
       label: `${d.name} (${d.ip_address})`,
       value: d.id,
@@ -717,6 +775,42 @@ const submitBatchBackup = async () => {
     $alert.warning('请选择设备')
     return
   }
+
+  // 1. 预检查：是否有设备需要 OTP 手动认证
+  const otpManualDevices: Device[] = []
+  for (const id of batchBackupModel.value.device_ids) {
+    const device = deviceMap.value[id]
+    if (device && device.auth_type === 'otp_manual') {
+      otpManualDevices.push(device)
+    }
+  }
+
+  // 如果发现有需要 OTP 手动认证的设备
+  if (otpManualDevices.length > 0) {
+    // 假设同一批次通常属于同一部门和分组，取第一个设备的属性
+    // 如果不同，这里可能需要更复杂的逻辑（如按组分批提交），当前简化处理
+    const firstDevice = otpManualDevices[0]
+
+    if (firstDevice && (!firstDevice.dept_id || !firstDevice.device_group)) {
+      $alert.error(`设备 ${firstDevice.name} 缺少部门或分组信息，无法进行 OTP 认证`)
+      return
+    }
+
+    if (firstDevice) {
+      otpRequiredInfo.value = {
+        dept_id: firstDevice.dept_id || '',
+        device_group: firstDevice.device_group || '',
+        failed_devices: [],
+      }
+
+      // 设置标记，表示这是一个批量备份的 OTP 流程
+      pendingBatchBackup.value = true
+      showOTPModal.value = true
+      return
+    }
+  }
+
+  // 2. 无需预检或预检通过，直接提交
   otpLoading.value = true
   try {
     await submitBatchBackupInternal()
