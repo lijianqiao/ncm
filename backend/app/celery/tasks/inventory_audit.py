@@ -117,7 +117,13 @@ async def _run_inventory_audit_async(self, audit_id: str) -> dict[str, Any]:
         }
 
         audit.result = result
-        audit.status = InventoryAuditStatus.SUCCESS.value if not scan_errors else InventoryAuditStatus.FAILED.value
+        # 根据结果判断状态：无错误=SUCCESS，部分成功=PARTIAL，全部失败=FAILED
+        if not scan_errors:
+            audit.status = InventoryAuditStatus.SUCCESS.value
+        elif processed_hosts > 0:
+            audit.status = InventoryAuditStatus.PARTIAL.value
+        else:
+            audit.status = InventoryAuditStatus.FAILED.value
         audit.finished_at = datetime.now(UTC)
         audit.error_message = "\n".join(scan_errors) if scan_errors else None
         await db.flush()

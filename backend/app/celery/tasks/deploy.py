@@ -1,4 +1,4 @@
-"""
+﻿"""
 @Author: li
 @Email: lijianqiao2906@live.com
 @FileName: deploy.py
@@ -34,6 +34,57 @@ from app.services.render_service import RenderService
 
 # 支持回滚的厂商列表（扩展支持 Huawei/Cisco）
 SUPPORTED_ROLLBACK_VENDORS: set[str] = {"h3c", "huawei", "cisco"}
+
+
+async def _update_task_status_with_retry(
+    db,
+    task: Task,
+    task_id: str,
+    *,
+    set_running: bool = True,
+    set_started_at: bool = True,
+    max_attempts: int = 2,
+) -> None:
+    """
+    带并发冲突重试的任务状态更新。
+
+    处理 Task 表启用 version_id 乐观锁时的 StaleDataError。
+
+    Args:
+        db: 数据库 Session
+        task: 任务对象
+        task_id: 任务 ID（仅用于日志）
+        set_running: 是否设置状态为 RUNNING
+        set_started_at: 是否设置 started_at
+        max_attempts: 最大重试次数
+    """
+    for attempt in range(max_attempts):
+        changed = False
+        if set_running and task.status != TaskStatus.RUNNING.value:
+            task.status = TaskStatus.RUNNING.value
+            changed = True
+        if set_started_at and task.started_at is None:
+            task.started_at = datetime.now(UTC)
+            changed = True
+
+        if not changed:
+            return
+
+        try:
+            await db.flush()
+            await db.commit()
+            return
+        except StaleDataError:
+            logger.warning(
+                "任务状态更新发生并发冲突，准备重试",
+                deploy_task_id=task_id,
+                attempt=attempt + 1,
+            )
+            await db.rollback()
+            # 重新获取任务对象
+            await db.refresh(task)
+            if attempt >= max_attempts - 1:
+                raise
 
 
 async def _get_device_credential(db, device: Device, failed_devices: list[str] | None = None):
@@ -337,9 +388,8 @@ async def _rollback_task_async(self, task_id: str) -> dict[str, Any]:
             raise ValueError("任务不存在")
         if task.task_type != TaskType.DEPLOY.value:
             raise ValueError("非下发任务")
-        task.status = TaskStatus.RUNNING.value
-        await db.flush()
-        await db.commit()
+        # 使用共享函数处理并发冲突
+        await _update_task_status_with_retry(db, task, task_id)
 
         # 仅对 H3C/hp_comware 做 best-effort
         pre_change_backup_ids = {}
@@ -494,13 +544,8 @@ async def _async_deploy_task_impl(self, task_id: str, *, celery_task_id: str | N
         if task.task_type != TaskType.DEPLOY.value:
             raise ValueError("非下发任务")
 
-        # 更新任务状态为 RUNNING
-        if task.status != TaskStatus.RUNNING.value:
-            task.status = TaskStatus.RUNNING.value
-        if task.started_at is None:
-            task.started_at = datetime.now(UTC)
-        await db.flush()
-        await db.commit()
+        # 使用共享函数处理并发冲突
+        await _update_task_status_with_retry(db, task, task_id)
 
         template = await db.get(Template, task.template_id) if task.template_id else None
         if not template:

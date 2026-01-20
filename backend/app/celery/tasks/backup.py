@@ -816,55 +816,88 @@ async def _perform_incremental_check(task, celery_task_id: str | None) -> dict[s
                         "device_name": name,
                         "old_md5": old_md5,
                         "new_md5": new_md5,
+                        "config": config,
+                        "old_content": old_content,
+                        "old_backup_id": old_backup_id,
                     }
                 )
 
-                # 保存新备份
-                async with AsyncSessionLocal() as db:
-                    content_size = len(config.encode("utf-8"))
-                    backup_data = BackupCreate(
-                        device_id=UUID(device_id),
-                        backup_type=BackupType.INCREMENTAL,
-                        content=config if content_size < settings.BACKUP_CONTENT_SIZE_THRESHOLD_BYTES else None,
-                        content_size=content_size,
-                        md5_hash=new_md5,
-                        status=BackupStatus.SUCCESS,
-                    )
-                    backup = Backup(**backup_data.model_dump())
-                    db.add(backup)
-                    await db.commit()
-                    backup_triggered += 1
+    # 批量保存变更设备的备份（使用单个 Session，减少数据库连接开销）
+    if changed_devices:
+        async with AsyncSessionLocal() as db:
+            for device_info in changed_devices:
+                device_id = device_info["device_id"]
+                name = device_info["device_name"]
+                config = device_info["config"]
+                old_content = device_info["old_content"]
+                old_backup_id = device_info["old_backup_id"]
+                new_md5 = device_info["new_md5"]
+                old_md5 = device_info["old_md5"]
 
-                    # 触发配置变更告警（写入 DB + 可选 Webhook）
+                content_size = len(config.encode("utf-8"))
+
+                # 处理大配置：存储到 MinIO
+                content = None
+                content_path = None
+                if content_size < settings.BACKUP_CONTENT_SIZE_THRESHOLD_BYTES:
+                    content = config
+                else:
                     try:
-                        diff_text = ""
-                        if old_content:
-                            diff_text = _compute_unified_diff(old_content, config, context_lines=3)
-
-                        alert_service = AlertService(db, alert_crud)
-                        notification_service = NotificationService()
-                        alert = await alert_service.create_alert(
-                            AlertCreate(
-                                alert_type=AlertType.CONFIG_CHANGE,
-                                severity=AlertSeverity.MEDIUM,
-                                title=f"设备配置变更: {name}",
-                                message=f"检测到设备配置变更: {name}",
-                                details={
-                                    "device_id": str(device_id),
-                                    "device_name": name,
-                                    "old_backup_id": str(old_backup_id) if old_backup_id else None,
-                                    "new_backup_id": str(backup.id),
-                                    "old_md5": old_md5,
-                                    "new_md5": new_md5,
-                                    "diff": diff_text[:8000] if diff_text else "",
-                                },
-                                source="diff",
-                                related_device_id=UUID(device_id),
-                            )
-                        )
-                        await notification_service.send_webhook(alert)
+                        object_name = f"backups/{device_id}/{datetime.now(UTC).strftime('%Y%m%d_%H%M%S')}.txt"
+                        await put_text(object_name, config)
+                        content_path = object_name
                     except Exception as e:
-                        logger.warning("配置变更告警触发失败", error=str(e))
+                        # MinIO 不可用时降级存 DB
+                        content = config
+                        logger.warning(f"大配置存 MinIO 失败，降级存 DB: {e}")
+
+                backup_data = BackupCreate(
+                    device_id=UUID(device_id),
+                    backup_type=BackupType.INCREMENTAL,
+                    content=content,
+                    content_path=content_path,
+                    content_size=content_size,
+                    md5_hash=new_md5,
+                    status=BackupStatus.SUCCESS,
+                )
+                backup = Backup(**backup_data.model_dump())
+                db.add(backup)
+                await db.flush()
+                await db.refresh(backup)
+                backup_triggered += 1
+
+                # 触发配置变更告警（写入 DB + 可选 Webhook）
+                try:
+                    diff_text = ""
+                    if old_content:
+                        diff_text = _compute_unified_diff(old_content, config, context_lines=3)
+
+                    alert_service = AlertService(db, alert_crud)
+                    notification_service = NotificationService()
+                    alert = await alert_service.create_alert(
+                        AlertCreate(
+                            alert_type=AlertType.CONFIG_CHANGE,
+                            severity=AlertSeverity.MEDIUM,
+                            title=f"设备配置变更: {name}",
+                            message=f"检测到设备配置变更: {name}",
+                            details={
+                                "device_id": str(device_id),
+                                "device_name": name,
+                                "old_backup_id": str(old_backup_id) if old_backup_id else None,
+                                "new_backup_id": str(backup.id),
+                                "old_md5": old_md5,
+                                "new_md5": new_md5,
+                                "diff": diff_text[:8000] if diff_text else "",
+                            },
+                            source="diff",
+                            related_device_id=UUID(device_id),
+                        )
+                    )
+                    await notification_service.send_webhook(alert)
+                except Exception as e:
+                    logger.warning("配置变更告警触发失败", error=str(e))
+
+            await db.commit()
 
     return {
         "total_checked": total_checked,

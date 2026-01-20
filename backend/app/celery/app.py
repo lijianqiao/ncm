@@ -100,6 +100,7 @@ def create_celery_app() -> Celery:
         task_routes={
             "app.celery.tasks.backup.*": {"queue": "backup"},
             "app.celery.tasks.deploy.*": {"queue": "deploy"},
+            # collect 任务（ARP/MAC 采集）与 discovery 任务性质相似，复用 discovery 队列
             "app.celery.tasks.collect.*": {"queue": "discovery"},
             "app.celery.tasks.inventory_audit.*": {"queue": "discovery"},
             "app.celery.tasks.discovery.*": {"queue": "discovery"},

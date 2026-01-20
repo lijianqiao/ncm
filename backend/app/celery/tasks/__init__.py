@@ -1,4 +1,4 @@
-"""
+﻿"""
 @Author: li
 @Email: lijianqiao2906@live.com
 @FileName: __init__.py
@@ -6,14 +6,13 @@
 @Docs: Celery 任务集合 (Celery Tasks Collection).
 """
 
-# 导入所有任务模块以确保任务被注�?
+# 导入所有任务模块以确保任务被注册
 from app.celery.tasks import (
     alerts,
     backup,
     collect,
     deploy,
     discovery,
-    example,
     inventory_audit,
     topology,
 )
@@ -24,7 +23,6 @@ __all__ = [
     "collect",
     "deploy",
     "discovery",
-    "example",
     "inventory_audit",
     "topology",
 ]

@@ -87,7 +87,6 @@ class SnmpPrivProtocol(str, Enum):
     AES = "aes"
 
 
-
 class DeviceStatus(str, Enum):
     """设备生命周期状态。"""
 
@@ -164,6 +163,7 @@ class InventoryAuditStatus(str, Enum):
     PENDING = "pending"
     RUNNING = "running"
     SUCCESS = "success"
+    PARTIAL = "partial"  # 部分成功
     FAILED = "failed"
 
 
