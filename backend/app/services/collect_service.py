@@ -16,6 +16,7 @@ from typing import Any
 from uuid import UUID
 
 from scrapli import Scrapli
+from scrapli.exceptions import ScrapliAuthenticationFailed
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import cache as cache_module
@@ -213,6 +214,7 @@ class CollectService:
         mac_count = 0
 
         try:
+
             def _sync_collect() -> tuple[list[dict[str, Any]] | None, list[dict[str, Any]] | None]:
                 with Scrapli(**device_config) as conn:
                     arp_entries_out = None
@@ -246,9 +248,57 @@ class CollectService:
 
             await self._update_last_collect_time(device_id)
 
+        except ScrapliAuthenticationFailed as e:
+            # 单独处理认证失败，尝试触发 OTP 流程
+            from app.network.otp_utils import handle_otp_auth_failure
+
+            duration_ms = int((time.time() - start_time) * 1000)
+
+            logger.warning(f"捕获 ScrapliAuthenticationFailed: {e}")
+
+            host_data = {
+                "auth_type": device.auth_type,
+                "dept_id": str(device.dept_id) if device.dept_id else None,
+                "device_group": device.device_group,
+                "device_id": str(device.id),
+                "name": device.name,
+            }
+            await handle_otp_auth_failure(host_data, e)
+
+            return DeviceCollectResult(
+                device_id=device_id,
+                device_name=device.name,
+                success=False,
+                error_message=str(e),
+                duration_ms=duration_ms,
+            )
+
         except Exception as e:
             duration_ms = int((time.time() - start_time) * 1000)
-            logger.error(f"采集失败: device={device.name}, error={str(e)}")
+            logger.error(f"采集失败: device={device.name}, error={str(e)}, type={type(e)}")
+
+            # Fallback: 检查字符串是否包含认证失败信息
+            error_str = str(e).lower()
+            if "authentication" in error_str and (
+                "failed" in error_str or "refused" in error_str or "method" in error_str
+            ):
+                try:
+                    from app.network.otp_utils import handle_otp_auth_failure
+
+                    logger.warning(f"通过错误信息检测到认证失败 (Fallback): {e}")
+                    host_data = {
+                        "auth_type": device.auth_type,
+                        "dept_id": str(device.dept_id) if device.dept_id else None,
+                        "device_group": device.device_group,
+                        "device_id": str(device.id),
+                        "name": device.name,
+                    }
+                    await handle_otp_auth_failure(host_data, e)
+                except OTPRequiredException:
+                    raise
+                except Exception as fallback_e:
+                    logger.warning(f"Fallback OTP handling failed: {fallback_e}")
+
             return DeviceCollectResult(
                 device_id=device_id,
                 device_name=device.name,

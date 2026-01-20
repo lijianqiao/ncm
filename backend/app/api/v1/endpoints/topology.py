@@ -262,7 +262,7 @@ async def collect_single_device_topology(
     response_model=ResponseBase[TopologyTaskStatus],
     dependencies=[Depends(require_permissions([PermissionCode.TOPOLOGY_VIEW.value]))],
 )
-async def get_topology_task_status(task_id: str) -> ResponseBase[TopologyTaskStatus]:
+async def get_topology_task_status(task_id: str) -> ResponseBase[TopologyTaskStatus] | JSONResponse:
     """查询拓扑采集后台任务的执行实时状态。
 
     Args:
@@ -284,6 +284,13 @@ async def get_topology_task_status(task_id: str) -> ResponseBase[TopologyTaskSta
             status.result = TopologyCollectResult.model_validate(task_result)
         else:
             status.error = str(result.result)
+            from app.core.otp_notice import build_otp_required_response, is_otp_error_text
+
+            if is_otp_error_text(status.error):
+                return build_otp_required_response(
+                    message=status.error,
+                    details={"otp_required": True},
+                )
 
     return ResponseBase(data=status)
 

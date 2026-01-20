@@ -272,7 +272,7 @@ async def execute_command_on_device(
             return {"success": True, "output": output, "error": None}
         except ScrapliAuthenticationFailed as e:
             logger.warning("设备认证失败", host=host, platform=platform, error=str(e))
-            return {"success": False, "output": "", "error": f"认证失败: {e}"}
+            raise
         except ScrapliTimeout as e:
             logger.warning("设备执行超时", host=host, platform=platform, stage=stage, timeout=timeout_ops, error=str(e))
             return {"success": False, "output": "", "error": f"命令执行超时: {e}"}
@@ -445,7 +445,7 @@ async def execute_commands_on_device(
             return {"success": True, "output": response.result, "error": None}
         except ScrapliAuthenticationFailed as e:
             logger.warning("设备认证失败", host=host, platform=platform, error=str(e))
-            return {"success": False, "output": "", "error": f"认证失败: {e}"}
+            raise
         except ScrapliTimeout as e:
             logger.warning("设备执行超时", host=host, platform=platform, stage=stage, timeout=timeout, error=str(e))
             return {"success": False, "output": "", "error": f"命令执行超时: {e}"}

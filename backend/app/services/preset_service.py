@@ -10,14 +10,17 @@ from typing import Any
 from uuid import UUID
 
 from jinja2 import Template as Jinja2Template
+from scrapli.exceptions import ScrapliAuthenticationFailed
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.command_policy import normalize_rendered_config, validate_commands
+from app.core.enums import AuthType
 from app.core.exceptions import BadRequestException, NotFoundException, OTPRequiredException
 from app.core.logger import logger
 from app.crud.crud_credential import CRUDCredential
 from app.crud.crud_device import CRUDDevice
 from app.network.connection_test import execute_commands_on_device
+from app.network.otp_utils import handle_otp_auth_failure_sync
 from app.network.platform_config import get_ntc_platform, get_platform_for_vendor
 from app.network.preset_templates import PRESET_CATEGORY_CONFIG, get_preset, list_presets
 from app.network.textfsm_parser import parse_command_output
@@ -137,6 +140,30 @@ class PresetService(DeviceCredentialMixin):
                 return PresetExecuteResult(success=False, error_message=result.get("error") or "命令执行失败")
 
             raw_output = str(result.get("output") or "")
+
+        except ScrapliAuthenticationFailed as e:
+            # 认证失败：调用 OTP 处理逻辑
+            host_data = {
+                "auth_type": "otp_manual"
+                if device.auth_type and AuthType(device.auth_type) == AuthType.OTP_MANUAL
+                else "static",
+                "dept_id": str(device.dept_id) if device.dept_id else None,
+                "device_group": device.device_group,
+                "device_id": str(device.id),
+            }
+            try:
+                handle_otp_auth_failure_sync(host_data, e)
+            except OTPRequiredException as otp_e:
+                return PresetExecuteResult(
+                    success=False,
+                    error_message=otp_e.message,
+                    otp_required=True,
+                    otp_required_groups=[{"dept_id": str(otp_e.dept_id), "device_group": str(otp_e.device_group)}],
+                    expires_in=None,
+                    next_action="cache_otp_and_retry_execute_preset",
+                )
+            raise
+
         except Exception as e:
             logger.error("预设命令执行失败", preset=preset_id, device=str(device_id), error=str(e))
             return PresetExecuteResult(

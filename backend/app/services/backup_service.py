@@ -9,6 +9,7 @@
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
+from scrapli.exceptions import ScrapliAuthenticationFailed
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -24,6 +25,7 @@ from app.crud.crud_credential import CRUDCredential
 from app.crud.crud_device import CRUDDevice
 from app.models.backup import Backup
 from app.models.device import Device
+from app.network.otp_utils import handle_otp_auth_failure_sync
 from app.network.platform_config import get_platform_for_vendor
 from app.schemas.backup import (
     BackupBatchDeleteResult,
@@ -403,6 +405,18 @@ class BackupService(DeviceCredentialMixin):
                 config_content=result,
                 status=BackupStatus.SUCCESS,
             )
+
+        except ScrapliAuthenticationFailed as e:
+            # 认证失败：调用 OTP 处理逻辑（清除缓存并抛出 OTPRequiredException）
+            # 注意：这将中断当前请求并返回 428
+            host_data = {
+                "auth_type": "otp_manual" if AuthType(device.auth_type) == AuthType.OTP_MANUAL else "static",
+                "dept_id": str(device.dept_id) if device.dept_id else None,
+                "device_group": device.device_group,
+                "device_id": str(device.id),
+            }
+            handle_otp_auth_failure_sync(host_data, e)
+            raise  # handle_otp_auth_failure_sync 会 raise，这里仅仅是为了通过静态检查
 
         except Exception as e:
             logger.error(f"设备 {device.name} 备份失败: {e}")

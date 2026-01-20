@@ -9,7 +9,7 @@
 from typing import Annotated, Any
 
 from celery.result import AsyncResult
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 
 from app.api.deps import get_current_active_superuser
@@ -95,73 +95,6 @@ async def revoke_task(task_id: str, _: SuperuserDep) -> ResponseBase[RevokeRespo
     """
     celery_app.control.revoke(task_id, terminate=True)
     return ResponseBase(data=RevokeResponse(message=f"任务 {task_id} 已被撤销"))
-
-
-# ==================== 测试任务 ====================
-
-
-@router.post("/test/ping", response_model=ResponseBase[TaskResponse])
-async def trigger_ping(_: SuperuserDep) -> ResponseBase[TaskResponse]:
-    """触发 Ping 测试异步任务。
-
-    用于回归测试或验证 Celery 分片和 Worker 是否正常运行。
-    仅限超级管理员访问。
-
-    Args:
-        _ (User): 超级管理员权限验证。
-
-    Returns:
-        TaskResponse: 返回生成的任务 ID，状态为 PENDING。
-    """
-    from app.celery.tasks.example import ping
-
-    result = ping.delay()  # type: ignore[attr-defined]
-    return ResponseBase(data=TaskResponse(task_id=result.id, status="PENDING"))
-
-
-@router.post("/test/add", response_model=ResponseBase[TaskResponse])
-async def trigger_add(_: SuperuserDep, x: int = 1, y: int = 2) -> ResponseBase[TaskResponse]:
-    """触发一个简单的加法异步测试任务。
-
-    仅限超级管理员访问。
-
-    Args:
-        _ (User): 超级管理员权限验证。
-        x (int): 第一个操作数。
-        y (int): 第二个操作数。
-
-    Returns:
-        TaskResponse: 生成的任务 ID。
-    """
-    from app.celery.tasks.example import add
-
-    result = add.delay(x, y)  # type: ignore[attr-defined]
-    return ResponseBase(data=TaskResponse(task_id=result.id, status="PENDING"))
-
-
-@router.post("/test/long-running", response_model=ResponseBase[TaskResponse])
-async def trigger_long_running(_: SuperuserDep, duration: int = 10) -> ResponseBase[TaskResponse]:
-    """触发一个耗时模拟任务，用于测试进度反馈和超时处理。
-
-    仅限超级管理员访问。设置较长的 duration 可以测试撤销任务接口。
-
-    Args:
-        _ (User): 超级管理员权限验证。
-        duration (int): 模拟运行时长（秒），默认 10s，由于是测试任务，限额 300s。
-
-    Returns:
-        TaskResponse: 生成的任务 ID。
-
-    Raises:
-        HTTPException: 当 duration 超过 300s 时。
-    """
-    if duration > 300:
-        raise HTTPException(status_code=400, detail="测试任务持续时间不能超过 300 秒")
-
-    from app.celery.tasks.example import long_running
-
-    result = long_running.delay(duration)  # type: ignore[attr-defined]
-    return ResponseBase(data=TaskResponse(task_id=result.id, status="PENDING"))
 
 
 # ==================== Worker 状态 ====================

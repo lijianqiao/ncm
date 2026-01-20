@@ -115,6 +115,22 @@ class TopologyService:
             nornir_results = nr.run(task=get_lldp_neighbors)
             aggregated = aggregate_results(nornir_results)
 
+            if aggregated.get("otp_required"):
+                from app.core.exceptions import OTPRequiredException
+
+                dept_id_str = aggregated.get("otp_dept_id")
+                device_group = aggregated.get("otp_device_group")
+
+                if dept_id_str and device_group:
+                    raise OTPRequiredException(
+                        dept_id=UUID(str(dept_id_str)),
+                        device_group=str(device_group),
+                        failed_devices=aggregated.get("otp_failed_device_ids"),
+                        message="OTP 认证失败",
+                    )
+                else:
+                    logger.warning("Nornir 结果显示 OTP 失败但缺少部门信息", aggregated=aggregated)
+
             # 处理采集结果
             total_links = 0
             for host_ip, host_result in aggregated.get("results", {}).items():
@@ -152,6 +168,12 @@ class TopologyService:
             await self._invalidate_cache()
 
         except Exception as e:
+            # 如果是 OTP 异常，直接抛出，让任务失败并被 API 捕获
+            from app.core.exceptions import OTPRequiredException
+
+            if isinstance(e, OTPRequiredException):
+                raise
+
             logger.error("LLDP 采集失败", error=str(e))
             result.completed_at = datetime.now()
 

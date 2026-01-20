@@ -113,6 +113,15 @@ def execute_command(task: Task, command: str, parse: bool = False) -> Result:
     Returns:
         Result: 包含命令输出的结果（原始文本或解析后的结构化数据）
     """
+    _apply_dynamic_auth(task)
+
+    # 显式触发连接以捕获认证错误
+    try:
+        task.host.get_connection("scrapli", task.nornir.config)
+    except ScrapliAuthenticationFailed as e:
+        handle_otp_auth_failure_sync(dict(task.host.data), e)
+        raise
+
     result = task.run(task=send_command, command=command)
     raw_output = result.result
 
@@ -144,8 +153,17 @@ def execute_commands(task: Task, commands: list[str]) -> Result:
         commands: 命令列表
 
     Returns:
-        Result: 包含所有命令输出的结果
+        Result: 包含命令输出的结果
     """
+    _apply_dynamic_auth(task)
+
+    # 显式触发连接以捕获认证错误
+    try:
+        task.host.get_connection("scrapli", task.nornir.config)
+    except ScrapliAuthenticationFailed as e:
+        handle_otp_auth_failure_sync(dict(task.host.data), e)
+        raise
+
     result = task.run(task=send_commands, commands=commands)
 
     return Result(
@@ -163,6 +181,13 @@ def deploy_from_host_data(task: Task) -> Result:
         return Result(host=task.host, result={"status": "skipped", "message": "no deploy configs"}, changed=False)
 
     try:
+        # 显式触发连接以捕获认证错误
+        try:
+            task.host.get_connection("scrapli", task.nornir.config)
+        except ScrapliAuthenticationFailed as e:
+            handle_otp_auth_failure_sync(dict(task.host.data), e)
+            raise
+
         result = task.run(task=send_configs, configs=configs)
         return Result(host=task.host, result=result.result, changed=True)
     except NornirSubTaskError as e:

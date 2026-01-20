@@ -850,6 +850,14 @@ const closeBatchBackupModal = () => {
   batchBackupModel.value = { device_ids: [], backup_type: 'scheduled' }
   resetBatchTask()
 }
+
+const selectAllDevices = () => {
+  batchBackupModel.value.device_ids = deviceOptions.value.map((d) => d.value)
+}
+
+const clearAllDevices = () => {
+  batchBackupModel.value.device_ids = []
+}
 </script>
 
 <template>
@@ -954,7 +962,13 @@ const closeBatchBackupModal = () => {
       <template v-else-if="!batchTaskStatus">
         <n-space vertical style="width: 100%">
           <div>
-            <label style="display: block; margin-bottom: 8px">选择设备:</label>
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px">
+              <label>选择设备:</label>
+              <n-space size="small">
+                <n-button size="tiny" type="primary" secondary @click="selectAllDevices">全选</n-button>
+                <n-button size="tiny" secondary @click="clearAllDevices">清空</n-button>
+              </n-space>
+            </div>
             <n-select v-model:value="batchBackupModel.device_ids" :options="deviceOptions" placeholder="请选择要备份的设备"
               filterable multiple max-tag-count="responsive" />
           </div>

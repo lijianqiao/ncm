@@ -664,12 +664,26 @@ const handleRollback = (row: DeployTask) => {
     positiveText: '确认回滚',
     negativeText: '取消',
     onPositiveClick: async () => {
-      try {
+      const doRollback = async () => {
         await rollbackDeployTask(row.id)
         $alert.success('回滚任务已提交')
         tableRef.value?.reload()
-      } catch {
-        // Error handled
+      }
+
+      try {
+        await doRollback()
+      } catch (error) {
+        otpFlow.tryHandleOtpRequired(error, async (otpCode) => {
+          const d = otpFlow.details.value
+          if (d) {
+            await cacheOTP({
+              dept_id: d.dept_id,
+              device_group: d.device_group as DeviceGroupType,
+              otp_code: otpCode,
+            })
+            await doRollback()
+          }
+        })
       }
     },
   })
