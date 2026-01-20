@@ -18,9 +18,8 @@ from scrapli.exceptions import ScrapliAuthenticationFailed, ScrapliTimeout
 from scrapli.response import MultiResponse, Response
 
 from app.core.config import settings
-from app.core.exceptions import OTPRequiredException
 from app.core.logger import logger
-from app.network.otp_utils import get_manual_otp_or_raise, get_seed_otp, invalidate_manual_otp
+from app.network.otp_utils import get_manual_otp_or_raise, get_seed_otp, handle_otp_auth_failure
 from app.network.platform_config import get_scrapli_options
 from app.network.scrapli_utils import disable_paging, send_command_with_paging
 
@@ -178,7 +177,7 @@ async def _run_send_command(
     return await asyncio.to_thread(_sync)
 
 
-async def async_send_command(host: "Host", command: str, *, timeout_ops: float | None = None) -> dict[str, Any]:
+async def async_send_command(host: "Host", command: str, *, timeout_ops: float | None = None) -> dict[str, Any] | None:
     """
     异步执行单条命令。
 
@@ -206,26 +205,9 @@ async def async_send_command(host: "Host", command: str, *, timeout_ops: float |
             "failed": response.failed,
         }
     except ScrapliAuthenticationFailed as e:
-        if host.data.get("auth_type") == "otp_manual":
-            dept_id_raw = host.data.get("dept_id")
-            device_group = host.data.get("device_group")
-            if dept_id_raw and device_group:
-                from uuid import UUID
-
-                dept_id = UUID(str(dept_id_raw))
-                try:
-                    await invalidate_manual_otp(dept_id, str(device_group))
-                except Exception:
-                    pass
-
-                failed_id = host.data.get("device_id") or host.name
-                raise OTPRequiredException(
-                    dept_id=dept_id,
-                    device_group=str(device_group),
-                    failed_devices=[str(failed_id)],
-                    message="OTP 认证失败，可能已过期，请重新输入验证码",
-                ) from e
-        raise
+        # OTP 认证失败时立即抛出 428，让前端重新输入
+        await handle_otp_auth_failure(dict(host.data), e)
+        raise  # 满足类型检查
     except ScrapliTimeout as e:
         logger.warning("命令执行超时", host=device_name, command=command, error=str(e))
         raise
@@ -316,26 +298,9 @@ async def async_send_commands(host: "Host", commands: list[str]) -> dict[str, An
     try:
         return await asyncio.to_thread(_sync)
     except ScrapliAuthenticationFailed as e:
-        if host.data.get("auth_type") == "otp_manual":
-            dept_id_raw = host.data.get("dept_id")
-            device_group = host.data.get("device_group")
-            if dept_id_raw and device_group:
-                from uuid import UUID
-
-                dept_id = UUID(str(dept_id_raw))
-                try:
-                    await invalidate_manual_otp(dept_id, str(device_group))
-                except Exception:
-                    pass
-
-                failed_id = host.data.get("device_id") or host.name
-                raise OTPRequiredException(
-                    dept_id=dept_id,
-                    device_group=str(device_group),
-                    failed_devices=[str(failed_id)],
-                    message="OTP 认证失败，可能已过期，请重新输入验证码",
-                ) from e
-        raise
+        # OTP 认证失败时立即抛出 428，让前端重新输入
+        await handle_otp_auth_failure(dict(host.data), e)
+        raise  # 满足类型检查
     except ScrapliTimeout as e:
         logger.warning("批量命令执行超时", host=device_name, stage=stage, error=str(e))
         raise
@@ -479,26 +444,9 @@ async def async_collect_config(host: "Host") -> dict[str, Any]:
     try:
         return await asyncio.to_thread(_sync)
     except ScrapliAuthenticationFailed as e:
-        if host.data.get("auth_type") == "otp_manual":
-            dept_id_raw = host.data.get("dept_id")
-            device_group = host.data.get("device_group")
-            if dept_id_raw and device_group:
-                from uuid import UUID
-
-                dept_id = UUID(str(dept_id_raw))
-                try:
-                    await invalidate_manual_otp(dept_id, str(device_group))
-                except Exception:
-                    pass
-
-                failed_id = host.data.get("device_id") or host.name
-                raise OTPRequiredException(
-                    dept_id=dept_id,
-                    device_group=str(device_group),
-                    failed_devices=[str(failed_id)],
-                    message="OTP 认证失败，可能已过期，请重新输入验证码",
-                ) from e
-        raise
+        # OTP 认证失败时立即抛出 428，让前端重新输入
+        await handle_otp_auth_failure(dict(host.data), e)
+        raise  # 满足类型检查
 
 
 async def async_deploy_from_host_data(host: "Host") -> dict[str, Any]:

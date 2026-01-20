@@ -20,7 +20,11 @@ from app.celery.base import run_async
 from app.core.config import settings
 from app.core.exceptions import OTPRequiredException
 from app.core.logger import logger
-from app.network.otp_utils import get_manual_otp_or_raise, get_seed_otp, invalidate_manual_otp
+from app.network.otp_utils import (
+    get_manual_otp_or_raise,
+    get_seed_otp,
+    handle_otp_auth_failure_sync,
+)
 from app.network.platform_config import get_command
 from app.network.scrapli_utils import disable_paging, is_command_error, send_command_with_paging
 from app.network.textfsm_parser import parse_command_output
@@ -74,23 +78,9 @@ def backup_config(task: Task) -> Result:
     try:
         scrapli_conn = task.host.get_connection("scrapli", task.nornir.config)
     except ScrapliAuthenticationFailed as e:
-        auth_type = task.host.data.get("auth_type")
-        if auth_type == "otp_manual":
-            dept_id_raw = task.host.data.get("dept_id")
-            device_group = task.host.data.get("device_group")
-            if dept_id_raw and device_group:
-                from uuid import UUID
-
-                dept_id = UUID(str(dept_id_raw))
-                run_async(invalidate_manual_otp(dept_id, str(device_group)))
-                failed_id = task.host.data.get("device_id") or task.host.name
-                raise OTPRequiredException(
-                    dept_id=dept_id,
-                    device_group=str(device_group),
-                    failed_devices=[str(failed_id)],
-                    message="OTP 认证失败，可能已过期，请重新输入验证码",
-                ) from e
-        raise
+        # OTP 认证失败时立即抛出 428，让前端重新输入
+        handle_otp_auth_failure_sync(dict(task.host.data), e)
+        raise  # 永远不会到达，但满足类型检查
 
     disable_paging(scrapli_conn, platform)
     prompt = None

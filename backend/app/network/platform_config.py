@@ -144,12 +144,14 @@ SCRAPLI_DEFAULTS: dict[str, Any] = {
 # ===== 关闭分页命令 =====
 PAGING_DISABLE_COMMANDS: dict[str, list[str]] = {
     "cisco_iosxe": [
+        "terminal datadump",  # 某些 Cisco 设备需要此命令而非 terminal length 0
         "terminal length 0",
         "terminal pager 0",
         "no page",
         "terminal length 0\nterminal width 512",
     ],
     "cisco_ios": [
+        "terminal datadump",  # 某些 Cisco 设备需要此命令而非 terminal length 0
         "terminal length 0",
         "terminal pager 0",
         "no page",

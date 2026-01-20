@@ -208,6 +208,64 @@ class OTPService:
             logger.error(f"OTP 缓存失效失败: {e}")
             return False
 
+    async def wait_for_otp(
+        self,
+        dept_id: UUID,
+        device_group: str | Enum,
+        timeout: int | None = None,
+        poll_interval: float = 1.0,
+    ) -> str | None:
+        """
+        轮询等待 OTP 缓存刷新。
+
+        当检测到 OTP 过期/认证失败时调用，阻塞等待前端输入新 OTP。
+
+        Args:
+            dept_id: 部门 ID
+            device_group: 设备分组
+            timeout: 等待超时时间（秒），默认使用 OTP_WAIT_TIMEOUT_SECONDS
+            poll_interval: 轮询间隔（秒）
+
+        Returns:
+            新的 OTP 验证码，超时返回 None
+        """
+        import anyio
+
+        if timeout is None:
+            timeout = settings.OTP_WAIT_TIMEOUT_SECONDS
+
+        device_group_value = self._normalize_device_group(device_group)
+
+        logger.info(
+            "开始等待新 OTP",
+            dept_id=str(dept_id),
+            device_group=device_group_value,
+            timeout=timeout,
+        )
+
+        elapsed = 0.0
+        while elapsed < timeout:
+            otp_code = await self.get_cached_otp(dept_id, device_group_value)
+            if otp_code:
+                logger.info(
+                    "检测到新 OTP",
+                    dept_id=str(dept_id),
+                    device_group=device_group_value,
+                    waited_seconds=elapsed,
+                )
+                return otp_code
+
+            await anyio.sleep(poll_interval)
+            elapsed += poll_interval
+
+        logger.warning(
+            "等待新 OTP 超时",
+            dept_id=str(dept_id),
+            device_group=device_group_value,
+            timeout=timeout,
+        )
+        return None
+
     # ===== 设备凭据获取 =====
 
     async def get_credential_for_static_device(

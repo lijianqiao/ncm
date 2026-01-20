@@ -245,118 +245,6 @@ def init_nornir_from_db(
     return init_nornir(hosts_data, num_workers=num_workers)
 
 
-def create_nornir_inventory_async(
-    hosts_data: list[dict[str, Any]],
-    groups_data: list[dict[str, Any]] | None = None,
-) -> Inventory:
-    """
-    创建异步模式的 Nornir Inventory。
-
-    Args:
-        hosts_data: 主机数据列表
-        groups_data: 分组数据列表 (可选)
-
-    Returns:
-        Inventory: Nornir Inventory 实例
-    """
-    hosts = Hosts()
-    groups = Groups()
-
-    # 创建默认分组（异步版本）
-    default_groups = {
-        "core": Group(name="core", data={"role": "core", "priority": 1}),
-        "distribution": Group(name="distribution", data={"role": "distribution", "priority": 2}),
-        "access": Group(name="access", data={"role": "access", "priority": 3}),
-        "cisco": Group(
-            name="cisco",
-            platform="cisco_iosxe",
-            connection_options={
-                "scrapli": ConnectionOptions(
-                    extras={"auth_strict_key": False, "ssh_config_file": "", "transport": "ssh2"}
-                )
-            },
-        ),
-        "huawei": Group(
-            name="huawei",
-            platform="huawei_vrp",
-            connection_options={
-                "scrapli": ConnectionOptions(
-                    extras={"auth_strict_key": False, "ssh_config_file": "", "transport": "ssh2"}
-                )
-            },
-        ),
-        "h3c": Group(
-            name="h3c",
-            platform="hp_comware",
-            connection_options={
-                "scrapli": ConnectionOptions(
-                    extras={"auth_strict_key": False, "ssh_config_file": "", "transport": "ssh2"}
-                )
-            },
-        ),
-    }
-    groups.update(default_groups)
-
-    # 添加自定义分组
-    if groups_data:
-        for group_info in groups_data:
-            group_name = group_info.get("name")
-            if group_name and group_name not in groups:
-                groups[group_name] = Group(
-                    name=group_name,
-                    platform=group_info.get("platform"),
-                    data=group_info.get("data", {}),
-                )
-
-    # 创建主机
-    for host_info in hosts_data:
-        host_name = host_info.get("name")
-        if not host_name:
-            logger.warning("跳过缺少 name 字段的主机", host_info=host_info)
-            continue
-
-        platform = host_info.get("platform")
-        scrapli_extras: dict[str, Any] = {
-            "auth_strict_key": False,
-            "ssh_config_file": "",
-            "transport": "ssh2",
-        }
-
-        host_groups = []
-        for g in host_info.get("groups", []):
-            if g in groups:
-                host_groups.append(groups[g])
-
-        hosts[host_name] = Host(
-            name=host_name,
-            hostname=host_info.get("hostname", host_name),
-            platform=platform,
-            username=host_info.get("username"),
-            password=host_info.get("password"),
-            port=host_info.get("port", 22),
-            groups=ParentGroups(host_groups),
-            data=host_info.get("data", {}),
-            connection_options={"scrapli": ConnectionOptions(extras=scrapli_extras)},
-        )
-
-    # 默认配置
-    defaults = Defaults(
-        username=settings.FIRST_SUPERUSER,
-        password=settings.FIRST_SUPERUSER_PASSWORD,
-        connection_options={
-            "scrapli": ConnectionOptions(
-                extras={
-                    "auth_strict_key": False,
-                    "ssh_config_file": "",
-                    "transport": "ssh2",
-                }
-            )
-        },
-    )
-
-    return Inventory(hosts=hosts, groups=groups, defaults=defaults)
-
-
 def init_nornir_async(
     hosts_data: list[dict[str, Any]],
     groups_data: list[dict[str, Any]] | None = None,
@@ -390,7 +278,8 @@ def init_nornir_async(
         )
         ```
     """
-    inventory = create_nornir_inventory_async(hosts_data, groups_data)
+    # 复用统一的 Inventory 创建函数
+    inventory = create_nornir_inventory(hosts_data, groups_data)
 
     logger.info(
         "Nornir 异步 Inventory 创建完成",

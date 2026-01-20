@@ -84,6 +84,7 @@ class Settings(BaseSettings):
     REDIS_DB: int = 0
     REDIS_PASSWORD: str = ""
     OTP_CACHE_TTL_SECONDS: int = 30
+    OTP_WAIT_TIMEOUT_SECONDS: int = 60  # 等待前端输入新 OTP 的最长时间（秒）
 
     @computed_field
     @property
