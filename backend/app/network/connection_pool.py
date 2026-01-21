@@ -78,23 +78,23 @@ class AsyncConnectionPool:
 
     def __init__(
         self,
-        max_connections: int = 100,
-        max_idle_time: float = 300.0,
-        max_age: float = 3600.0,
+        max_connections: int | None = None,
+        max_idle_time: float | None = None,
+        max_age: float | None = None,
         health_check: bool = True,
     ):
         """
         初始化连接池。
 
         Args:
-            max_connections: 最大连接数（默认 100）
-            max_idle_time: 最大空闲时间秒数（默认 300 秒）
-            max_age: 连接最大存活时间秒数（默认 3600 秒）
+            max_connections: 最大连接数（默认从配置读取 SCRAPLI_POOL_MAX_CONNECTIONS）
+            max_idle_time: 最大空闲时间秒数（默认从配置读取 SCRAPLI_POOL_MAX_IDLE_TIME）
+            max_age: 连接最大存活时间秒数（默认从配置读取 SCRAPLI_POOL_MAX_AGE）
             health_check: 是否在复用连接前进行健康检查（默认 True）
         """
-        self.max_connections = max_connections
-        self.max_idle_time = max_idle_time
-        self.max_age = max_age
+        self.max_connections = max_connections or settings.SCRAPLI_POOL_MAX_CONNECTIONS
+        self.max_idle_time = max_idle_time or float(settings.SCRAPLI_POOL_MAX_IDLE_TIME)
+        self.max_age = max_age or float(settings.SCRAPLI_POOL_MAX_AGE)
         self.health_check = health_check
 
         self._pool: dict[str, PooledConnection] = {}

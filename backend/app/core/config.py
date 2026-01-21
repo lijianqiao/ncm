@@ -143,7 +143,11 @@ class Settings(BaseSettings):
     ASYNC_SSH_SEMAPHORE: int = 100  # 最大并发 SSH 连接数
     ASYNC_SSH_TIMEOUT: int = 30  # 单设备 SSH 命令超时（秒）
     ASYNC_SSH_CONNECT_TIMEOUT: int = 10  # SSH 连接超时（秒）
-    USE_ASYNC_NETWORK_TASKS: bool = True  # 是否使用异步网络任务（AsyncRunner + asyncssh）
+
+    # Scrapli 连接池配置
+    SCRAPLI_POOL_MAX_CONNECTIONS: int = 100  # 连接池最大连接数
+    SCRAPLI_POOL_MAX_IDLE_TIME: int = 300  # 连接最大空闲时间（秒）
+    SCRAPLI_POOL_MAX_AGE: int = 3600  # 连接最大存活时间（秒）
 
     # 告警配置（Phase 3）
     ALERT_OFFLINE_DAYS_THRESHOLD: int = 3  # 离线告警阈值（天）

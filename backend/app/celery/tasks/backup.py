@@ -38,7 +38,6 @@ from app.services.alert_service import AlertService
 from app.services.notification_service import NotificationService
 from app.utils.validators import compute_text_md5, should_skip_backup_save_due_to_unchanged_md5
 
-
 # 备份类型与保留数量的映射（懒加载，避免模块导入时 settings 未初始化）
 _BACKUP_RETENTION_MAP: dict[BackupType, str] | None = None
 
@@ -167,99 +166,6 @@ def _compute_unified_diff(old_text: str, new_text: str, context_lines: int = 3) 
         n=context_lines,
     )
     return "\n".join(diff_iter)
-
-
-@celery_app.task(
-    base=BaseTask,
-    bind=True,
-    name="app.celery.tasks.backup.backup_devices",
-    queue="backup",
-)
-def backup_devices(
-    self,
-    hosts_data: list[dict[str, Any]],
-    num_workers: int = 50,
-    backup_type: str = BackupType.MANUAL.value,
-    operator_id: str | None = None,
-) -> dict[str, Any]:
-    """
-    批量备份设备配置的 Celery 任务。
-
-    Args:
-        hosts_data: 主机数据列表，每个字典包含：
-            - name: 设备名称
-            - hostname: IP 地址
-            - platform: 设备平台 (cisco_iosxe, huawei_vrp, hp_comware)
-            - username: 登录用户名
-            - password: 登录密码
-            - port: SSH 端口 (可选，默认 22)
-            - device_id: 设备ID (可选，用于保存备份记录)
-            - groups: 分组列表 (可选)
-        num_workers: 并发 Worker 数量
-
-    Returns:
-        dict: 包含备份结果的字典
-    """
-    from app.network.nornir_config import init_nornir
-    from app.network.nornir_tasks import aggregate_results, backup_config
-
-    celery_task_id = getattr(self.request, "id", None)
-    logger.info(
-        "开始配置备份任务",
-        task_id=celery_task_id,
-        hosts_count=len(hosts_data),
-        num_workers=num_workers,
-        backup_type=backup_type,
-    )
-
-    safe_update_state(
-        self,
-        celery_task_id,
-        state="PROGRESS",
-        meta={"stage": "initializing", "message": "正在初始化 Nornir..."},
-    )
-
-    try:
-        nr = init_nornir(hosts_data, num_workers=num_workers)
-
-        safe_update_state(
-            self,
-            celery_task_id,
-            state="PROGRESS",
-            meta={"stage": "executing", "message": f"正在备份 {len(nr.inventory.hosts)} 台设备..."},
-        )
-
-        results = nr.run(task=backup_config)
-        summary = aggregate_results(results)
-
-        run_async(
-            _save_backup_results(
-                hosts_data,
-                summary,
-                backup_type=backup_type,
-                operator_id=operator_id,
-            )
-        )
-
-        safe_update_state(
-            self,
-            celery_task_id,
-            state="PROGRESS",
-            meta={"stage": "completed", "message": f"备份完成: 成功 {summary['success']}, 失败 {summary['failed']}"},
-        )
-
-        logger.info(
-            "配置备份任务完成",
-            task_id=celery_task_id,
-            success=summary["success"],
-            failed=summary["failed"],
-        )
-
-        return summary
-
-    except Exception as e:
-        logger.error("配置备份任务失败", task_id=celery_task_id, error=str(e), exc_info=True)
-        raise
 
 
 async def _save_backup_results(
@@ -663,8 +569,6 @@ async def _get_devices_for_scheduled_backup() -> tuple[list[dict], list[str]]:
                 skipped_devices.append(device.name)
 
     return hosts_data, skipped_devices
-
-
 
 
 @celery_app.task(

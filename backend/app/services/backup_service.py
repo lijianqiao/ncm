@@ -800,27 +800,16 @@ class BackupService(DeviceCredentialMixin):
 
         hosts_data.sort(key=_auth_priority)
 
-        # 6. 提交 Celery 任务（根据配置选择同步或异步）
-        if settings.USE_ASYNC_NETWORK_TASKS:
-            from app.celery.tasks.backup import async_backup_devices
+        # 6. 提交 Celery 任务（使用异步 AsyncRunner + asyncssh）
+        from app.celery.tasks.backup import async_backup_devices
 
-            task = async_backup_devices.delay(  # type: ignore[attr-defined]
-                hosts_data=hosts_data,
-                num_workers=min(100, len(hosts_data)),
-                backup_type=request.backup_type.value,
-                operator_id=str(operator_id) if operator_id else None,
-            )
-            logger.info(f"批量备份任务已提交: task_id={task.id}, devices={len(hosts_data)}, async=True")
-        else:
-            from app.celery.tasks.backup import backup_devices
-
-            task = backup_devices.delay(  # type: ignore[attr-defined]
-                hosts_data=hosts_data,
-                num_workers=min(50, len(hosts_data)),
-                backup_type=request.backup_type.value,
-                operator_id=str(operator_id) if operator_id else None,
-            )
-            logger.info(f"批量备份任务已提交: task_id={task.id}, devices={len(hosts_data)}, async=False")
+        task = async_backup_devices.delay(  # type: ignore[attr-defined]
+            hosts_data=hosts_data,
+            num_workers=min(100, len(hosts_data)),
+            backup_type=request.backup_type.value,
+            operator_id=str(operator_id) if operator_id else None,
+        )
+        logger.info(f"批量备份任务已提交: task_id={task.id}, devices={len(hosts_data)}")
 
         return BackupBatchResult(
             task_id=task.id,

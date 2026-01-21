@@ -263,18 +263,14 @@ class DeployService:
                 raise NotFoundException("任务不存在")
             return task_with_related
 
-        from app.celery.tasks.deploy import async_deploy_task, deploy_task
-        from app.core.config import settings
+        from app.celery.tasks.deploy import async_deploy_task
 
         # 重新执行：清理暂停原因/提示
         task.error_message = None
         task.result = None
 
-        # 根据配置选择同步或异步任务
-        if settings.USE_ASYNC_NETWORK_TASKS:
-            celery_result = async_deploy_task.delay(task_id=str(task_id))  # type: ignore[attr-defined]
-        else:
-            celery_result = deploy_task.delay(task_id=str(task_id))  # type: ignore[attr-defined]
+        # 提交异步下发任务（使用 AsyncRunner + asyncssh）
+        celery_result = async_deploy_task.delay(task_id=str(task_id))  # type: ignore[attr-defined]
         task.celery_task_id = celery_result.id
         task.status = TaskStatus.RUNNING.value
         task.started_at = datetime.now(UTC)
@@ -505,15 +501,10 @@ class DeployService:
         # 保留原有结果用于审计，但清除以便重新执行
         # task.result = None  # 可选：是否清除
 
-        # 重新提交执行
-        from app.celery.tasks.deploy import async_deploy_task, deploy_task
-        from app.core.config import settings
+        # 重新提交执行（使用 AsyncRunner + asyncssh）
+        from app.celery.tasks.deploy import async_deploy_task
 
-        if settings.USE_ASYNC_NETWORK_TASKS:
-            celery_result = async_deploy_task.delay(task_id=str(task_id))  # type: ignore[attr-defined]
-        else:
-            celery_result = deploy_task.delay(task_id=str(task_id))  # type: ignore[attr-defined]
-
+        celery_result = async_deploy_task.delay(task_id=str(task_id))  # type: ignore[attr-defined]
         task.celery_task_id = celery_result.id
         task.status = TaskStatus.RUNNING.value
         task.started_at = datetime.now(UTC)
