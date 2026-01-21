@@ -14,9 +14,9 @@ import {
   NCollapse,
   NCollapseItem,
   NIcon,
-  NPopconfirm,
   NEmpty,
   NTag,
+  useDialog,
 } from 'naive-ui'
 import { AddOutline, TrashOutline, ArrowUpOutline, ArrowDownOutline } from '@vicons/ionicons5'
 import type { TemplateParameterCreate, TemplateParamType } from '@/api/templates'
@@ -27,6 +27,7 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits(['update:modelValue'])
+const dialog = useDialog()
 
 // 本地可编辑的列表
 const localParams = computed({
@@ -63,9 +64,17 @@ const handleAdd = () => {
 
 // 删除参数
 const handleDelete = (index: number) => {
-  const newList = [...localParams.value]
-  newList.splice(index, 1)
-  localParams.value = newList
+  dialog.warning({
+    title: '删除参数',
+    content: '确定要删除该参数吗？',
+    positiveText: '删除',
+    negativeText: '取消',
+    onPositiveClick: () => {
+      const newList = [...localParams.value]
+      newList.splice(index, 1)
+      localParams.value = newList
+    },
+  })
 }
 
 // 上移
@@ -167,16 +176,11 @@ const typeOptions = computed(() => {
                     <ArrowDownOutline />
                   </n-icon></template>
               </n-button>
-              <n-popconfirm @positive-click="handleDelete(index)">
-                <template #trigger>
-                  <n-button circle size="tiny" type="error" @click.stop>
-                    <template #icon><n-icon>
-                        <TrashOutline />
-                      </n-icon></template>
-                  </n-button>
-                </template>
-                确定删除该参数吗？
-              </n-popconfirm>
+              <n-button circle size="tiny" type="error" @click.stop="handleDelete(index)">
+                <template #icon><n-icon>
+                    <TrashOutline />
+                  </n-icon></template>
+              </n-button>
             </n-space>
           </template>
 

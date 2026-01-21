@@ -100,7 +100,6 @@ export interface TemplateApproveRequest {
 /** 模板渲染请求 */
 export interface RenderRequest {
   params?: Record<string, unknown>
-  variables?: Record<string, unknown>
   device_id?: string
 }
 
@@ -112,7 +111,7 @@ export interface RenderResponse {
 /** 渲染模板 (预览) */
 export function previewTemplateRender(id: string, data: RenderRequest) {
   return request<ResponseBase<RenderResponse>>({
-    url: `/templates/${id}/render`,
+    url: `/render/template/${id}`,
     method: 'post',
     data,
   })

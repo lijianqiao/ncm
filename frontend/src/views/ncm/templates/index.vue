@@ -472,7 +472,7 @@ const submitRenderPreview = async () => {
   renderLoading.value = true
   try {
     const res = await previewTemplateRender(renderTarget.value.id, {
-      variables: params,
+      params,
       device_id: renderDeviceId.value || undefined,
     })
     renderResult.value = res.data.rendered
