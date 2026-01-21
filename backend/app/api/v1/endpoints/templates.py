@@ -6,7 +6,6 @@
 @Docs: 模板库 API 接口。
 """
 
-from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query
@@ -274,7 +273,7 @@ async def delete_template(template_id: UUID, service: TemplateServiceDep) -> Res
 async def batch_delete_templates(
     request: TemplateBatchRequest,
     service: TemplateServiceDep,
-) -> Any:
+) -> ResponseBase[TemplateBatchResult]:
     """批量软删除模板（可从回收站恢复）。
 
     Args:
@@ -345,7 +344,7 @@ async def read_recycle_bin_templates(
 async def restore_template(
     template_id: UUID,
     service: TemplateServiceDep,
-) -> Any:
+) -> ResponseBase[TemplateResponse]:
     """从回收站恢复已删除的模板到原有状态。
 
     Args:
@@ -374,7 +373,7 @@ async def restore_template(
 async def batch_restore_templates(
     request: TemplateBatchRequest,
     service: TemplateServiceDep,
-) -> Any:
+) -> ResponseBase[TemplateBatchResult]:
     """批量恢复模板（从回收站恢复至正常状态）。
 
     Args:
@@ -404,7 +403,7 @@ async def batch_restore_templates(
 async def hard_delete_template(
     template_id: UUID,
     service: TemplateServiceDep,
-) -> Any:
+) -> ResponseBase[dict]:
     """彻底删除模板（物理删除，不可恢复）。
 
     Args:
@@ -434,7 +433,7 @@ async def hard_delete_template(
 async def batch_hard_delete_templates(
     request: TemplateBatchRequest,
     service: TemplateServiceDep,
-) -> Any:
+) -> ResponseBase[TemplateBatchResult]:
     """批量彻底删除模板（物理删除，不可恢复）。
 
     Args:

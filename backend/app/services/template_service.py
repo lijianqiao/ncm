@@ -119,7 +119,8 @@ class TemplateService:
         return await self.template_crud.batch_remove(self.db, ids=ids, hard_delete=True)
 
     @transactional()
-    async def create_template(self, data: TemplateCreate, creator_id: UUID):
+    async def create_template(self, data: TemplateCreate, creator_id: UUID) -> Template:
+        """创建模板草稿。"""
         # 校验 parameters 必须是有效的 JSON Schema
         parameters = data.parameters
         if parameters:
@@ -133,12 +134,11 @@ class TemplateService:
             # 默认填充空 Schema（允许任意参数）
             parameters = '{"type": "object"}'
 
-        create_data = data.model_dump()
         obj = Template(
-            name=create_data["name"],
-            description=create_data.get("description"),
+            name=data.name,
+            description=data.description,
             template_type=data.template_type.value,
-            content=create_data["content"],
+            content=data.content,
             vendors=[v.value for v in data.vendors],
             device_type=data.device_type.value,
             parameters=parameters,
@@ -168,14 +168,19 @@ class TemplateService:
         return await self.template_crud.update(self.db, db_obj=template, obj_in=update_data)
 
     @transactional()
-    async def new_version(self, template_id: UUID, *, name: str | None = None, description: str | None = None):
+    async def new_version(
+        self, template_id: UUID, *, name: str | None = None, description: str | None = None
+    ) -> Template:
+        """基于现有模板创建新版本（草稿）。"""
         base = await self.get_template(template_id)
-        if base.status not in {
+
+        # 允许草稿/已审批/已废弃派生新版本
+        allowed_statuses = {
             TemplateStatus.APPROVED.value,
             TemplateStatus.DEPRECATED.value,
             TemplateStatus.DRAFT.value,
-        }:
-            # 允许草稿/已审批/已废弃派生新版本，避免复杂状态机
+        }
+        if base.status not in allowed_statuses:
             raise BadRequestException("当前模板状态不允许创建新版本")
 
         parent_id = base.parent_id or base.id
@@ -210,18 +215,23 @@ class TemplateService:
         *,
         comment: str | None = None,
         approver_ids: list[UUID] | None = None,
-    ):
+    ) -> Template:
+        """提交模板审批。"""
         template = await self.get_template(template_id)
-        if template.status not in {TemplateStatus.DRAFT.value, TemplateStatus.REJECTED.value}:
+
+        allowed_statuses = {TemplateStatus.DRAFT.value, TemplateStatus.REJECTED.value}
+        if template.status not in allowed_statuses:
             raise BadRequestException("仅草稿/已拒绝模板可提交审批")
 
         if approver_ids is not None and len(approver_ids) != 3:
             raise BadRequestException("approver_ids 必须为 3 个（三级审批）")
 
-        # 清理旧审批步骤（允许驳回后重新提交）
-        for step in list(template.approval_steps or []):
-            await self.db.delete(step)
+        # 清理旧审批步骤（允许驳回后重新提交）- 使用批量硬删除
+        if template.approval_steps:
+            old_step_ids = [step.id for step in template.approval_steps]
+            await self.template_approval_crud.batch_remove(self.db, ids=old_step_ids, hard_delete=True)
 
+        # 更新模板状态
         template.status = TemplateStatus.PENDING.value
         template.approval_required = True
         template.approval_status = ApprovalStatus.PENDING.value
@@ -231,18 +241,18 @@ class TemplateService:
             template.description = (template.description or "") + f"\n[submit] {comment}"
 
         # 创建三级审批步骤（默认 PENDING）
-        for idx in range(3):
-            approver_id = approver_ids[idx] if approver_ids else None
+        for level in range(1, 4):
+            approver_id = approver_ids[level - 1] if approver_ids else None
             step = TemplateApprovalStep(
                 template_id=template.id,
-                level=idx + 1,
+                level=level,
                 approver_id=approver_id,
                 status=ApprovalStatus.PENDING.value,
             )
             self.db.add(step)
 
         await self.db.flush()
-        # 重要：updated_at 是数据库侧 onupdate 生成，flush 后需要 refresh，避免响应序列化时触发懒加载导致 MissingGreenlet
+        # 重要：updated_at 是数据库侧 onupdate 生成，flush 后需要 refresh
         await self.db.refresh(template)
         return template
 
