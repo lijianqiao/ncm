@@ -14,20 +14,27 @@ from starlette.background import BackgroundTask
 
 from app.api.deps import CurrentUser, SessionDep, TemplateServiceDep, require_permissions
 from app.core.config import settings
-from app.core.enums import DeviceVendor, TemplateStatus, TemplateType
+from app.core.enums import DeviceVendor, ParamType, TemplateStatus, TemplateType
 from app.core.permissions import PermissionCode
 from app.features.import_export.templates import export_templates_df
 from app.import_export import ImportExportService, delete_export_file
 from app.schemas.common import PaginatedResponse, ResponseBase
 from app.schemas.template import (
+    ExtractVariablesRequest,
+    ExtractVariablesResponse,
+    ParamTypeInfo,
+    ParamTypeListResponse,
     TemplateApproveRequest,
     TemplateBatchRequest,
     TemplateBatchResult,
     TemplateCreate,
+    TemplateCreateV2,
     TemplateNewVersionRequest,
     TemplateResponse,
+    TemplateResponseV2,
     TemplateSubmitRequest,
     TemplateUpdate,
+    TemplateUpdateV2,
 )
 
 router = APIRouter(tags=["模板库"])
@@ -482,3 +489,207 @@ async def export_templates(
         media_type=result.media_type,
         background=BackgroundTask(delete_export_file, str(result.path)),
     )
+
+
+# ===== V2 表单化参数相关 API =====
+
+
+# 参数类型元数据（静态数据）
+_PARAM_TYPE_METADATA: list[ParamTypeInfo] = [
+    ParamTypeInfo(
+        value=ParamType.STRING.value,
+        label="文本",
+        description="普通文本字符串",
+        has_options=False,
+        has_range=False,
+        has_pattern=True,
+    ),
+    ParamTypeInfo(
+        value=ParamType.INTEGER.value,
+        label="整数",
+        description="整数数值",
+        has_options=False,
+        has_range=True,
+        has_pattern=False,
+    ),
+    ParamTypeInfo(
+        value=ParamType.BOOLEAN.value,
+        label="布尔值",
+        description="true/false 开关",
+        has_options=False,
+        has_range=False,
+        has_pattern=False,
+    ),
+    ParamTypeInfo(
+        value=ParamType.SELECT.value,
+        label="下拉选择",
+        description="从预定义选项中选择",
+        has_options=True,
+        has_range=False,
+        has_pattern=False,
+    ),
+    ParamTypeInfo(
+        value=ParamType.IP_ADDRESS.value,
+        label="IP 地址",
+        description="IPv4 或 IPv6 地址",
+        has_options=False,
+        has_range=False,
+        has_pattern=True,
+    ),
+    ParamTypeInfo(
+        value=ParamType.CIDR.value,
+        label="CIDR",
+        description="CIDR 格式地址（如 192.168.1.0/24）",
+        has_options=False,
+        has_range=False,
+        has_pattern=True,
+    ),
+    ParamTypeInfo(
+        value=ParamType.VLAN_ID.value,
+        label="VLAN ID",
+        description="VLAN 标识（1-4094）",
+        has_options=False,
+        has_range=True,
+        has_pattern=False,
+    ),
+    ParamTypeInfo(
+        value=ParamType.INTERFACE.value,
+        label="接口名",
+        description="网络接口名称（如 GigabitEthernet0/0/1）",
+        has_options=False,
+        has_range=False,
+        has_pattern=True,
+    ),
+    ParamTypeInfo(
+        value=ParamType.MAC_ADDRESS.value,
+        label="MAC 地址",
+        description="MAC 地址（如 00:1A:2B:3C:4D:5E）",
+        has_options=False,
+        has_range=False,
+        has_pattern=True,
+    ),
+    ParamTypeInfo(
+        value=ParamType.PORT.value,
+        label="端口号",
+        description="网络端口号（1-65535）",
+        has_options=False,
+        has_range=True,
+        has_pattern=False,
+    ),
+]
+
+
+@router.get(
+    "/param-types",
+    response_model=ResponseBase[ParamTypeListResponse],
+    summary="获取参数类型列表",
+)
+async def get_param_types() -> ResponseBase[ParamTypeListResponse]:
+    """获取所有可用的模板参数类型及其元数据。
+
+    Returns:
+        ResponseBase[ParamTypeListResponse]: 参数类型列表。
+    """
+    return ResponseBase(data=ParamTypeListResponse(types=_PARAM_TYPE_METADATA))
+
+
+@router.post(
+    "/extract-vars",
+    response_model=ResponseBase[ExtractVariablesResponse],
+    dependencies=[Depends(require_permissions([PermissionCode.TEMPLATE_CREATE.value]))],
+    summary="从模板内容提取变量",
+)
+async def extract_variables(
+    request: ExtractVariablesRequest,
+    service: TemplateServiceDep,
+) -> ResponseBase[ExtractVariablesResponse]:
+    """从 Jinja2 模板内容中自动提取变量并推断类型。
+
+    Args:
+        request (ExtractVariablesRequest): 包含模板内容的请求体。
+        service (TemplateService): 模板服务依赖。
+
+    Returns:
+        ResponseBase[ExtractVariablesResponse]: 提取的变量列表及推断类型。
+    """
+    variables = service.auto_generate_parameters(request.content)
+    raw_names = service.extract_variables(request.content)
+    return ResponseBase(
+        data=ExtractVariablesResponse(
+            variables=variables,
+            raw_names=raw_names,
+        )
+    )
+
+
+@router.post(
+    "/v2",
+    response_model=ResponseBase[TemplateResponseV2],
+    dependencies=[Depends(require_permissions([PermissionCode.TEMPLATE_CREATE.value]))],
+    summary="创建模板（V2 - 表单化参数）",
+)
+async def create_template_v2(
+    data: TemplateCreateV2,
+    service: TemplateServiceDep,
+    user: CurrentUser,
+) -> ResponseBase[TemplateResponseV2]:
+    """创建一个新的配置模板草稿（使用表单化参数定义）。
+
+    Args:
+        data (TemplateCreateV2): 创建表单数据（含表单化参数列表）。
+        service (TemplateService): 模板服务依赖。
+        user (User): 创建者信息。
+
+    Returns:
+        ResponseBase[TemplateResponseV2]: 创建成功的模板信息（含参数列表）。
+    """
+    template = await service.create_template_v2(data, creator_id=user.id)
+    return ResponseBase(data=TemplateResponseV2.model_validate(template))
+
+
+@router.put(
+    "/v2/{template_id:uuid}",
+    response_model=ResponseBase[TemplateResponseV2],
+    dependencies=[Depends(require_permissions([PermissionCode.TEMPLATE_UPDATE.value]))],
+    summary="更新模板（V2 - 表单化参数）",
+)
+async def update_template_v2(
+    template_id: UUID,
+    data: TemplateUpdateV2,
+    service: TemplateServiceDep,
+) -> ResponseBase[TemplateResponseV2]:
+    """更新模板（使用表单化参数定义）。
+
+    Args:
+        template_id (UUID): 模板 ID。
+        data (TemplateUpdateV2): 更新数据（含表单化参数列表）。
+        service (TemplateService): 模板服务依赖。
+
+    Returns:
+        ResponseBase[TemplateResponseV2]: 更新后的模板信息（含参数列表）。
+    """
+    template = await service.update_template_v2(template_id, data)
+    return ResponseBase(data=TemplateResponseV2.model_validate(template))
+
+
+@router.get(
+    "/v2/{template_id:uuid}",
+    response_model=ResponseBase[TemplateResponseV2],
+    dependencies=[Depends(require_permissions([PermissionCode.TEMPLATE_LIST.value]))],
+    summary="获取模板详情（V2 - 含参数列表）",
+)
+async def get_template_v2(
+    template_id: UUID,
+    service: TemplateServiceDep,
+) -> ResponseBase[TemplateResponseV2]:
+    """根据 ID 获取模板的详细定义信息（含表单化参数列表）。
+
+    Args:
+        template_id (UUID): 模板 ID。
+        service (TemplateService): 模板服务依赖。
+
+    Returns:
+        ResponseBase[TemplateResponseV2]: 模板详情（含参数列表）。
+    """
+    template = await service.get_template(template_id)
+    return ResponseBase(data=TemplateResponseV2.model_validate(template))

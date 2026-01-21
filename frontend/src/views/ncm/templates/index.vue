@@ -3,7 +3,9 @@ import { ref, h } from 'vue'
 import {
   NButton,
   NModal,
+  NForm,
   NFormItem,
+  NFormItemGi,
   NInput,
   NSelect,
   NPopover,
@@ -13,6 +15,8 @@ import {
   NTag,
   NSpace,
   NCode,
+  NCard,
+  NGrid,
   type DropdownOption,
 } from 'naive-ui'
 import { AddOutline as AddIcon, HelpCircleOutline } from '@vicons/ionicons5'
@@ -20,12 +24,10 @@ import { $alert } from '@/utils/alert'
 import {
   getTemplates,
   getTemplate,
-  createTemplate,
-  updateTemplate,
-  deleteTemplate,
   createTemplateVersion,
   submitTemplate,
   approveTemplate,
+  deleteTemplate,
   batchDeleteTemplates,
   getRecycleBinTemplates,
   restoreTemplate,
@@ -33,11 +35,18 @@ import {
   hardDeleteTemplate,
   batchHardDeleteTemplates,
   exportTemplates,
+  getParamTypes,
+  extractTemplateVars,
+  createTemplateV2,
+  updateTemplateV2,
+  getTemplateV2,
   type Template,
   type TemplateSearchParams,
   type TemplateType,
   type TemplateStatus,
   type DeviceType,
+  type TemplateParamType,
+  type TemplateParameterCreate,
 } from '@/api/templates'
 import { getUsers } from '@/api/users'
 import { getDeviceOptions, type Device, type DeviceVendor } from '@/api/devices'
@@ -47,6 +56,7 @@ import { formatUserDisplayNameParts } from '@/utils/user'
 import ProTable, { type FilterConfig } from '@/components/common/ProTable.vue'
 import RecycleBinModal from '@/components/common/RecycleBinModal.vue'
 import DataImportExport from '@/components/common/DataImportExport.vue'
+import TemplateParamPanel from './components/TemplateParamPanel.vue'
 
 defineOptions({
   name: 'TemplateManagement',
@@ -165,16 +175,6 @@ vlan {{ params.vlan_id }}
 {% else %}
 # other/unknown
 {% endif %}`
-
-const templateParametersSchemaExample = `{
-  "type": "object",
-  "properties": {
-    "vlan_id": { "type": "integer", "minimum": 1, "maximum": 4094 },
-    "vlan_name": { "type": "string", "minLength": 1 }
-  },
-  "required": ["vlan_id", "vlan_name"],
-  "additionalProperties": false
-}`
 
 // ==================== 常量定义 ====================
 
@@ -370,6 +370,7 @@ const handleBatchDelete = (ids: Array<string | number>) => {
         $alert.success(`成功删除 ${res.data.success_count} 个模板`)
         selectedRowKeys.value = []
         tableRef.value?.reload()
+        recycleBinRef.value?.reload()
       } catch {
         // Error handled
       }
@@ -471,6 +472,8 @@ const submitRenderPreview = async () => {
 const modalType = ref<'create' | 'edit'>('create')
 const showCreateModal = ref(false)
 const createFormRef = ref()
+const paramTypes = ref<TemplateParamType[]>([])
+
 const createModel = ref({
   id: '',
   name: '',
@@ -480,15 +483,75 @@ const createModel = ref({
   vendors: [] as DeviceVendor[],
   device_type: null as DeviceType | null,
   parameters: '',
+  parameters_list: [] as TemplateParameterCreate[],
 })
 
 const createRules = {
   name: { required: true, message: '请输入模板名称', trigger: 'blur' },
   content: { required: true, message: '请输入模板内容', trigger: 'blur' },
-  vendors: { required: true, message: '请选择适用厂商', trigger: 'change', type: 'array' },
+  vendors: { required: true, message: '请选择适用厂商', trigger: 'change', type: 'array' as const },
 }
 
-const handleCreate = () => {
+const loadParamTypes = async () => {
+  if (paramTypes.value.length > 0) return
+  try {
+    const res = await getParamTypes()
+    paramTypes.value = res.data
+  } catch (e) {
+    console.error(e)
+  }
+}
+
+const handleExtractVars = async () => {
+  if (!createModel.value.content) {
+    $alert.warning('请先填写模板内容')
+    return
+  }
+  try {
+    const res = await extractTemplateVars(createModel.value.content)
+    const newVars = res.data.variables
+    const currentList = createModel.value.parameters_list || []
+
+    // Merge logic
+    const existingMap = new Map(currentList.map((p) => [p.name, p]))
+    const mergedList: TemplateParameterCreate[] = [...currentList]
+
+    let addedCount = 0
+    newVars.forEach((variable) => {
+      // 兼容后端返回对象格式 { name, label, param_type, ... }
+      const varName = typeof variable === 'string' ? variable : variable.name
+
+      if (!existingMap.has(varName)) {
+        if (typeof variable === 'object') {
+          mergedList.push({
+            ...variable,
+            order: mergedList.length + 1,
+          })
+        } else {
+          mergedList.push({
+            name: varName,
+            label: varName,
+            param_type: 'string',
+            required: true,
+            order: mergedList.length + 1,
+          })
+        }
+        addedCount++
+      }
+    })
+
+    createModel.value.parameters_list = mergedList
+    if (addedCount > 0) {
+      $alert.success(`已提取并新增 ${addedCount} 个变量`)
+    } else {
+      $alert.info('未发现新变量')
+    }
+  } catch {
+    // Error handled
+  }
+}
+
+const handleCreate = async () => {
   modalType.value = 'create'
   createModel.value = {
     id: '',
@@ -499,27 +562,39 @@ const handleCreate = () => {
     vendors: [],
     device_type: null,
     parameters: '',
+    parameters_list: [],
   }
   showCreateModal.value = true
+  await loadParamTypes()
 }
 
-const handleEdit = (row: Template) => {
+const handleEdit = async (row: Template) => {
   if (row.status !== 'draft' && row.status !== 'rejected') {
     $alert.warning('只能编辑草稿或已拒绝的模板')
     return
   }
   modalType.value = 'edit'
-  createModel.value = {
-    id: row.id,
-    name: row.name,
-    description: row.description || '',
-    template_type: row.template_type,
-    content: row.content,
-    vendors: row.vendors,
-    device_type: row.device_type,
-    parameters: row.parameters || '',
-  }
   showCreateModal.value = true
+  await loadParamTypes()
+
+  try {
+    // 使用 V2 接口获取完整信息（含 parameters_list）
+    const res = await getTemplateV2(row.id)
+    const tpl = res.data
+    createModel.value = {
+      id: tpl.id,
+      name: tpl.name,
+      description: tpl.description || '',
+      template_type: tpl.template_type,
+      content: tpl.content,
+      vendors: tpl.vendors,
+      device_type: tpl.device_type,
+      parameters: tpl.parameters || '',
+      parameters_list: tpl.parameters_list || [],
+    }
+  } catch {
+    showCreateModal.value = false
+  }
 }
 
 const submitCreate = (e: MouseEvent) => {
@@ -534,13 +609,13 @@ const submitCreate = (e: MouseEvent) => {
           content: createModel.value.content,
           vendors: createModel.value.vendors,
           device_type: createModel.value.device_type || undefined,
-          parameters: createModel.value.parameters || undefined,
+          parameters_list: createModel.value.parameters_list,
         }
         if (modalType.value === 'create') {
-          await createTemplate(data)
+          await createTemplateV2(data)
           $alert.success('模板创建成功')
         } else {
-          await updateTemplate(createModel.value.id, data)
+          await updateTemplateV2(createModel.value.id, data)
           $alert.success('模板更新成功')
         }
         showCreateModal.value = false
@@ -874,75 +949,70 @@ const submitApprove = async () => {
     </n-modal>
 
     <!-- 创建/编辑模板 Modal -->
-    <n-modal v-model:show="showCreateModal" preset="dialog" :title="modalType === 'create' ? '新建模板' : '编辑模板'"
-      style="width: 800px">
+    <n-modal v-model:show="showCreateModal" preset="card" :title="modalType === 'create' ? '新建模板' : '编辑模板'"
+      style="width: 900px; max-height: 90vh; overflow: auto">
       <n-form ref="createFormRef" :model="createModel" :rules="createRules" label-placement="left" label-width="100">
-        <n-form-item label="模板名称" path="name">
-          <n-input v-model:value="createModel.name" placeholder="请输入模板名称" />
-        </n-form-item>
-        <n-form-item label="模板类型">
-          <n-select v-model:value="createModel.template_type" :options="templateTypeOptions" />
-        </n-form-item>
-        <n-form-item label="适用厂商" path="vendors">
-          <n-select v-model:value="createModel.vendors" :options="vendorOptions" multiple placeholder="请选择适用厂商" />
-        </n-form-item>
-        <n-form-item label="设备类型">
-          <n-select v-model:value="createModel.device_type" :options="deviceTypeOptions" placeholder="请选择设备类型（可选）"
-            clearable />
-        </n-form-item>
-        <n-form-item label="描述">
-          <n-input v-model:value="createModel.description" type="textarea" placeholder="模板描述" :rows="2" />
-        </n-form-item>
-        <n-form-item path="content">
-          <template #label>
-            <span style="display: inline-flex; align-items: center; gap: 6px">
-              <span>模板内容</span>
-              <n-popover trigger="click" placement="right-start" :width="480"
-                :content-style="{ maxHeight: '320px', overflow: 'auto' }">
-                <template #trigger>
-                  <n-icon size="16" style="cursor: pointer; opacity: 0.75">
-                    <HelpCircleOutline />
-                  </n-icon>
-                </template>
-                <n-space vertical size="small">
-                  <div style="font-weight: 600">使用示例</div>
+        <n-space vertical size="large">
+          <!-- 基本信息 -->
+          <n-card title="基本信息" size="small" embedded :bordered="false">
+            <n-grid :x-gap="24" :y-gap="24" :cols="2">
+              <n-form-item-gi label="模板名称" path="name">
+                <n-input v-model:value="createModel.name" placeholder="请输入模板名称" />
+              </n-form-item-gi>
+              <n-form-item-gi label="模板类型">
+                <n-select v-model:value="createModel.template_type" :options="templateTypeOptions" />
+              </n-form-item-gi>
+              <n-form-item-gi label="适用厂商" path="vendors">
+                <n-select v-model:value="createModel.vendors" :options="vendorOptions" multiple placeholder="请选择适用厂商" />
+              </n-form-item-gi>
+              <n-form-item-gi label="设备类型">
+                <n-select v-model:value="createModel.device_type" :options="deviceTypeOptions" placeholder="请选择设备类型（可选）"
+                  clearable />
+              </n-form-item-gi>
+              <n-form-item-gi :span="2" label="描述">
+                <n-input v-model:value="createModel.description" type="textarea" placeholder="模板描述" :rows="2" />
+              </n-form-item-gi>
+            </n-grid>
+          </n-card>
+
+          <!-- 模板内容 -->
+          <n-card title="模板内容 (Jinja2)" size="small" embedded :bordered="false">
+            <template #header-extra>
+              <n-space>
+                <n-popover trigger="click" placement="left-start" :width="480"
+                  :content-style="{ maxHeight: '320px', overflow: 'auto' }">
+                  <template #trigger>
+                    <n-button size="small" secondary>
+                      <template #icon><n-icon>
+                          <HelpCircleOutline />
+                        </n-icon></template>
+                      示例
+                    </n-button>
+                  </template>
                   <n-code language="jinja2" :code="templateContentExample" style="max-height: 260px; overflow: auto" />
-                </n-space>
-              </n-popover>
-            </span>
-          </template>
-          <n-input v-model:value="createModel.content" type="textarea" placeholder="Jinja2 模板内容" :rows="10"
-            style="font-family: monospace" />
-        </n-form-item>
-        <n-form-item>
-          <template #label>
-            <span style="display: inline-flex; align-items: center; gap: 6px">
-              <span>参数定义</span>
-              <n-popover trigger="click" placement="right-start" :width="480"
-                :content-style="{ maxHeight: '320px', overflow: 'auto' }">
-                <template #trigger>
-                  <n-icon size="16" style="cursor: pointer; opacity: 0.75">
-                    <HelpCircleOutline />
-                  </n-icon>
-                </template>
-                <n-space vertical size="small">
-                  <div style="font-weight: 600">JSON Schema 示例</div>
-                  <div style="opacity: 0.8">
-                    这里填写 JSON Schema（字符串），用于校验你在“渲染预览/配置下发”里传入的 params。
-                  </div>
-                  <n-code language="json" :code="templateParametersSchemaExample"
-                    style="max-height: 220px; overflow: auto" />
-                </n-space>
-              </n-popover>
-            </span>
-          </template>
-          <n-input v-model:value="createModel.parameters" type="textarea" placeholder="JSON Schema 格式的参数定义（可选）"
-            :rows="4" style="font-family: monospace" />
-        </n-form-item>
+                </n-popover>
+                <n-button size="small" type="primary" secondary @click="handleExtractVars">
+                  从内容提取变量
+                </n-button>
+              </n-space>
+            </template>
+            <n-form-item path="content" :show-label="false">
+              <n-input v-model:value="createModel.content" type="textarea" placeholder="Jinja2 模板内容" :rows="10"
+                style="font-family: monospace" />
+            </n-form-item>
+          </n-card>
+
+          <!-- 参数定义 -->
+          <n-card size="small" embedded :bordered="false">
+            <TemplateParamPanel v-model="createModel.parameters_list" :param-types="paramTypes" />
+          </n-card>
+        </n-space>
       </n-form>
-      <template #action>
-        <n-button @click="showCreateModal = false">取消</n-button>
-        <n-button type="primary" @click="submitCreate">提交</n-button>
+      <template #footer>
+        <n-space justify="end">
+          <n-button @click="showCreateModal = false">取消</n-button>
+          <n-button type="primary" @click="submitCreate">提交</n-button>
+        </n-space>
       </template>
     </n-modal>
 

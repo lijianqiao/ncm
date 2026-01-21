@@ -9,11 +9,7 @@
 import { request } from '@/utils/request'
 import type { ResponseBase, PaginatedResponse } from '@/types/api'
 import type { DeviceVendor } from './devices'
-import type {
-  TemplateTypeType,
-  TemplateStatusType,
-  DeviceTypeType,
-} from '@/types/enums'
+import type { TemplateTypeType, TemplateStatusType, DeviceTypeType } from '@/types/enums'
 import type { AxiosResponse } from 'axios'
 
 // 重新导出枚举类型供外部使用
@@ -101,6 +97,61 @@ export interface TemplateApproveRequest {
   comment?: string
 }
 
+// ==================== V2 接口定义 ====================
+
+/** 模板参数定义 (V2) */
+export interface TemplateParameterCreate {
+  name: string
+  label?: string
+  param_type: string
+  required?: boolean
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  default_value?: any
+  description?: string
+  options?: string[]
+  min_value?: number
+  max_value?: number
+  pattern?: string
+  order?: number
+}
+
+/** 创建模板参数 (V2) */
+export interface TemplateCreateV2 {
+  name: string
+  description?: string
+  template_type?: TemplateTypeType
+  content: string
+  vendors: DeviceVendor[]
+  device_type?: DeviceTypeType
+  parameters_list?: TemplateParameterCreate[]
+}
+
+/** 更新模板参数 (V2) */
+export interface TemplateUpdateV2 {
+  name?: string
+  description?: string
+  template_type?: TemplateTypeType
+  content?: string
+  vendors?: DeviceVendor[]
+  device_type?: DeviceTypeType
+  parameters_list?: TemplateParameterCreate[]
+  status?: TemplateStatusType
+}
+
+/** 模板响应接口 (V2) */
+export interface TemplateResponseV2 extends Template {
+  parameters_list?: TemplateParameterCreate[]
+}
+
+/** 参数类型定义 */
+export interface TemplateParamType {
+  value: string
+  label: string
+  has_options?: boolean
+  has_range?: boolean
+  has_pattern?: boolean
+}
+
 // ==================== API 函数 ====================
 
 /** 获取模板列表 */
@@ -173,6 +224,52 @@ export function approveTemplate(id: string, data: TemplateApproveRequest) {
   })
 }
 
+// ==================== V2 API 函数 ====================
+
+/** 获取参数类型列表 */
+export function getParamTypes() {
+  return request<ResponseBase<TemplateParamType[]>>({
+    url: '/templates/param-types',
+    method: 'get',
+  })
+}
+
+/** 提取模板变量 */
+export function extractTemplateVars(content: string) {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return request<ResponseBase<{ variables: Array<string | any> }>>({
+    url: '/templates/extract-vars',
+    method: 'post',
+    data: { content },
+  })
+}
+
+/** 创建模板 (V2) */
+export function createTemplateV2(data: TemplateCreateV2) {
+  return request<ResponseBase<TemplateResponseV2>>({
+    url: '/templates/v2',
+    method: 'post',
+    data,
+  })
+}
+
+/** 更新模板 (V2) */
+export function updateTemplateV2(id: string, data: TemplateUpdateV2) {
+  return request<ResponseBase<TemplateResponseV2>>({
+    url: `/templates/v2/${id}`,
+    method: 'put',
+    data,
+  })
+}
+
+/** 获取模板详情 (V2) */
+export function getTemplateV2(id: string) {
+  return request<ResponseBase<TemplateResponseV2>>({
+    url: `/templates/v2/${id}`,
+    method: 'get',
+  })
+}
+
 // ==================== 批量操作和回收站 API ====================
 
 /** 批量操作结果 */
@@ -192,7 +289,11 @@ export function batchDeleteTemplates(ids: string[]) {
 }
 
 /** 获取回收站模板列表 */
-export function getRecycleBinTemplates(params?: { page?: number; page_size?: number; keyword?: string }) {
+export function getRecycleBinTemplates(params?: {
+  page?: number
+  page_size?: number
+  keyword?: string
+}) {
   return request<ResponseBase<PaginatedResponse<Template>>>({
     url: '/templates/recycle-bin',
     method: 'get',

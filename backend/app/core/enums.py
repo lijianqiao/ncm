@@ -237,3 +237,24 @@ class AlertStatus(str, Enum):
     OPEN = "open"  # 未处理
     ACK = "ack"  # 已确认
     CLOSED = "closed"  # 已关闭
+
+
+# ===== 模板参数类型枚举 =====
+
+
+class ParamType(str, Enum):
+    """模板参数类型（表单化）。"""
+
+    # 基础类型
+    STRING = "string"  # 普通文本
+    INTEGER = "integer"  # 整数
+    BOOLEAN = "boolean"  # 布尔值
+    SELECT = "select"  # 下拉选择
+
+    # 网络配置专用类型（自带验证规则）
+    IP_ADDRESS = "ip_address"  # IPv4/IPv6 地址
+    CIDR = "cidr"  # CIDR 格式 (192.168.1.0/24)
+    VLAN_ID = "vlan_id"  # VLAN ID (1-4094)
+    INTERFACE = "interface"  # 接口名 (GigabitEthernet0/0/1)
+    MAC_ADDRESS = "mac_address"  # MAC 地址
+    PORT = "port"  # 端口号 (1-65535)

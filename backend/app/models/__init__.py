@@ -8,6 +8,7 @@ from app.core.enums import (
     DeviceType,
     DeviceVendor,
     DiscoveryStatus,
+    ParamType,
     TaskStatus,
     TaskType,
     TemplateStatus,
@@ -29,6 +30,7 @@ from .task import Task
 from .task_approval import TaskApprovalStep
 from .template import Template
 from .template_approval import TemplateApprovalStep
+from .template_parameter import TemplateParameter
 from .topology import TopologyLink
 from .user import User
 
@@ -71,6 +73,8 @@ __all__ = [
     "TemplateStatus",
     "DeviceType",
     "TemplateApprovalStep",
+    "TemplateParameter",
+    "ParamType",
     # 设备发现
     "Discovery",
     "DiscoveryStatus",

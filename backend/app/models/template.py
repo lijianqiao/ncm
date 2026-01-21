@@ -20,6 +20,7 @@ from app.utils.user_display import format_user_display_name
 
 if TYPE_CHECKING:
     from app.models.template_approval import TemplateApprovalStep
+    from app.models.template_parameter import TemplateParameter
     from app.models.user import User
 
 
@@ -103,6 +104,15 @@ class Template(AuditableModel):
         back_populates="template",
         lazy="selectin",
         cascade="all, delete-orphan",
+    )
+
+    # 表单化参数列表（V2）
+    parameters_list: Mapped[list["TemplateParameter"]] = relationship(
+        "TemplateParameter",
+        back_populates="template",
+        lazy="selectin",
+        cascade="all, delete-orphan",
+        order_by="TemplateParameter.order",
     )
 
     @property

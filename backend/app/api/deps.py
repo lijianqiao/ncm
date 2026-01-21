@@ -67,6 +67,8 @@ from app.crud.crud_template_approval import (
 from app.crud.crud_template_approval import (
     template_approval_crud as template_approval_crud_instance,
 )
+from app.crud.crud_template_parameter import CRUDTemplateParameter
+from app.crud.crud_template_parameter import template_parameter as template_parameter_instance
 from app.crud.crud_topology import CRUDTopology
 from app.crud.crud_topology import topology_crud as topology_instance
 from app.crud.crud_user import CRUDUser
@@ -374,6 +376,10 @@ def get_template_crud() -> CRUDTemplate:
     return template_instance
 
 
+def get_template_parameter_crud() -> CRUDTemplateParameter:
+    return template_parameter_instance
+
+
 def get_topology_crud() -> CRUDTopology:
     return topology_instance
 
@@ -397,6 +403,7 @@ TaskApprovalCRUDDep = Annotated[CRUDTaskApprovalStep, Depends(get_task_approval_
 TaskCRUDDep = Annotated[CRUDTask, Depends(get_task_crud)]
 TemplateApprovalCRUDDep = Annotated[CRUDTemplateApprovalStep, Depends(get_template_approval_crud)]
 TemplateCRUDDep = Annotated[CRUDTemplate, Depends(get_template_crud)]
+TemplateParameterCRUDDep = Annotated[CRUDTemplateParameter, Depends(get_template_parameter_crud)]
 TopologyCRUDDep = Annotated[CRUDTopology, Depends(get_topology_crud)]
 UserCRUDDep = Annotated[CRUDUser, Depends(get_user_crud)]
 
@@ -509,9 +516,12 @@ def get_session_service(db: SessionDep, user_crud: UserCRUDDep) -> SessionServic
 
 
 def get_template_service(
-    db: SessionDep, template_crud: TemplateCRUDDep, template_approval_crud: TemplateApprovalCRUDDep
+    db: SessionDep,
+    template_crud: TemplateCRUDDep,
+    template_approval_crud: TemplateApprovalCRUDDep,
+    template_parameter_crud: TemplateParameterCRUDDep,
 ) -> TemplateService:
-    return TemplateService(db, template_crud, template_approval_crud)
+    return TemplateService(db, template_crud, template_approval_crud, template_parameter_crud)
 
 
 def get_topology_service(topology_crud: TopologyCRUDDep, device_crud: DeviceCRUDDep) -> TopologyService:

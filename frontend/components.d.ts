@@ -30,6 +30,7 @@ declare module 'vue' {
     NSpace: typeof import('naive-ui')['NSpace']
     NTabPane: typeof import('naive-ui')['NTabPane']
     NTabs: typeof import('naive-ui')['NTabs']
+    NTag: typeof import('naive-ui')['NTag']
     OtpModal: typeof import('./src/components/common/OtpModal.vue')['default']
     ProTable: typeof import('./src/components/common/ProTable.vue')['default']
     RecycleBinModal: typeof import('./src/components/common/RecycleBinModal.vue')['default']
