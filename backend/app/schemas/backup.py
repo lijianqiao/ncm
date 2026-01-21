@@ -81,9 +81,18 @@ class BackupListQuery(BaseModel):
     page_size: int = Field(default=20, ge=1, le=500, description="每页数量")
     device_id: UUID | None = Field(default=None, description="设备ID筛选")
     backup_type: BackupType | None = Field(default=None, description="备份类型筛选")
-    status: BackupStatus | None = Field(default=None, description="状态筛选")
+    status: BackupStatus | None = Field(default=None, description="备份状态筛选")
     start_date: datetime | None = Field(default=None, description="开始时间")
     end_date: datetime | None = Field(default=None, description="结束时间")
+
+    # 关键字搜索（设备名称/IP地址）
+    keyword: str | None = Field(default=None, max_length=100, description="关键字搜索（设备名称/IP地址）")
+
+    # 独立筛选参数（用于下拉菜单）
+    device_group: str | None = Field(default=None, description="设备分组筛选")
+    auth_type: str | None = Field(default=None, description="认证方式筛选")
+    device_status: str | None = Field(default=None, description="设备状态筛选")
+    vendor: str | None = Field(default=None, description="厂商筛选")
 
 
 class BackupDeviceRequest(BaseModel):
@@ -129,8 +138,13 @@ class BackupTaskStatus(BaseModel):
     """备份任务状态响应。"""
 
     task_id: str = Field(..., description="任务ID")
-    status: str = Field(..., description="任务状态 (PENDING/PROGRESS/SUCCESS/FAILURE)")
+    status: str = Field(..., description="任务状态 (pending/running/success/failed)")
     progress: dict | None = Field(default=None, description="进度信息")
+
+    # 进度数值（用于前端进度条）
+    completed: int | None = Field(default=None, description="已完成设备数")
+    total: int | None = Field(default=None, description="总设备数（用于进度条）")
+    percent: int | None = Field(default=None, description="完成百分比 (0-100)")
 
     # 结果摘要（任务完成时）
     total_devices: int | None = Field(default=None, description="总设备数")

@@ -62,6 +62,11 @@ export interface BackupSearchParams {
   page_size?: number
   device_id?: string
   backup_type?: BackupTypeType
+  keyword?: string // 搜索设备名称、IP
+  device_group?: string
+  auth_type?: string
+  device_status?: string
+  vendor?: string
 }
 
 /** 批量备份请求 */
@@ -70,6 +75,16 @@ export interface BatchBackupRequest {
   backup_type?: BackupTypeType
   resume_task_id?: string
   skip_device_ids?: string[]
+}
+
+/** OTP 通知结构 */
+export interface OTPNotice {
+  type?: string
+  message?: string
+  dept_id: string
+  device_group: string
+  failed_devices?: Array<{ name: string; error: string }>
+  pending_device_ids?: string[]
 }
 
 /** 批量备份结果 */
@@ -91,9 +106,32 @@ export interface BackupBatchResult {
 export interface BackupTaskStatus {
   task_id: string
   status: 'pending' | 'running' | 'success' | 'failed'
-  progress: number
-  result: BackupBatchResult | null
-  error: string | null
+
+  // 进度信息
+  progress?:
+    | number
+    | {
+        stage: string
+        message: string
+      }
+
+  // 进度数值（用于进度条）
+  completed?: number // 已完成设备数
+  total?: number // 总设备数
+  percent?: number // 百分比 0-100
+
+  // 完成后的统计
+  total_devices?: number
+  success_count?: number
+  failed_count?: number
+  failed_devices?: Array<{ name: string; error: string }>
+
+  // OTP 相关
+  otp_notice?: OTPNotice
+
+  // 兼容旧字段
+  result?: BackupBatchResult | null
+  error?: string | null
 }
 
 export interface BackupBatchDeleteRequest {

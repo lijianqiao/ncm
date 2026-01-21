@@ -69,6 +69,32 @@ const backupTypeOptions = [
   { label: '增量备份', value: 'incremental' },
 ]
 
+const deviceGroupOptions = [
+  { label: '核心层', value: 'core' },
+  { label: '汇聚层', value: 'distribution' },
+  { label: '接入层', value: 'access' },
+]
+
+const authTypeOptions = [
+  { label: '静态密码', value: 'static' },
+  { label: 'OTP 种子', value: 'otp_seed' },
+  { label: 'OTP 手动', value: 'otp_manual' },
+]
+
+const deviceStatusOptions = [
+  { label: '在库', value: 'in_stock' },
+  { label: '使用中', value: 'in_use' },
+  { label: '活跃', value: 'active' },
+  { label: '离线', value: 'offline' },
+  { label: '已报废', value: 'retired' },
+]
+
+const vendorOptions = [
+  { label: 'H3C', value: 'h3c' },
+  { label: 'Huawei', value: 'huawei' },
+  { label: 'Cisco', value: 'cisco' },
+]
+
 const backupTypeLabelMap: Record<BackupType, string> = {
   scheduled: '定时备份',
   manual: '手动备份',
@@ -103,6 +129,12 @@ const authTypeLabelMap: Record<string, string> = {
   static: '静态密码',
   otp_seed: 'OTP 种子',
   otp_manual: 'OTP 手动',
+}
+
+const deviceGroupLabels: Record<string, string> = {
+  core: '核心层',
+  distribution: '汇聚层',
+  access: '接入层',
 }
 
 // 格式化文件大小
@@ -244,6 +276,10 @@ const columns: DataTableColumns<Backup> = [
 
 const searchFilters: FilterConfig[] = [
   { key: 'backup_type', placeholder: '备份类型', options: backupTypeOptions, width: 120 },
+  { key: 'device_group', placeholder: '设备分组', options: deviceGroupOptions, width: 120 },
+  { key: 'auth_type', placeholder: '认证方式', options: authTypeOptions, width: 120 },
+  { key: 'device_status', placeholder: '设备状态', options: deviceStatusOptions, width: 120 },
+  { key: 'vendor', placeholder: '厂商', options: vendorOptions, width: 120 },
 ]
 
 // ==================== 数据加载 ====================
@@ -590,12 +626,6 @@ const otpRequiredInfo = ref<OTPRequiredDetails | null>(null)
 const pendingBackupDeviceId = ref<string>('')
 const pendingBatchBackup = ref(false)
 
-const deviceGroupLabels: Record<string, string> = {
-  core: '核心层',
-  distribution: '汇聚层',
-  access: '接入层',
-}
-
 const submitOTP = async (otpCode: string) => {
   if (!/^\d{6}$/.test(otpCode)) {
     $alert.warning('请输入有效的 OTP 验证码（6位数字）')
@@ -659,43 +689,10 @@ const {
   reset: resetBatchTask,
 } = useTaskPolling<BackupTaskStatus>((taskId) => getBackupTaskStatus(taskId), {
   onComplete: (status) => {
-    // 检测认证失败：任务完成但有设备因认证失败而失败
-    const results = status.result?.results as
-      | Record<string, { status: string; error?: string }>
-      | undefined
-    if (results) {
-      const authFailedDevices: string[] = []
-      for (const [deviceName, result] of Object.entries(results)) {
-        if (result.error && result.error.includes('authentication')) {
-          authFailedDevices.push(deviceName)
-        }
-      }
-
-      if (authFailedDevices.length > 0) {
-        // 有认证失败的设备，弹出 OTP 输入框
-        $alert.warning(`${authFailedDevices.length} 台设备认证失败，请输入 OTP 验证码重试`)
-        otpRequiredInfo.value = {
-          dept_id: '', // 批量备份时需要从设备信息获取
-          device_group: '',
-          failed_devices: authFailedDevices,
-        }
-        pendingBatchBackup.value = true
-        showOTPModal.value = true
-        return
-      }
-    }
-
-    // 检测任务是否返回了 OTP 要求（通过 status 字段或特定的 result 结构）
-    // 注意：如果是 428 响应，通常会被 request 拦截器捕获；
-    // 但如果后端是在 200 OK 中返回 status: 'running' 且包含 otp_notice，则在此处理。
-    // 根据最新需求，后端也可能通过 428 响应返回 OTP 要求，
-    // 但 useTaskPolling 内部通常只处理 200 响应。
-    // 如果轮询接口本身返回 428，我们需要在 onError 中捕获。
-
     // 任务完成后，1 秒后自动关闭弹窗并刷新列表
     if (status.status === 'success') {
       $alert.success(
-        `备份完成：成功 ${status.result?.success ?? 0} 台，失败 ${status.result?.failed ?? 0} 台`,
+        `备份完成：成功 ${status.success_count ?? 0} 台，失败 ${status.failed_count ?? 0} 台`,
       )
       setTimeout(() => {
         showBatchBackupModal.value = false
@@ -704,18 +701,18 @@ const {
     } else if (status.status === 'running') {
       // 检查运行中是否返回了 OTP 要求（兼容旧格式和新格式）
       // 假设新格式下，getBackupTaskStatus 正常返回 200，但 data 中包含 otp_notice
-      const result = status.result as unknown as Record<string, unknown> | undefined
-      // 兼容旧的 data.result.otp_required 格式
-      if (result && result.otp_required) {
+      const otpNotice = status.otp_notice
+      if (otpNotice) {
         stopPollingTaskStatus()
-        $alert.warning('部分设备需要 OTP 验证码，请输入以继续')
+        $alert.warning(otpNotice.message || '部分设备需要 OTP 验证码，请输入以继续')
         otpRequiredInfo.value = {
-          dept_id: (result.otp_dept_id as string) || '',
-          device_group: (result.otp_device_group as string) || '',
-          failed_devices: (result.failed_devices as { name: string; error: string }[])?.map(d => d.name) || [],
+          dept_id: otpNotice.dept_id,
+          device_group: otpNotice.device_group,
+          failed_devices: otpNotice.failed_devices?.map(d => d.name) || [],
+          pending_device_ids: otpNotice.pending_device_ids,
         }
-        if (Array.isArray(result.pending_device_ids)) {
-          batchBackupModel.value.device_ids = result.pending_device_ids as string[]
+        if (otpNotice.pending_device_ids && otpNotice.pending_device_ids.length > 0) {
+          batchBackupModel.value.device_ids = otpNotice.pending_device_ids
         }
         pendingBatchBackup.value = true
         showOTPModal.value = true
@@ -959,30 +956,30 @@ const closeBatchBackupModal = () => {
             </p>
           </div>
           <n-progress type="line"
-            :percentage="batchTaskStatus.status === 'success' ? 100 : batchTaskStatus.status === 'failed' ? 100 : 50"
+            :percentage="batchTaskStatus.percent ?? (batchTaskStatus.total ? Math.round((batchTaskStatus.completed ?? 0) / batchTaskStatus.total * 100) : 0)"
             :status="batchTaskStatus.status === 'success'
               ? 'success'
               : batchTaskStatus.status === 'failed'
                 ? 'error'
                 : 'default'
               " :processing="batchTaskStatus.status === 'running' || batchTaskStatus.status === 'pending'" />
-          <template v-if="batchTaskStatus.result">
+          <template v-if="batchTaskStatus.status === 'success' || batchTaskStatus.status === 'failed'">
             <div>
-              <p>总数: {{ batchTaskStatus.result.total }}</p>
+              <p>总数: {{ batchTaskStatus.total_devices }}</p>
               <p>
                 成功:
-                {{ batchTaskStatus.result.success ?? batchTaskStatus.result.success_count ?? 0 }}
+                {{ batchTaskStatus.success_count ?? 0 }}
               </p>
               <p>
                 失败:
-                {{ batchTaskStatus.result.failed ?? batchTaskStatus.result.failed_count ?? 0 }}
+                {{ batchTaskStatus.failed_count ?? 0 }}
               </p>
             </div>
-            <div v-if="batchTaskStatus.result.failed_devices?.length">
+            <div v-if="batchTaskStatus.failed_devices?.length">
               <p>失败详情:</p>
               <ul>
-                <li v-for="item in batchTaskStatus.result.failed_devices" :key="item.device_id">
-                  设备 {{ item.device_id }}: {{ item.error }}
+                <li v-for="item in batchTaskStatus.failed_devices" :key="item.name">
+                  设备 {{ item.name }}: {{ item.error }}
                 </li>
               </ul>
             </div>

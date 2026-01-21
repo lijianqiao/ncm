@@ -134,6 +134,12 @@ class CRUDBackup(CRUDBase[Backup, BackupCreate, BackupUpdate]):
         status: str | None = None,
         start_date: datetime | None = None,
         end_date: datetime | None = None,
+        keyword: str | None = None,
+        # 独立筛选参数
+        device_group: str | None = None,
+        auth_type: str | None = None,
+        device_status: str | None = None,
+        vendor: str | None = None,
     ) -> tuple[list[Backup], int]:
         """
         获取分页过滤的备份列表。
@@ -144,16 +150,28 @@ class CRUDBackup(CRUDBase[Backup, BackupCreate, BackupUpdate]):
             page_size: 每页数量
             device_id: 设备ID筛选
             backup_type: 备份类型筛选
-            status: 状态筛选
+            status: 备份状态筛选
             start_date: 开始时间筛选
             end_date: 结束时间筛选
+            keyword: 关键字搜索（设备名称/IP地址）
+            device_group: 设备分组筛选
+            auth_type: 认证方式筛选
+            device_status: 设备状态筛选
+            vendor: 厂商筛选
 
         Returns:
             (items, total): 备份列表和总数
         """
+        from sqlalchemy import or_
+
+        from app.models.device import Device
+
         page, page_size = self._validate_pagination(page, page_size, max_size=500, default_size=20)
 
         conditions: list[ColumnElement[bool]] = [self.model.is_deleted.is_(False)]
+        device_conditions: list[ColumnElement[bool]] = []
+
+        # 备份表条件
         if device_id:
             conditions.append(self.model.device_id == device_id)
         if backup_type:
@@ -165,14 +183,47 @@ class CRUDBackup(CRUDBase[Backup, BackupCreate, BackupUpdate]):
         if end_date:
             conditions.append(self.model.created_at <= end_date)
 
-        where_clause = self._and_where(conditions)
-        count_stmt = select(func.count(Backup.id)).where(where_clause)
-        stmt = (
-            select(self.model)
-            .options(selectinload(Backup.device), selectinload(Backup.operator))
-            .where(where_clause)
-            .order_by(self.model.created_at.desc())
-        )
+        # 设备表条件（需要 JOIN）
+        if keyword:
+            kw = f"%{keyword}%"
+            device_conditions.append(
+                or_(
+                    Device.name.ilike(kw),
+                    Device.ip_address.ilike(kw),
+                )
+            )
+        if device_group:
+            device_conditions.append(Device.device_group == device_group)
+        if auth_type:
+            device_conditions.append(Device.auth_type == auth_type)
+        if device_status:
+            device_conditions.append(Device.status == device_status)
+        if vendor:
+            device_conditions.append(Device.vendor == vendor)
+
+        # 判断是否需要 JOIN
+        need_join = bool(device_conditions)
+        all_conditions = conditions + device_conditions
+        where_clause = self._and_where(all_conditions)
+
+        if need_join:
+            count_stmt = select(func.count(Backup.id)).join(Device, Backup.device_id == Device.id).where(where_clause)
+            stmt = (
+                select(self.model)
+                .join(Device, Backup.device_id == Device.id)
+                .options(selectinload(Backup.device), selectinload(Backup.operator))
+                .where(where_clause)
+                .order_by(self.model.created_at.desc())
+            )
+        else:
+            count_stmt = select(func.count(Backup.id)).where(where_clause)
+            stmt = (
+                select(self.model)
+                .options(selectinload(Backup.device), selectinload(Backup.operator))
+                .where(where_clause)
+                .order_by(self.model.created_at.desc())
+            )
+
         return await self.paginate(
             db, stmt=stmt, count_stmt=count_stmt, page=page, page_size=page_size, max_size=500, default_size=20
         )
@@ -188,11 +239,24 @@ class CRUDBackup(CRUDBase[Backup, BackupCreate, BackupUpdate]):
         status: str | None = None,
         start_date: datetime | None = None,
         end_date: datetime | None = None,
+        keyword: str | None = None,
+        # 独立筛选参数
+        device_group: str | None = None,
+        auth_type: str | None = None,
+        device_status: str | None = None,
+        vendor: str | None = None,
     ) -> tuple[list[Backup], int]:
         """获取回收站（已软删除）备份列表（分页过滤）。"""
+        from sqlalchemy import or_
+
+        from app.models.device import Device
+
         page, page_size = self._validate_pagination(page, page_size, max_size=500, default_size=20)
 
         conditions: list[ColumnElement[bool]] = [self.model.is_deleted.is_(True)]
+        device_conditions: list[ColumnElement[bool]] = []
+
+        # 备份表条件
         if device_id:
             conditions.append(self.model.device_id == device_id)
         if backup_type:
@@ -204,14 +268,47 @@ class CRUDBackup(CRUDBase[Backup, BackupCreate, BackupUpdate]):
         if end_date:
             conditions.append(self.model.created_at <= end_date)
 
-        where_clause = self._and_where(conditions)
-        count_stmt = select(func.count(Backup.id)).where(where_clause)
-        stmt = (
-            select(self.model)
-            .options(selectinload(Backup.device), selectinload(Backup.operator))
-            .where(where_clause)
-            .order_by(self.model.created_at.desc())
-        )
+        # 设备表条件（需要 JOIN）
+        if keyword:
+            kw = f"%{keyword}%"
+            device_conditions.append(
+                or_(
+                    Device.name.ilike(kw),
+                    Device.ip_address.ilike(kw),
+                )
+            )
+        if device_group:
+            device_conditions.append(Device.device_group == device_group)
+        if auth_type:
+            device_conditions.append(Device.auth_type == auth_type)
+        if device_status:
+            device_conditions.append(Device.status == device_status)
+        if vendor:
+            device_conditions.append(Device.vendor == vendor)
+
+        # 判断是否需要 JOIN
+        need_join = bool(device_conditions)
+        all_conditions = conditions + device_conditions
+        where_clause = self._and_where(all_conditions)
+
+        if need_join:
+            count_stmt = select(func.count(Backup.id)).join(Device, Backup.device_id == Device.id).where(where_clause)
+            stmt = (
+                select(self.model)
+                .join(Device, Backup.device_id == Device.id)
+                .options(selectinload(Backup.device), selectinload(Backup.operator))
+                .where(where_clause)
+                .order_by(self.model.created_at.desc())
+            )
+        else:
+            count_stmt = select(func.count(Backup.id)).where(where_clause)
+            stmt = (
+                select(self.model)
+                .options(selectinload(Backup.device), selectinload(Backup.operator))
+                .where(where_clause)
+                .order_by(self.model.created_at.desc())
+            )
+
         return await self.paginate(
             db, stmt=stmt, count_stmt=count_stmt, page=page, page_size=page_size, max_size=500, default_size=20
         )

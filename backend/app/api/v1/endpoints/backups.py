@@ -57,6 +57,14 @@ def _format_operator_display(user: object | None) -> str | None:
     return str(username)
 
 
+def _looks_like_ip(value: str) -> bool:
+    """检查字符串是否看起来像 IP 地址（包含数字和点）。"""
+    if not value:
+        return False
+    # 简单判断：包含点且主要由数字和点组成，或者是 IPv6 格式（包含冒号）
+    return ("." in value and value.replace(".", "").replace(":", "").isdigit()) or ":" in value
+
+
 # ===== 备份列表 =====
 
 
@@ -73,6 +81,12 @@ async def get_backups(
     page_size: int = Query(default=20, ge=1, le=500, description="每页数量"),
     device_id: UUID | None = Query(default=None, description="设备ID筛选"),
     backup_type: BackupType | None = Query(default=None, description="备份类型筛选"),
+    keyword: str | None = Query(default=None, max_length=100, description="关键字搜索（设备名称/IP地址）"),
+    # 独立筛选参数（用于下拉菜单）
+    device_group: str | None = Query(default=None, description="设备分组筛选"),
+    auth_type: str | None = Query(default=None, description="认证方式筛选"),
+    device_status: str | None = Query(default=None, description="设备状态筛选"),
+    vendor: str | None = Query(default=None, description="厂商筛选"),
 ) -> ResponseBase[PaginatedResponse[BackupResponse]]:
     """获取分页过滤的配置备份列表。
 
@@ -82,15 +96,36 @@ async def get_backups(
         page_size (int): 每页大小。
         device_id (UUID | None): 按设备 ID 过滤。
         backup_type (BackupType | None): 按备份类型（手动/自动）过滤。
+        keyword (str | None): 关键字搜索（设备名称/IP地址）。
+        device_group (str | None): 设备分组筛选。
+        auth_type (str | None): 认证方式筛选。
+        device_status (str | None): 设备状态筛选。
+        vendor (str | None): 厂商筛选。
 
     Returns:
         ResponseBase[PaginatedResponse[BackupResponse]]: 包含备份记录的分页列表。
     """
+    # 如果 keyword 看起来像 IP 地址，验证其格式
+    validated_keyword = keyword
+    if keyword and _looks_like_ip(keyword):
+        from app.utils.validators import validate_ip_address
+
+        try:
+            validated_keyword = validate_ip_address(keyword)
+        except ValueError:
+            # IP 格式无效，保留原始关键字用于名称搜索
+            pass
+
     query = BackupListQuery(
         page=page,
         page_size=page_size,
         device_id=device_id,
         backup_type=backup_type,
+        keyword=validated_keyword,
+        device_group=device_group,
+        auth_type=auth_type,
+        device_status=device_status,
+        vendor=vendor,
     )
     items, total = await service.get_backups_paginated(query)
 
@@ -137,6 +172,12 @@ async def get_recycle_backups(
     page_size: int = Query(default=20, ge=1, le=500, description="每页数量"),
     device_id: UUID | None = Query(default=None, description="设备ID筛选"),
     backup_type: BackupType | None = Query(default=None, description="备份类型筛选"),
+    keyword: str | None = Query(default=None, max_length=100, description="关键字搜索（设备名称/IP地址）"),
+    # 独立筛选参数（用于下拉菜单）
+    device_group: str | None = Query(default=None, description="设备分组筛选"),
+    auth_type: str | None = Query(default=None, description="认证方式筛选"),
+    device_status: str | None = Query(default=None, description="设备状态筛选"),
+    vendor: str | None = Query(default=None, description="厂商筛选"),
 ) -> ResponseBase[PaginatedResponse[BackupResponse]]:
     """获取已软删除的备份列表（回收站）。
 
@@ -146,15 +187,36 @@ async def get_recycle_backups(
         page_size (int): 每页数量。
         device_id (UUID | None): 设备筛选。
         backup_type (BackupType | None): 备份类型筛选。
+        keyword (str | None): 关键字搜索（设备名称/IP地址）。
+        device_group (str | None): 设备分组筛选。
+        auth_type (str | None): 认证方式筛选。
+        device_status (str | None): 设备状态筛选。
+        vendor (str | None): 厂商筛选。
 
     Returns:
         ResponseBase[PaginatedResponse[BackupResponse]]: 回收站备份列表。
     """
+    # 如果 keyword 看起来像 IP 地址，验证其格式
+    validated_keyword = keyword
+    if keyword and _looks_like_ip(keyword):
+        from app.utils.validators import validate_ip_address
+
+        try:
+            validated_keyword = validate_ip_address(keyword)
+        except ValueError:
+            # IP 格式无效，保留原始关键字用于名称搜索
+            pass
+
     query = BackupListQuery(
         page=page,
         page_size=page_size,
         device_id=device_id,
         backup_type=backup_type,
+        keyword=validated_keyword,
+        device_group=device_group,
+        auth_type=auth_type,
+        device_status=device_status,
+        vendor=vendor,
     )
     items, total = await service.get_recycle_backups_paginated(query)
 
@@ -388,7 +450,7 @@ async def backup_devices_batch(
         operator_id=current_user.id,
     )
 
-    return ResponseBase(
+    return ResponseBase[BackupBatchResult](
         data=result,
         message=f"批量备份任务已提交，共 {result.total_devices} 台设备",
     )

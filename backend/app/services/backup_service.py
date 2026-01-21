@@ -85,6 +85,11 @@ class BackupService(DeviceCredentialMixin):
             status=query.status.value if query.status else None,
             start_date=query.start_date,
             end_date=query.end_date,
+            keyword=query.keyword,
+            device_group=query.device_group,
+            auth_type=query.auth_type,
+            device_status=query.device_status,
+            vendor=query.vendor,
         )
 
     async def get_recycle_backups_paginated(self, query: BackupListQuery) -> tuple[list[Backup], int]:
@@ -99,6 +104,11 @@ class BackupService(DeviceCredentialMixin):
             status=query.status.value if query.status else None,
             start_date=query.start_date,
             end_date=query.end_date,
+            keyword=query.keyword,
+            device_group=query.device_group,
+            auth_type=query.auth_type,
+            device_status=query.device_status,
+            vendor=query.vendor,
         )
 
     async def get_backup(self, backup_id: UUID) -> Backup:
@@ -493,8 +503,8 @@ class BackupService(DeviceCredentialMixin):
                 )
 
         backup_data = BackupCreate(
-            device_id=device.id,
             backup_type=backup_type,
+            device_id=device.id,
             content=content,
             content_path=content_path,
             content_size=content_size,
@@ -835,6 +845,15 @@ class BackupService(DeviceCredentialMixin):
 
         result = AsyncResult(task_id, app=celery_app)
 
+        # 调试日志：记录原始状态
+        logger.debug(
+            "查询任务状态",
+            task_id=task_id,
+            celery_status=result.status,
+            info_type=type(result.info).__name__ if result.info else None,
+            info_keys=list(result.info.keys()) if isinstance(result.info, dict) else None,
+        )
+
         # 将 Celery 状态转换为前端期望的小写格式
         status_map = {
             "PENDING": "pending",
@@ -866,6 +885,16 @@ class BackupService(DeviceCredentialMixin):
                 stage = info.get("stage", "")
                 message = info.get("message", "")
                 status_response.progress = {"stage": stage, "message": message}
+
+                # 提取进度数值（用于前端进度条）
+                completed = info.get("completed")
+                total = info.get("total")
+                if completed is not None:
+                    status_response.completed = completed
+                if total is not None:
+                    status_response.total = total
+                    if completed is not None and total > 0:
+                        status_response.percent = min(100, int(completed * 100 / total))
             else:
                 status_response.progress = {"message": str(info)}
         elif result.status == "SUCCESS":
@@ -879,14 +908,35 @@ class BackupService(DeviceCredentialMixin):
                 )
                 return status_response
 
-            status_response.total_devices = info.get("total", 0)
-            status_response.success_count = info.get("success", 0)
-            status_response.failed_count = info.get("failed", 0)
+            # 获取汇总数据
+            total = info.get("total", 0)
+            success = info.get("success", 0)
+            failed = info.get("failed", 0)
+
+            status_response.total_devices = total
+            status_response.success_count = success
+            status_response.failed_count = failed
+
+            # 完成时的进度数值（100%）
+            status_response.completed = total
+            status_response.total = total
+            status_response.percent = 100 if total > 0 else 0
+
             status_response.failed_devices = [
                 {"name": k, "error": v.get("error")}
                 for k, v in info.get("results", {}).items()
                 if v.get("status") == "failed"
             ]
+
+            # 调试日志：记录实际返回的数据
+            logger.debug(
+                "任务状态查询 SUCCESS",
+                task_id=task_id,
+                raw_result_keys=list(info.keys()) if isinstance(info, dict) else type(info).__name__,
+                total=total,
+                success=success,
+                failed=failed,
+            )
         elif result.status == "FAILURE":
             from app.core.exceptions import OTPRequiredException
 

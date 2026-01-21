@@ -161,11 +161,13 @@ class AsyncRunner:
             results[host_name] = multi
             if progress_callback:
                 try:
+                    logger.debug("准备调用进度回调", host=host_name)
                     maybe_awaitable = progress_callback(host_name, result)
                     if asyncio.iscoroutine(maybe_awaitable):
                         await maybe_awaitable
+                    logger.debug("进度回调完成", host=host_name)
                 except Exception as e:
-                    logger.debug("进度回调失败", host=host_name, error=str(e))
+                    logger.warning("进度回调失败", host=host_name, error=str(e), exc_info=True)
 
         # 统计
         failed_count = sum(1 for r in results.values() if r.failed)

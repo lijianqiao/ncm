@@ -19,7 +19,7 @@ from uuid import UUID
 from sqlalchemy import select
 
 from app.celery.app import celery_app
-from app.celery.base import BaseTask, run_async, safe_update_state
+from app.celery.base import BaseTask, run_async, safe_update_state, safe_update_state_async
 from app.core.config import settings
 from app.core.db import AsyncSessionLocal
 from app.core.enums import AlertSeverity, AlertType, AuthType, BackupStatus, BackupType, DeviceStatus
@@ -858,20 +858,31 @@ def async_backup_devices(
         backup_type=backup_type,
     )
 
+    total_hosts = len(hosts_data)
+
     self.update_state(
         state="PROGRESS",
-        meta={"stage": "initializing", "message": "正在初始化异步 Inventory..."},
+        meta={
+            "stage": "initializing",
+            "message": "正在初始化异步 Inventory...",
+            "completed": 0,
+            "total": total_hosts,
+        },
     )
 
     try:
         # 初始化异步 Inventory
         inventory = init_nornir_async(hosts_data)
 
-        total_hosts = len(inventory.hosts)
+        total_hosts = len(inventory.hosts)  # 更新为实际 inventory 数量
         progress_lock = asyncio.Lock()
         completed = 0
         name_to_id = {h.get("name"): h.get("device_id") for h in hosts_data if h.get("name")}
         otp_notice_sent = False
+
+        # 关键：在主线程中预先获取 task_id，避免在后台线程中访问 self.request
+        celery_task_id = self.request.id
+        celery_task = self
 
         async def _progress_callback(host_name: str, _result: Any) -> None:
             nonlocal completed
@@ -888,13 +899,15 @@ def async_backup_devices(
                     "otp_device_group": otp_exc.device_group,
                     "otp_failed_device_ids": [str(device_id)] if device_id else [],
                 }
-                safe_update_state(
-                    self,
-                    self.request.id,
+                await safe_update_state_async(
+                    celery_task,
+                    celery_task_id,
                     state="PROGRESS",
                     meta={
                         "stage": "otp_required",
                         "message": "需要重新输入 OTP 验证码",
+                        "completed": completed,
+                        "total": total_hosts,
                         **otp_meta,
                     },
                 )
@@ -911,9 +924,18 @@ def async_backup_devices(
                     progress_meta["otp_required"] = True
                 if otp_meta:
                     progress_meta.update(otp_meta)
-                safe_update_state(
-                    self,
-                    self.request.id,
+
+                logger.debug(
+                    "进度回调触发",
+                    task_id=celery_task_id,
+                    host=host_name,
+                    completed=completed,
+                    total=total_hosts,
+                )
+
+                await safe_update_state_async(
+                    celery_task,
+                    celery_task_id,
                     state="PROGRESS",
                     meta=progress_meta,
                 )
@@ -922,7 +944,9 @@ def async_backup_devices(
             state="PROGRESS",
             meta={
                 "stage": "executing",
-                "message": f"正在异步备份 {len(inventory.hosts)} 台设备...",
+                "message": f"正在异步备份 {total_hosts} 台设备...",
+                "completed": 0,
+                "total": total_hosts,
             },
         )
 
@@ -953,6 +977,8 @@ def async_backup_devices(
             meta={
                 "stage": "completed",
                 "message": f"异步备份完成: 成功 {summary['success']}, 失败 {summary['failed']}",
+                "completed": summary["total"],
+                "total": summary["total"],
             },
         )
 
@@ -1002,6 +1028,13 @@ def _aggregate_async_results(
         if h.get("device_id"):
             id_to_name[h.get("device_id")] = h.get("name")
 
+    # 记录原始数据用于调试
+    logger.debug(
+        "开始聚合异步结果",
+        hosts_count=len(hosts_data),
+        results_count=len(results) if results else 0,
+    )
+
     for host_name, multi_result in results.items():
         # multi_result 是 MultiResult，取第一个 Result
         if not multi_result or multi_result.failed:
@@ -1041,18 +1074,24 @@ def _aggregate_async_results(
                     "result": None,
                 }
         else:
-            success_count += 1
             r = multi_result[0]
             result_data = r.result or {}
 
+            # 检查任务返回结果中的 success 标志
+            task_success = result_data.get("success", True)  # 默认为 True（无异常即成功）
+            if task_success:
+                success_count += 1
+            else:
+                failed_count += 1
+
             name = id_to_name.get(host_name) or host_name
             results_dict[name] = {
-                "status": "success" if result_data.get("success") else "failed",
+                "status": "success" if task_success else "failed",
                 "result": result_data.get("config"),
-                "error": None,
+                "error": result_data.get("error") if not task_success else None,
             }
 
-    return {
+    summary = {
         "success": success_count,
         "failed": failed_count,
         "total": success_count + failed_count,
@@ -1060,3 +1099,12 @@ def _aggregate_async_results(
         "otp_failed_device_ids": otp_failed_device_ids,
         **(otp_required_info or {}),
     }
+
+    logger.info(
+        "异步结果聚合完成",
+        success=success_count,
+        failed=failed_count,
+        total=success_count + failed_count,
+    )
+
+    return summary

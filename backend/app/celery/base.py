@@ -148,7 +148,7 @@ def safe_update_state(
     **kwargs: Any,
 ) -> bool:
     """
-    安全更新工具
+    安全更新工具（同步版本）。
 
     Args:
         task: Celery 任务实例
@@ -169,6 +169,62 @@ def safe_update_state(
     except Exception as e:
         logger.warning(
             "更新任务状态失败",
+            task_id=celery_task_id,
+            task_name=getattr(task, "name", None),
+            error=str(e),
+            exc_info=True,
+        )
+        return False
+
+
+async def safe_update_state_async(
+    task: Task,
+    celery_task_id: str | None,
+    *,
+    state: str,
+    meta: dict[str, Any] | None = None,
+    **kwargs: Any,
+) -> bool:
+    """
+    安全更新工具（异步版本）。
+
+    在异步上下文（如 AsyncRunner 的进度回调）中使用此版本。
+    直接使用 Celery 后端 API 存储状态，避免线程安全问题。
+
+    Args:
+        task: Celery 任务实例
+        celery_task_id: Celery 任务 ID
+        state: 任务状态
+        meta: 任务元数据
+        kwargs: 其他参数
+
+    Returns:
+        是否更新成功
+
+    """
+    if not celery_task_id:
+        return False
+    try:
+        # 直接使用 Celery 后端 API 存储状态（绕过 task.update_state 的线程本地限制）
+        from app.celery.app import celery_app
+
+        backend = celery_app.backend
+        # store_result 是线程安全的，直接写入 Redis
+        backend.store_result(
+            celery_task_id,
+            meta,
+            state,
+        )
+        logger.debug(
+            "异步更新任务状态成功",
+            task_id=celery_task_id,
+            state=state,
+            meta_keys=list(meta.keys()) if meta else None,
+        )
+        return True
+    except Exception as e:
+        logger.warning(
+            "异步更新任务状态失败",
             task_id=celery_task_id,
             task_name=getattr(task, "name", None),
             error=str(e),
