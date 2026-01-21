@@ -21,6 +21,15 @@ from app.core.logger import logger
 if TYPE_CHECKING:
     from nornir.core.inventory import Host, Inventory
 
+type AsyncTaskFn = Callable[["Host"], Coroutine[Any, Any, Any]]
+"""异步任务函数类型：接收 Host 返回协程。"""
+
+type ProgressCallback = Callable[[str, Result], Awaitable[None] | None]
+"""进度回调类型：接收 host_name 和 Result，返回可选的 awaitable。"""
+
+type HostsDict = dict[str, "Host"]
+"""主机字典类型。"""
+
 
 class AsyncRunner:
     """
@@ -55,8 +64,8 @@ class AsyncRunner:
 
     def run(
         self,
-        task: Callable[["Host"], Coroutine[Any, Any, Any]],
-        hosts: dict[str, "Host"],
+        task: AsyncTaskFn,
+        hosts: HostsDict,
         **kwargs: Any,
     ) -> AggregatedResult:
         """
@@ -82,9 +91,9 @@ class AsyncRunner:
 
     async def _run_async(
         self,
-        task: Callable[["Host"], Coroutine[Any, Any, Any]],
-        hosts: dict[str, "Host"],
-        progress_callback: Callable[[str, Result], Awaitable[None] | None] | None = None,
+        task: AsyncTaskFn,
+        hosts: HostsDict,
+        progress_callback: ProgressCallback | None = None,
         **kwargs: Any,
     ) -> AggregatedResult:
         """
@@ -173,10 +182,10 @@ class AsyncRunner:
 
 
 async def run_async_tasks(
-    hosts: "dict[str, Host] | Inventory",
-    task_fn: "Callable[[Host], Coroutine[Any, Any, Any]]",
-    num_workers: "int | None" = None,
-    progress_callback: Callable[[str, Result], Awaitable[None] | None] | None = None,
+    hosts: "HostsDict | Inventory",
+    task_fn: AsyncTaskFn,
+    num_workers: int | None = None,
+    progress_callback: ProgressCallback | None = None,
     **kwargs: Any,
 ) -> AggregatedResult:
     """
@@ -208,7 +217,7 @@ async def run_async_tasks(
     """
     # 处理 Inventory 对象
     if hasattr(hosts, "hosts"):
-        hosts_dict: dict[str, Host] = hosts.hosts  # type: ignore[union-attr]
+        hosts_dict: HostsDict = hosts.hosts  # type: ignore[union-attr]
     else:
         hosts_dict = hosts  # type: ignore[assignment]
 
@@ -217,10 +226,10 @@ async def run_async_tasks(
 
 
 def run_async_tasks_sync(
-    hosts: "dict[str, Host] | Inventory",
-    task_fn: "Callable[[Host], Coroutine[Any, Any, Any]]",
-    num_workers: "int | None" = None,
-    progress_callback: Callable[[str, Result], Awaitable[None] | None] | None = None,
+    hosts: "HostsDict | Inventory",
+    task_fn: AsyncTaskFn,
+    num_workers: int | None = None,
+    progress_callback: ProgressCallback | None = None,
     **kwargs: Any,
 ) -> AggregatedResult:
     """

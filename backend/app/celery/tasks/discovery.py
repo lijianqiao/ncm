@@ -19,6 +19,57 @@ from app.crud.crud_discovery import discovery_crud
 from app.services.scan_service import ScanService
 
 
+def _parse_dept_uuid(dept_id: str | None) -> "UUID | None":
+    """将字符串 dept_id 安全转换为 UUID，转换失败返回 None。"""
+    if not dept_id:
+        return None
+    try:
+        return UUID(str(dept_id))
+    except (ValueError, TypeError):
+        return None
+
+
+async def _execute_scan(
+    scan_service: ScanService,
+    subnet: str,
+    scan_type: str = "auto",
+    ports: str | None = None,
+) -> "ScanResultSchema":
+    """执行单个网段扫描的共用逻辑。
+
+    Args:
+        scan_service: 扫描服务实例
+        subnet: 网段 (CIDR 格式)
+        scan_type: 扫描类型 (nmap/masscan/auto)
+        ports: 扫描端口
+
+    Returns:
+        扫描结果 Schema
+    """
+    from datetime import datetime
+
+    from app.schemas.discovery import ScanResult as ScanResultSchema
+
+    resolved = scan_service.resolve_scan_type(scan_type)
+
+    if resolved == "masscan":
+        return await scan_service.masscan_scan(subnet, ports=ports)
+    if resolved == "nmap":
+        return await scan_service.nmap_scan(subnet, ports=ports)
+
+    # 未检测到可用扫描器
+    return ScanResultSchema(
+        subnet=subnet,
+        scan_type="auto",
+        hosts_found=0,
+        hosts=[],
+        started_at=datetime.now(),
+        completed_at=datetime.now(),
+        duration_seconds=0,
+        error="未检测到可用扫描器：请安装 nmap 或 masscan，并确保在 PATH 中",
+    )
+
+
 @celery_app.task(
     base=BaseTask,
     bind=True,
@@ -45,14 +96,7 @@ def scan_subnet(
     """
 
     celery_task_id = self.request.id
-    dept_uuid = None
-    if dept_id:
-        try:
-            from uuid import UUID
-
-            dept_uuid = UUID(str(dept_id))
-        except Exception:
-            dept_uuid = None
+    dept_uuid = _parse_dept_uuid(dept_id)
 
     async def _scan():
         async with AsyncSessionLocal() as db:
@@ -69,27 +113,8 @@ def scan_subnet(
                 meta={"progress": 5, "stage": "scanning", "subnet": subnet},
             )
 
-            # 执行扫描
-            resolved = scan_service.resolve_scan_type(scan_type)
-            if resolved == "masscan":
-                result = await scan_service.masscan_scan(subnet, ports=ports)
-            elif resolved == "nmap":
-                result = await scan_service.nmap_scan(subnet, ports=ports)
-            else:
-                from datetime import datetime
-
-                from app.schemas.discovery import ScanResult as ScanResultSchema
-
-                result = ScanResultSchema(
-                    subnet=subnet,
-                    scan_type="auto",
-                    hosts_found=0,
-                    hosts=[],
-                    started_at=datetime.now(),
-                    completed_at=datetime.now(),
-                    duration_seconds=0,
-                    error="未检测到可用扫描器：请安装 nmap 或 masscan，并确保在 PATH 中",
-                )
+            # 执行扫描（使用共用函数）
+            result = await _execute_scan(scan_service, subnet, scan_type, ports)
 
             # 阶段：扫描完成，准备入库
             safe_update_state(
@@ -157,14 +182,7 @@ def scan_subnets_batch(
     """
 
     celery_task_id = self.request.id
-    dept_uuid = None
-    if dept_id:
-        try:
-            from uuid import UUID
-
-            dept_uuid = UUID(str(dept_id))
-        except Exception:
-            dept_uuid = None
+    dept_uuid = _parse_dept_uuid(dept_id)
 
     async def _batch_scan():
         results = []
@@ -194,27 +212,8 @@ def scan_subnets_batch(
                         },
                     )
 
-                    # 执行扫描
-                    resolved = scan_service.resolve_scan_type(scan_type)
-                    if resolved == "masscan":
-                        result = await scan_service.masscan_scan(subnet, ports=ports)
-                    elif resolved == "nmap":
-                        result = await scan_service.nmap_scan(subnet, ports=ports)
-                    else:
-                        from datetime import datetime
-
-                        from app.schemas.discovery import ScanResult as ScanResultSchema
-
-                        result = ScanResultSchema(
-                            subnet=subnet,
-                            scan_type="auto",
-                            hosts_found=0,
-                            hosts=[],
-                            started_at=datetime.now(),
-                            completed_at=datetime.now(),
-                            duration_seconds=0,
-                            error="未检测到可用扫描器：请安装 nmap 或 masscan，并确保在 PATH 中",
-                        )
+                    # 执行扫描（使用共用函数）
+                    result = await _execute_scan(scan_service, subnet, scan_type, ports)
 
                     safe_update_state(
                         self,

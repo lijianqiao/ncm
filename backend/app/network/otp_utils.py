@@ -4,12 +4,76 @@
 @FileName: otp_utils.py
 @DateTime: 2026-01-20 00:55:00
 @Docs: OTP 辅助工具（缓存读取与异常封装）。
+
+统一的 OTP 认证处理逻辑，供 async_tasks 和 nornir_tasks 共用。
 """
 
+from typing import Any
 from uuid import UUID
 
 from app.core.exceptions import OTPRequiredException
 from app.core.otp_service import otp_service
+
+
+async def resolve_otp_password(
+    auth_type: str | None,
+    host_data: dict[str, Any],
+) -> str | None:
+    """
+    根据认证类型解析 OTP 密码（统一入口）。
+
+    Args:
+        auth_type: 认证类型 (static/otp_seed/otp_manual)
+        host_data: 包含 otp_seed_encrypted, dept_id, device_group, device_id 等
+
+    Returns:
+        str | None: 解析后的密码，static 类型返回 None（使用原密码）
+
+    Raises:
+        OTPRequiredException: otp_manual 类型且缓存中无 OTP 时抛出
+        ValueError: 缺少必要参数时抛出
+    """
+    if auth_type == "otp_seed":
+        encrypted_seed = host_data.get("otp_seed_encrypted")
+        if not encrypted_seed:
+            raise ValueError("缺少 OTP 种子，无法生成验证码")
+        return otp_service.generate_totp(str(encrypted_seed))
+
+    if auth_type == "otp_manual":
+        dept_id_raw = host_data.get("dept_id")
+        device_group = host_data.get("device_group")
+        if not dept_id_raw or not device_group:
+            raise ValueError("缺少 OTP 所需的部门/分层信息，无法获取验证码")
+
+        dept_id = UUID(str(dept_id_raw))
+        failed_id = host_data.get("device_id") or host_data.get("name", "unknown")
+
+        otp_code = await otp_service.get_cached_otp(dept_id, str(device_group))
+        if not otp_code:
+            raise OTPRequiredException(
+                dept_id=dept_id,
+                device_group=str(device_group),
+                failed_devices=[str(failed_id)],
+                message="需要输入 OTP 验证码",
+            )
+        return otp_code
+
+    # static 或其他类型，返回 None 表示使用原密码
+    return None
+
+
+def resolve_otp_password_sync(
+    auth_type: str | None,
+    host_data: dict[str, Any],
+) -> str | None:
+    """
+    同步版 OTP 密码解析（使用 run_async 包装）。
+
+    用于 Nornir 同步任务中。
+    """
+    from app.celery.base import run_async
+
+    return run_async(resolve_otp_password(auth_type, host_data))
 
 
 def build_otp_required_exception(

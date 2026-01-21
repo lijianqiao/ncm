@@ -205,8 +205,11 @@ class BaseTask(Task):
     retry_backoff_max = 600  # 最大退避时间 10 分钟
     retry_jitter = True  # 添加随机抖动
     max_retries = 3  # 最大重试次数
-    # 对于长时间运行的任务，确保 Worker 崩溃时任务不会丢失
+
+    # Celery 官方推荐：acks_late + reject_on_worker_lost 组合使用
+    # 确保 Worker 崩溃/被终止时任务会重新入队而不是丢失
     acks_late = True
+    reject_on_worker_lost = True
 
     def on_success(self, retval, task_id: str, args, kwargs) -> None:
         """任务成功完成时的回调。"""

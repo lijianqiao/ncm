@@ -27,9 +27,13 @@ from app.network.platform_config import (
     detect_vendor_from_version,
     get_command,
     get_platform_for_vendor,
-    get_scrapli_options,
 )
-from app.network.scrapli_utils import disable_paging, is_command_error, send_command_with_paging
+from app.network.scrapli_utils import (
+    build_scrapli_config,
+    disable_paging,
+    is_command_error,
+    send_command_with_paging,
+)
 
 
 @dataclass
@@ -72,18 +76,16 @@ async def test_device_connection(
     )
 
     def _sync() -> ConnectionTestResult:
-        scrapli_options = get_scrapli_options(platform)
-        scrapli_options["timeout_socket"] = timeout
-        scrapli_options["timeout_transport"] = timeout
-
-        device_config = {
-            "host": host,
-            "auth_username": username,
-            "auth_password": password,
-            "port": port,
-            "platform": platform,
-            **scrapli_options,
-        }
+        # 使用统一的配置构建函数
+        device_config = build_scrapli_config(
+            host=host,
+            username=username,
+            password=password,
+            platform=platform,
+            port=port,
+            timeout_socket=timeout,
+            timeout_transport=timeout,
+        )
 
         try:
             with Scrapli(**device_config) as conn:
@@ -194,30 +196,15 @@ async def execute_command_on_device(
         return cmd_norm in {"show running-config", "show run"}
 
     def _build_device_config(timeout_ops: int) -> dict[str, Any]:
-        scrapli_options = get_scrapli_options(platform)
-        base_timeout_transport = int(scrapli_options.get("timeout_transport") or 0)
-        base_timeout_socket = int(scrapli_options.get("timeout_socket") or 0)
-        effective_timeout_ops = max(int(timeout_ops), int(settings.ASYNC_SSH_TIMEOUT or 0))
-
-        scrapli_options["timeout_transport"] = max(base_timeout_transport, effective_timeout_ops)
-        scrapli_options["timeout_socket"] = max(
-            base_timeout_socket,
-            int(settings.ASYNC_SSH_CONNECT_TIMEOUT),
-            effective_timeout_ops,
+        # 使用统一的配置构建函数
+        return build_scrapli_config(
+            host=host,
+            username=username,
+            password=password,
+            platform=platform,
+            port=port,
+            timeout_ops=timeout_ops,
         )
-        scrapli_options["timeout_ops"] = effective_timeout_ops
-
-        device_config = {
-            "host": host,
-            "auth_username": username,
-            "auth_password": password,
-            "port": port,
-            "platform": platform,
-            **scrapli_options,
-        }
-        if platform.startswith("cisco_") and not device_config.get("auth_secondary"):
-            device_config["auth_secondary"] = password
-        return device_config
 
     start = time.monotonic()
     stage = "init"
@@ -345,22 +332,16 @@ async def execute_commands_on_device(
     if not safe_commands:
         return {"success": False, "output": "", "error": "命令为空"}
 
-    scrapli_options = get_scrapli_options(platform)
-    base_timeout_transport = int(scrapli_options.get("timeout_transport") or 0)
-    scrapli_options["timeout_transport"] = max(base_timeout_transport, timeout)
-    base_timeout_socket = int(scrapli_options.get("timeout_socket") or 0)
-    scrapli_options["timeout_socket"] = max(base_timeout_socket, int(settings.ASYNC_SSH_CONNECT_TIMEOUT))
-
-    device_config = {
-        "host": host,
-        "auth_username": username,
-        "auth_password": password,
-        "port": port,
-        "platform": platform,
-        **scrapli_options,
-    }
-    if platform.startswith("cisco_") and not device_config.get("auth_secondary"):
-        device_config["auth_secondary"] = password
+    # 使用统一的配置构建函数
+    device_config = build_scrapli_config(
+        host=host,
+        username=username,
+        password=password,
+        platform=platform,
+        port=port,
+        timeout_transport=timeout,
+        timeout_ops=timeout,
+    )
 
     start = time.monotonic()
     stage = "init"

@@ -16,43 +16,23 @@ from nornir.core.task import AggregatedResult, MultiResult, Result, Task
 from nornir_scrapli.tasks import send_command, send_commands, send_configs
 from scrapli.exceptions import ScrapliAuthenticationFailed
 
-from app.celery.base import run_async
 from app.core.config import settings
 from app.core.exceptions import OTPRequiredException
 from app.core.logger import logger
-from app.network.otp_utils import (
-    get_manual_otp_or_raise,
-    get_seed_otp,
-    handle_otp_auth_failure_sync,
-)
+from app.network.otp_utils import handle_otp_auth_failure_sync, resolve_otp_password_sync
 from app.network.platform_config import get_command
 from app.network.scrapli_utils import disable_paging, is_command_error, send_command_with_paging
 from app.network.textfsm_parser import parse_command_output
 
 
 def _apply_dynamic_auth(task: Task) -> None:
+    """应用动态认证到 Nornir Host（使用统一的 OTP 解析逻辑）。"""
     auth_type = task.host.data.get("auth_type")
-    if auth_type == "otp_seed":
-        encrypted_seed = task.host.data.get("otp_seed_encrypted")
-        if not encrypted_seed:
-            raise ValueError("缺少 OTP 种子，无法生成验证码")
-        task.host.password = run_async(get_seed_otp(str(encrypted_seed)))
-        return
+    host_data = {"name": task.host.name, **dict(task.host.data)}
 
-    if auth_type != "otp_manual":
-        return
-
-    dept_id_raw = task.host.data.get("dept_id")
-    device_group = task.host.data.get("device_group")
-    if not dept_id_raw or not device_group:
-        raise ValueError("缺少 OTP 所需的部门/分层信息，无法获取验证码")
-
-    from uuid import UUID
-
-    dept_id = UUID(str(dept_id_raw))
-    failed_id = task.host.data.get("device_id") or task.host.name
-    otp_code = run_async(get_manual_otp_or_raise(dept_id, str(device_group), str(failed_id)))
-    task.host.password = otp_code
+    otp_password = resolve_otp_password_sync(auth_type, host_data)
+    if otp_password is not None:
+        task.host.password = otp_password
 
 
 def backup_config(task: Task) -> Result:
@@ -298,7 +278,7 @@ def _handle_otp_exception(
     return host_result, otp_required_info
 
 
-def _extract_error_and_exception(multi_result: MultiResult) -> tuple[str, Exception | None]:
+def _extract_error_and_exception(multi_result: MultiResult) -> tuple[str, BaseException | None]:
     """从 MultiResult 中提取错误信息和异常。"""
     if multi_result.exception:
         return str(multi_result.exception), multi_result.exception

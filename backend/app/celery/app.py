@@ -16,11 +16,27 @@ from celery.signals import worker_init, worker_process_init, worker_shutdown
 from app.core.config import settings
 
 
+def _do_init_redis(context: str) -> None:
+    """Worker/子进程共用的 Redis 初始化逻辑。
+
+    Args:
+        context: 调用上下文描述（用于日志区分）
+    """
+    from app.core.logger import logger
+
+    try:
+        from app.celery.base import init_celery_async_runtime, run_async
+        from app.core.cache import init_redis
+
+        init_celery_async_runtime()
+        run_async(init_redis())
+    except Exception as e:
+        logger.warning(f"{context}初始化 Redis 失败，任务将降级运行", error=str(e), exc_info=True)
+
+
 @worker_init.connect
 def _init_worker_redis(**_kwargs) -> None:
     """初始化 Worker 需要的外部资源（如 Redis）。"""
-    from app.core.logger import logger
-
     # Linux prefork(fork) 场景下，worker_init 发生在主进程，事件循环不应在 fork 前初始化。
     if os.name != "nt":
         try:
@@ -30,31 +46,13 @@ def _init_worker_redis(**_kwargs) -> None:
         if start_method == "fork":
             return
 
-    try:
-        from app.celery.base import init_celery_async_runtime, run_async
-        from app.core.cache import init_redis
-
-        init_celery_async_runtime()
-        run_async(init_redis())
-    except Exception as e:
-        # 初始化失败不阻断 worker 启动（任务会降级运行），但记录警告日志
-        logger.warning("Worker 初始化 Redis 失败，任务将降级运行", error=str(e), exc_info=True)
+    _do_init_redis("Worker")
 
 
 @worker_process_init.connect
 def _init_worker_process_redis(**_kwargs) -> None:
     """prefork 模式下的子进程初始化。"""
-    from app.core.logger import logger
-
-    try:
-        from app.celery.base import init_celery_async_runtime, run_async
-        from app.core.cache import init_redis
-
-        init_celery_async_runtime()
-        run_async(init_redis())
-    except Exception as e:
-        # 初始化失败不阻断子进程启动，但记录警告日志
-        logger.warning("Worker 子进程初始化 Redis 失败", error=str(e), exc_info=True)
+    _do_init_redis("Worker 子进程")
 
 
 @worker_shutdown.connect
@@ -88,6 +86,8 @@ def create_celery_app() -> Celery:
 
     # Celery 配置
     celery_app.conf.update(
+        # Broker 连接配置
+        broker_connection_retry_on_startup=True,  # Celery 6.0 兼容：启动时重试 broker 连接
         # 任务序列化
         task_serializer="json",
         accept_content=["json"],

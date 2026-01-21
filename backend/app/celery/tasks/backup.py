@@ -39,18 +39,26 @@ from app.services.notification_service import NotificationService
 from app.utils.validators import compute_text_md5, should_skip_backup_save_due_to_unchanged_md5
 
 
+# 备份类型与保留数量的映射（懒加载，避免模块导入时 settings 未初始化）
+_BACKUP_RETENTION_MAP: dict[BackupType, str] | None = None
+
+
 def _get_keep_count(bt: BackupType) -> int:
-    if bt == BackupType.SCHEDULED:
-        return settings.BACKUP_RETENTION_SCHEDULED_KEEP
-    if bt == BackupType.MANUAL:
-        return settings.BACKUP_RETENTION_MANUAL_KEEP
-    if bt == BackupType.PRE_CHANGE:
-        return settings.BACKUP_RETENTION_PRE_CHANGE_KEEP
-    if bt == BackupType.POST_CHANGE:
-        return settings.BACKUP_RETENTION_POST_CHANGE_KEEP
-    if bt == BackupType.INCREMENTAL:
-        return settings.BACKUP_RETENTION_INCREMENTAL_KEEP
-    return 0
+    """根据备份类型获取保留数量（使用字典映射替代 if-elif）。"""
+    global _BACKUP_RETENTION_MAP
+    if _BACKUP_RETENTION_MAP is None:
+        _BACKUP_RETENTION_MAP = {
+            BackupType.SCHEDULED: "BACKUP_RETENTION_SCHEDULED_KEEP",
+            BackupType.MANUAL: "BACKUP_RETENTION_MANUAL_KEEP",
+            BackupType.PRE_CHANGE: "BACKUP_RETENTION_PRE_CHANGE_KEEP",
+            BackupType.POST_CHANGE: "BACKUP_RETENTION_POST_CHANGE_KEEP",
+            BackupType.INCREMENTAL: "BACKUP_RETENTION_INCREMENTAL_KEEP",
+        }
+
+    attr_name = _BACKUP_RETENTION_MAP.get(bt)
+    if attr_name is None:
+        return 0
+    return getattr(settings, attr_name, 0)
 
 
 async def _enforce_retention_for_device(db: Any, device_id: str) -> None:
@@ -657,9 +665,6 @@ async def _get_devices_for_scheduled_backup() -> tuple[list[dict], list[str]]:
     return hosts_data, skipped_devices
 
 
-async def _save_scheduled_backup_results(hosts_data: list[dict], summary: dict) -> None:
-    """保存定时备份结果到数据库。"""
-    await _save_backup_results(hosts_data, summary, backup_type=BackupType.SCHEDULED.value)
 
 
 @celery_app.task(
