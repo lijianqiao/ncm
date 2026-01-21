@@ -19,6 +19,8 @@ from app.core.config import settings
 @worker_init.connect
 def _init_worker_redis(**_kwargs) -> None:
     """初始化 Worker 需要的外部资源（如 Redis）。"""
+    from app.core.logger import logger
+
     # Linux prefork(fork) 场景下，worker_init 发生在主进程，事件循环不应在 fork 前初始化。
     if os.name != "nt":
         try:
@@ -34,34 +36,41 @@ def _init_worker_redis(**_kwargs) -> None:
 
         init_celery_async_runtime()
         run_async(init_redis())
-    except Exception:
-        # 初始化失败不阻断 worker 启动（任务会降级运行）
-        return
+    except Exception as e:
+        # 初始化失败不阻断 worker 启动（任务会降级运行），但记录警告日志
+        logger.warning("Worker 初始化 Redis 失败，任务将降级运行", error=str(e), exc_info=True)
 
 
 @worker_process_init.connect
 def _init_worker_process_redis(**_kwargs) -> None:
     """prefork 模式下的子进程初始化。"""
+    from app.core.logger import logger
+
     try:
         from app.celery.base import init_celery_async_runtime, run_async
         from app.core.cache import init_redis
 
         init_celery_async_runtime()
         run_async(init_redis())
-    except Exception:
-        return
+    except Exception as e:
+        # 初始化失败不阻断子进程启动，但记录警告日志
+        logger.warning("Worker 子进程初始化 Redis 失败", error=str(e), exc_info=True)
 
 
 @worker_shutdown.connect
 def _close_worker_redis(**_kwargs) -> None:
+    """Worker 关闭时清理资源。"""
+    from app.core.logger import logger
+
     try:
         from app.celery.base import close_celery_async_runtime, run_async
         from app.core.cache import close_redis
 
         run_async(close_redis())
         close_celery_async_runtime()
-    except Exception:
-        return
+    except Exception as e:
+        # 关闭失败不影响退出，但记录警告日志
+        logger.warning("Worker 关闭时清理资源失败", error=str(e), exc_info=True)
 
 
 def create_celery_app() -> Celery:

@@ -1,4 +1,4 @@
-﻿"""
+"""
 @Author: li
 @Email: lijianqiao2906@live.com
 @FileName: deploy.py
@@ -34,6 +34,32 @@ from app.services.render_service import RenderService
 
 # 支持回滚的厂商列表（扩展支持 Huawei/Cisco）
 SUPPORTED_ROLLBACK_VENDORS: set[str] = {"h3c", "huawei", "cisco"}
+
+
+async def _mark_task_paused(task_id: str, message: str, details: dict[str, Any] | None = None) -> None:
+    """将任务标记为暂停状态（OTP 认证失败时使用）。"""
+    async with AsyncSessionLocal() as db:
+        task = await db.get(Task, UUID(task_id))
+        if not task:
+            return
+        task.status = TaskStatus.PAUSED.value
+        task.error_message = message
+        task.result = details
+        await db.flush()
+        await db.commit()
+
+
+async def _mark_task_failed(task_id: str, error_message: str) -> None:
+    """将任务标记为失败状态。"""
+    async with AsyncSessionLocal() as db:
+        task = await db.get(Task, UUID(task_id))
+        if not task:
+            return
+        task.status = TaskStatus.FAILED.value
+        task.error_message = error_message
+        task.finished_at = datetime.now(UTC)
+        await db.flush()
+        await db.commit()
 
 
 async def _update_task_status_with_retry(
@@ -155,45 +181,17 @@ def deploy_task(self, task_id: str) -> dict[str, Any]:
         return run_async(_deploy_task_async(self, task_id, celery_task_id=celery_task_id))
     except OTPRequiredException as otp_exc:
         # OTP 认证失败：标记为 PAUSED，让用户重新输入 OTP
-        otp_message = otp_exc.message
-        otp_details = otp_exc.details
-        logger.info("下发需要 OTP 输入", deploy_task_id=task_id, message=otp_message)
-
-        async def _mark_paused_sync() -> None:
-            async with AsyncSessionLocal() as db:
-                task_uuid = UUID(task_id)
-                task = await db.get(Task, task_uuid)
-                if not task:
-                    return
-                task.status = TaskStatus.PAUSED.value
-                task.error_message = otp_message
-                task.result = otp_details
-                await db.flush()
-                await db.commit()
-
+        logger.info("下发需要 OTP 输入", deploy_task_id=task_id, message=otp_exc.message)
         try:
-            run_async(_mark_paused_sync())
+            run_async(_mark_task_paused(task_id, otp_exc.message, otp_exc.details))
         except Exception:
             pass
-        return {"status": "paused", "otp_required": otp_details}
+        return {"status": "paused", "otp_required": otp_exc.details}
     except Exception as e:
         error_text = str(e)
         logger.error("下发任务执行异常", deploy_task_id=task_id, error=error_text, exc_info=True)
-
-        async def _mark_failed(error_message: str = error_text) -> None:
-            async with AsyncSessionLocal() as db:
-                task_uuid = UUID(task_id)
-                task = await db.get(Task, task_uuid)
-                if not task:
-                    return
-                task.status = TaskStatus.FAILED.value
-                task.error_message = error_message
-                task.finished_at = datetime.now(UTC)
-                await db.flush()
-                await db.commit()
-
         try:
-            run_async(_mark_failed())
+            run_async(_mark_task_failed(task_id, error_text))
         except Exception:
             pass
         raise
@@ -545,46 +543,18 @@ def async_deploy_task(self, task_id: str) -> dict[str, Any]:
         return run_async(_async_deploy_task_impl(self, task_id, celery_task_id=celery_task_id))
     except OTPRequiredException as otp_exc:
         # OTP 认证失败：标记为 PAUSED，让用户重新输入 OTP
-        otp_message = otp_exc.message
-        otp_details = otp_exc.details
-        logger.info("异步下发需要 OTP 输入", deploy_task_id=task_id, message=otp_message)
-
-        async def _mark_paused() -> None:
-            async with AsyncSessionLocal() as db:
-                task_uuid = UUID(task_id)
-                task = await db.get(Task, task_uuid)
-                if not task:
-                    return
-                task.status = TaskStatus.PAUSED.value
-                task.error_message = otp_message
-                task.result = otp_details
-                await db.flush()
-                await db.commit()
-
+        logger.info("异步下发需要 OTP 输入", deploy_task_id=task_id, message=otp_exc.message)
         try:
-            run_async(_mark_paused())
+            run_async(_mark_task_paused(task_id, otp_exc.message, otp_exc.details))
         except Exception:
             pass
         # 返回 paused 状态而不是抛出异常
-        return {"status": "paused", "otp_required": otp_details}
+        return {"status": "paused", "otp_required": otp_exc.details}
     except Exception as e:
         error_text = str(e)
         logger.error("异步下发任务执行异常", deploy_task_id=task_id, error=error_text, exc_info=True)
-
-        async def _mark_failed(error_message: str = error_text) -> None:
-            async with AsyncSessionLocal() as db:
-                task_uuid = UUID(task_id)
-                task = await db.get(Task, task_uuid)
-                if not task:
-                    return
-                task.status = TaskStatus.FAILED.value
-                task.error_message = error_message
-                task.finished_at = datetime.now(UTC)
-                await db.flush()
-                await db.commit()
-
         try:
-            run_async(_mark_failed())
+            run_async(_mark_task_failed(task_id, error_text))
         except Exception:
             pass
         raise

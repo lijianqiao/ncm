@@ -14,6 +14,7 @@ import asyncio
 import difflib
 from datetime import UTC, datetime, timedelta
 from typing import Any
+from uuid import UUID
 
 from sqlalchemy import select
 
@@ -54,8 +55,6 @@ def _get_keep_count(bt: BackupType) -> int:
 
 async def _enforce_retention_for_device(db: Any, device_id: str) -> None:
     """按条数+按天数清理备份，保证每台设备至少保留 1 条（优先保留最新成功备份）。"""
-    from uuid import UUID
-
     did = UUID(device_id)
     keep_ids: set[UUID] = set()
 
@@ -131,7 +130,7 @@ async def _enforce_retention_for_device(db: Any, device_id: str) -> None:
             try:
                 await delete_object(b.content_path)
             except Exception as e:
-                logger.warning(f"MinIO 删除对象失败: path={b.content_path}, error={e}")
+                logger.warning("MinIO 删除对象失败", path=b.content_path, error=str(e))
         b.is_deleted = True
         db.add(b)
 
@@ -305,8 +304,6 @@ async def _save_backup_results(
                 # md5 去重：仅对 pre/post 变更备份生效
                 if bt in {BackupType.PRE_CHANGE, BackupType.POST_CHANGE}:
                     try:
-                        from uuid import UUID
-
                         old_md5 = await backup_crud.get_latest_md5_by_device(db, UUID(device_id))
                         if should_skip_backup_save_due_to_unchanged_md5(
                             backup_type=bt.value,
@@ -315,11 +312,18 @@ async def _save_backup_results(
                             new_md5=md5_hash,
                         ):
                             logger.info(
-                                f"备份内容未变化，跳过保存: device_id={device_id}, type={bt.value}, md5={md5_hash}"
+                                "备份内容未变化，跳过保存",
+                                device_id=device_id,
+                                backup_type=bt.value,
+                                md5=md5_hash,
                             )
                             continue
                     except Exception as e:
-                        logger.warning(f"md5 去重检查失败，继续保存: device_id={device_id}, error={e}")
+                        logger.warning(
+                            "md5 去重检查失败，继续保存",
+                            device_id=device_id,
+                            error=str(e),
+                        )
 
                 if content_size < settings.BACKUP_CONTENT_SIZE_THRESHOLD_BYTES:
                     content = config_content
@@ -332,11 +336,9 @@ async def _save_backup_results(
                     except Exception as e:
                         # MinIO 不可用时降级存 DB（尽力而为）
                         content = config_content
-                        logger.warning(f"大配置存 MinIO 失败，降级存 DB: {e}")
+                        logger.warning("大配置存 MinIO 失败，降级存 DB", device_id=device_id, error=str(e))
 
             try:
-                from uuid import UUID
-
                 backup_data = BackupCreate(
                     device_id=UUID(device_id),
                     backup_type=bt,
@@ -352,7 +354,7 @@ async def _save_backup_results(
                 backup = Backup(**backup_data.model_dump())
                 db.add(backup)
             except Exception as e:
-                logger.error(f"保存备份记录失败: device_id={device_id}, error={e}")
+                logger.error("保存备份记录失败", device_id=device_id, error=str(e))
 
         await db.commit()
 
@@ -362,7 +364,7 @@ async def _save_backup_results(
             try:
                 await _enforce_retention_for_device(db, did)
             except Exception as e:
-                logger.warning(f"备份保留策略清理失败: device_id={did}, error={e}")
+                logger.warning("备份保留策略清理失败", device_id=did, error=str(e))
 
         await db.commit()
 
@@ -593,7 +595,7 @@ async def _get_devices_for_scheduled_backup() -> tuple[list[dict], list[str]]:
                 # 获取凭据
                 if auth_type == AuthType.STATIC:
                     if not device.username or not device.password_encrypted:
-                        logger.warning(f"设备 {device.name} 缺少用户名或密码配置，跳过")
+                        logger.warning("设备缺少用户名或密码配置，跳过", device_name=device.name)
                         skipped_devices.append(device.name)
                         continue
                     credential = await otp_service.get_credential_for_static_device(
@@ -611,13 +613,13 @@ async def _get_devices_for_scheduled_backup() -> tuple[list[dict], list[str]]:
                 elif auth_type == AuthType.OTP_SEED:
                     # 从 DeviceGroupCredential 获取
                     if not device.dept_id:
-                        logger.warning(f"设备 {device.name} 缺少部门关联，跳过")
+                        logger.warning("设备缺少部门关联，跳过", device_name=device.name)
                         skipped_devices.append(device.name)
                         continue
 
                     cred = await credential_crud.get_by_dept_and_group(db, device.dept_id, device.device_group)
                     if not cred or not cred.otp_seed_encrypted:
-                        logger.warning(f"设备 {device.name} 的凭据未配置 OTP 种子，跳过")
+                        logger.warning("设备的凭据未配置 OTP 种子，跳过", device_name=device.name)
                         skipped_devices.append(device.name)
                         continue
                     username = cred.username
@@ -649,7 +651,7 @@ async def _get_devices_for_scheduled_backup() -> tuple[list[dict], list[str]]:
                 )
 
             except Exception as e:
-                logger.error(f"设备 {device.name} 凭据获取失败: {e}")
+                logger.error("设备凭据获取失败", device_name=device.name, error=str(e))
                 skipped_devices.append(device.name)
 
     return hosts_data, skipped_devices
@@ -739,8 +741,6 @@ async def _perform_incremental_check(task, celery_task_id: str | None) -> dict[s
     Returns:
         dict: 检查结果
     """
-    from uuid import UUID
-
     total_checked = 0
     changed_count = 0
     backup_triggered = 0
@@ -849,7 +849,7 @@ async def _perform_incremental_check(task, celery_task_id: str | None) -> dict[s
                     except Exception as e:
                         # MinIO 不可用时降级存 DB
                         content = config
-                        logger.warning(f"大配置存 MinIO 失败，降级存 DB: {e}")
+                        logger.warning("大配置存 MinIO 失败，降级存 DB", device_id=device_id, error=str(e))
 
                 backup_data = BackupCreate(
                     device_id=UUID(device_id),
