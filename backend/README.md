@@ -119,6 +119,29 @@ uv run start_worker.py
 
 API 文档：http://127.0.0.1:8000/docs
 
+## 🧩 模板库（表单化参数 V2）
+
+### 相关接口
+
+- `GET /api/v1/templates/param-types` 获取参数类型元数据
+- `POST /api/v1/templates/extract-vars` 从模板内容提取变量
+- `POST /api/v1/templates/v2` 创建模板（表单化参数）
+- `PUT /api/v1/templates/v2/{template_id}` 更新模板（表单化参数）
+- `GET /api/v1/templates/v2/{template_id}` 获取模板详情（含参数列表）
+- `GET /api/v1/templates/examples` 获取示例模板列表（前端展示/初始化）
+
+### 模板变量写法
+
+- 推荐使用 **顶层变量**（便于 `extract-vars` 自动提取）
+- 同时兼容 `params.xxx` 写法
+
+示例：
+
+```jinja
+interface {{ interface_name }}
+ip address {{ ip_address }} {{ netmask }}
+```
+
 ## 📂 目录结构
 
 ```

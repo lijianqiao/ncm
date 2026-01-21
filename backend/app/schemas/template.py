@@ -286,3 +286,20 @@ class ParamTypeListResponse(BaseModel):
     """参数类型列表响应体。"""
 
     types: list[ParamTypeInfo] = Field(..., description="参数类型列表")
+
+
+class TemplateExample(BaseModel):
+    """模板示例（用于前端展示）。"""
+
+    id: str = Field(..., description="示例模板标识")
+    name: str = Field(..., description="示例名称")
+    description: str | None = Field(default=None, description="示例描述")
+    template_type: TemplateType = Field(default=TemplateType.CUSTOM, description="模板类型")
+    content: str = Field(..., description="模板内容(Jinja2)")
+    parameters: list[TemplateParameterCreate] = Field(default_factory=list, description="示例参数列表")
+
+
+class TemplateExampleListResponse(BaseModel):
+    """模板示例列表响应体。"""
+
+    examples: list[TemplateExample] = Field(default_factory=list, description="模板示例列表")

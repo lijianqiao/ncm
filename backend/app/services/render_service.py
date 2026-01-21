@@ -34,10 +34,19 @@ class RenderService:
         try:
             jsonschema_validate(instance=params, schema=schema)
         except JSONSchemaValidationError as e:
-            raise DomainValidationException(message=f"参数不符合模板 JSON Schema: {e.message}", details=e.schema_path) from e
+            raise DomainValidationException(
+                message=f"参数不符合模板 JSON Schema: {e.message}",
+                details=list(e.schema_path),
+            ) from e
 
     def render(self, template: Template, params: dict[str, Any], *, device: Device | None = None) -> str:
         self.validate_params(template.parameters, params)
+
+        reserved_keys = {"params", "device"}
+        conflict_keys = reserved_keys.intersection(params.keys())
+        if conflict_keys:
+            conflict = ", ".join(sorted(conflict_keys))
+            raise BadRequestException(f"参数名与保留关键字冲突: {conflict}")
 
         context: dict[str, Any] = {
             "params": params,
@@ -52,6 +61,13 @@ class RenderService:
                 "device_group": device.device_group,
                 "dept_id": str(device.dept_id) if device.dept_id else None,
             }
+        # 兼容顶层变量写法（{{ var }}）与 params.xxx 写法
+        # 保护保留键，避免覆盖 context 中的 params/device
+        for key, value in params.items():
+            if key in {"params", "device"}:
+                continue
+            if key not in context:
+                context[key] = value
 
         try:
             j2 = self._env.from_string(template.content)

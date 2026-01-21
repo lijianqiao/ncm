@@ -41,7 +41,7 @@ import {
 } from '@/api/deploy'
 import { getDevice } from '@/api/devices'
 import { cacheOTP } from '@/api/credentials'
-import { getTemplates, type Template } from '@/api/templates'
+import { getTemplates, getTemplateV2, type Template } from '@/api/templates'
 import { getUsers, type User } from '@/api/users'
 import { formatDateTime } from '@/utils/date'
 import { formatUserDisplayName } from '@/utils/user'
@@ -304,6 +304,33 @@ const createModel = ref({
 })
 const templateOptions = ref<{ label: string; value: string }[]>([])
 const userOptions = ref<{ label: string; value: string }[]>([])
+
+const handleTemplateChange = async (templateId: string) => {
+  if (!templateId) return
+
+  // 1. 获取模板详情(V2)
+  try {
+    const res = await getTemplateV2(templateId)
+    const tpl = res.data
+
+    // 2. 根据 parameters_list 生成默认参数 JSON
+    const defaultParams: Record<string, unknown> = {}
+    if (tpl.parameters_list && tpl.parameters_list.length > 0) {
+      tpl.parameters_list.forEach((p) => {
+        if (p.default_value !== undefined && p.default_value !== '') {
+          defaultParams[p.name] = p.default_value
+        } else {
+          // 根据类型给默认空值
+          defaultParams[p.name] = p.param_type === 'integer' ? 0 : ''
+        }
+      })
+    }
+
+    createModel.value.template_params = JSON.stringify(defaultParams, null, 2)
+  } catch {
+    // ignore
+  }
+}
 
 const handleCreate = async () => {
   createLoading.value = true
@@ -972,7 +999,8 @@ const columns: DataTableColumns<DeployTask> = [
     </n-modal>
 
     <!-- 创建下发任务 Modal -->
-    <n-modal v-model:show="showCreateModal" preset="card" title="创建下发任务" style="width: 700px">
+    <n-modal v-model:show="showCreateModal" preset="card" title="创建下发任务"
+      style="width: 700px; max-height: 90vh; overflow: auto">
       <div v-if="createLoading" style="text-align: center; padding: 40px">加载中...</div>
       <template v-else>
         <n-space vertical style="width: 100%">
@@ -981,7 +1009,7 @@ const columns: DataTableColumns<DeployTask> = [
           </n-form-item>
           <n-form-item label="选择模板">
             <n-select v-model:value="createModel.template_id" :options="templateOptions" placeholder="请选择配置模板"
-              filterable />
+              filterable @update:value="handleTemplateChange" />
           </n-form-item>
           <n-form-item label="模板参数 (JSON)">
             <n-input v-model:value="createModel.template_params" type="textarea" placeholder='{"key": "value"}'

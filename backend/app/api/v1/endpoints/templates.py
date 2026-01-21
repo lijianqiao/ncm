@@ -29,7 +29,10 @@ from app.schemas.template import (
     TemplateBatchResult,
     TemplateCreate,
     TemplateCreateV2,
+    TemplateExample,
+    TemplateExampleListResponse,
     TemplateNewVersionRequest,
+    TemplateParameterCreate,
     TemplateResponse,
     TemplateResponseV2,
     TemplateSubmitRequest,
@@ -578,6 +581,134 @@ _PARAM_TYPE_METADATA: list[ParamTypeInfo] = [
     ),
 ]
 
+# 示例模板（用于前端展示，支持顶层变量写法）
+_TEMPLATE_EXAMPLES: list[TemplateExample] = [
+    TemplateExample(
+        id="interface_ip_basic",
+        name="接口 IP 配置",
+        description="按厂商生成接口 IP 配置示例",
+        template_type=TemplateType.INTERFACE,
+        content=(
+            "{% if device and device.vendor == 'h3c' %}\n"
+            "system-view\n"
+            "interface {{ interface_name }}\n"
+            "ip address {{ ip_address }} {{ netmask }}\n"
+            "{% if enable | default(true) %}\n"
+            "undo shutdown\n"
+            "{% else %}\n"
+            "shutdown\n"
+            "{% endif %}\n"
+            "quit\n"
+            "return\n"
+            "{% elif device and device.vendor == 'cisco' %}\n"
+            "configure terminal\n"
+            "interface {{ interface_name }}\n"
+            "ip address {{ ip_address }} {{ netmask }}\n"
+            "{% if enable | default(true) %}\n"
+            "no shutdown\n"
+            "{% else %}\n"
+            "shutdown\n"
+            "{% endif %}\n"
+            "end\n"
+            "{% endif %}"
+        ),
+        parameters=[
+            TemplateParameterCreate(
+                name="interface_name",
+                label="接口名称",
+                param_type=ParamType.INTERFACE,
+                required=True,
+                description="例如: GigabitEthernet1/0/1",
+                order=1,
+            ),
+            TemplateParameterCreate(
+                name="ip_address",
+                label="IP 地址",
+                param_type=ParamType.IP_ADDRESS,
+                required=True,
+                description="例如: 10.10.10.1",
+                order=2,
+            ),
+            TemplateParameterCreate(
+                name="netmask",
+                label="子网掩码",
+                param_type=ParamType.STRING,
+                required=True,
+                default_value="255.255.255.0",
+                description="例如: 255.255.255.0",
+                order=3,
+            ),
+            TemplateParameterCreate(
+                name="enable",
+                label="启用接口",
+                param_type=ParamType.BOOLEAN,
+                required=False,
+                default_value="true",
+                description="true=启用, false=禁用",
+                order=4,
+            ),
+        ],
+    ),
+    TemplateExample(
+        id="vlan_create_basic",
+        name="VLAN 创建",
+        description="按厂商生成 VLAN 配置示例",
+        template_type=TemplateType.VLAN,
+        content=(
+            "{% if device and device.vendor == 'h3c' %}\n"
+            "system-view\n"
+            "vlan {{ vlan_id }}\n"
+            " name {{ vlan_name }}\n"
+            "{% if description | default('') %}\n"
+            " description {{ description }}\n"
+            "{% endif %}\n"
+            "quit\n"
+            "return\n"
+            "{% elif device and device.vendor == 'huawei' %}\n"
+            "system-view\n"
+            "vlan {{ vlan_id }}\n"
+            " name {{ vlan_name }}\n"
+            "{% if description | default('') %}\n"
+            " description {{ description }}\n"
+            "{% endif %}\n"
+            "quit\n"
+            "return\n"
+            "{% elif device and device.vendor == 'cisco' %}\n"
+            "configure terminal\n"
+            "vlan {{ vlan_id }}\n"
+            " name {{ vlan_name }}\n"
+            "end\n"
+            "{% endif %}"
+        ),
+        parameters=[
+            TemplateParameterCreate(
+                name="vlan_id",
+                label="VLAN ID",
+                param_type=ParamType.VLAN_ID,
+                required=True,
+                description="1-4094",
+                order=1,
+            ),
+            TemplateParameterCreate(
+                name="vlan_name",
+                label="VLAN 名称",
+                param_type=ParamType.STRING,
+                required=True,
+                description="例如: user_vlan",
+                order=2,
+            ),
+            TemplateParameterCreate(
+                name="description",
+                label="描述",
+                param_type=ParamType.STRING,
+                required=False,
+                description="可选",
+                order=3,
+            ),
+        ],
+    ),
+]
+
 
 @router.get(
     "/param-types",
@@ -591,6 +722,17 @@ async def get_param_types() -> ResponseBase[ParamTypeListResponse]:
         ResponseBase[ParamTypeListResponse]: 参数类型列表。
     """
     return ResponseBase(data=ParamTypeListResponse(types=_PARAM_TYPE_METADATA))
+
+
+@router.get(
+    "/examples",
+    response_model=ResponseBase[TemplateExampleListResponse],
+    dependencies=[Depends(require_permissions([PermissionCode.TEMPLATE_CREATE.value]))],
+    summary="获取模板示例",
+)
+async def get_template_examples() -> ResponseBase[TemplateExampleListResponse]:
+    """返回示例模板列表，便于前端展示与初始化内容。"""
+    return ResponseBase(data=TemplateExampleListResponse(examples=_TEMPLATE_EXAMPLES))
 
 
 @router.post(

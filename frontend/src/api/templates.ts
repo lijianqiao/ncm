@@ -97,6 +97,27 @@ export interface TemplateApproveRequest {
   comment?: string
 }
 
+/** 模板渲染请求 */
+export interface RenderRequest {
+  params?: Record<string, unknown>
+  variables?: Record<string, unknown>
+  device_id?: string
+}
+
+/** 模板渲染响应 */
+export interface RenderResponse {
+  rendered: string
+}
+
+/** 渲染模板 (预览) */
+export function previewTemplateRender(id: string, data: RenderRequest) {
+  return request<ResponseBase<RenderResponse>>({
+    url: `/templates/${id}/render`,
+    method: 'post',
+    data,
+  })
+}
+
 // ==================== V2 接口定义 ====================
 
 /** 模板参数定义 (V2) */
@@ -152,7 +173,25 @@ export interface TemplateParamType {
   has_pattern?: boolean
 }
 
+/** 示例模板响应 */
+export interface TemplateExample {
+  id: string
+  name: string
+  description: string
+  template_type: TemplateTypeType
+  content: string
+  parameters: TemplateParameterCreate[]
+}
+
 // ==================== API 函数 ====================
+
+/** 获取示例模板列表 */
+export function getTemplateExamples() {
+  return request<ResponseBase<{ examples: TemplateExample[] }>>({
+    url: '/templates/examples',
+    method: 'get',
+  })
+}
 
 /** 获取模板列表 */
 export function getTemplates(params?: TemplateSearchParams) {

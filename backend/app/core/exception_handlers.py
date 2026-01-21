@@ -10,6 +10,7 @@ from collections.abc import Sequence
 from typing import Any
 
 from fastapi import FastAPI, Request
+from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
@@ -43,7 +44,7 @@ async def custom_exception_handler(request: Request, exc: CustomException):
         return build_otp_required_response(exc)
     return JSONResponse(
         status_code=exc.code,
-        content={"error_code": exc.code, "message": exc.message, "details": exc.details},
+        content=jsonable_encoder({"error_code": exc.code, "message": exc.message, "details": exc.details}),
     )
 
 
@@ -126,7 +127,9 @@ async def generic_exception_handler(request: Request, exc: Exception):
 async def import_export_exception_handler(request: Request, exc: ImportExportError):
     return JSONResponse(
         status_code=int(exc.status_code),
-        content={"error_code": int(exc.status_code), "message": exc.message, "details": exc.details},
+        content=jsonable_encoder(
+            {"error_code": int(exc.status_code), "message": exc.message, "details": exc.details}
+        ),
     )
 
 

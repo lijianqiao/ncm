@@ -18,7 +18,16 @@ from app.celery.app import celery_app
 from app.celery.base import BaseTask, run_async
 from app.core.command_policy import normalize_rendered_config, validate_commands
 from app.core.db import AsyncSessionLocal
-from app.core.enums import AuthType, BackupStatus, BackupType, DeviceStatus, TaskStatus, TaskType
+from app.core.enums import (
+    ApprovalStatus,
+    AuthType,
+    BackupStatus,
+    BackupType,
+    DeviceStatus,
+    TaskStatus,
+    TaskType,
+    TemplateStatus,
+)
 from app.core.exceptions import OTPRequiredException
 from app.core.logger import logger
 from app.core.otp_service import otp_service
@@ -353,8 +362,10 @@ async def _async_deploy_task_impl(self, task_id: str, *, celery_task_id: str | N
         await _update_task_status_with_retry(db, task, task_id)
 
         template = await db.get(Template, task.template_id) if task.template_id else None
-        if not template:
-            raise ValueError("模板不存在")
+        if not template or template.is_deleted:
+            raise ValueError("模板不存在或已被删除")
+        if template.status != TemplateStatus.APPROVED.value or template.approval_status != ApprovalStatus.APPROVED.value:
+            raise ValueError("模板未处于已审批状态")
 
         deploy_plan = task.deploy_plan or {}
         concurrency = int(deploy_plan.get("concurrency", 100))

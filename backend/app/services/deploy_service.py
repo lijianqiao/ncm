@@ -13,7 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.decorator import transactional
-from app.core.enums import ApprovalStatus, AuthType, DeviceStatus, TaskStatus, TaskType
+from app.core.enums import ApprovalStatus, AuthType, DeviceStatus, TaskStatus, TaskType, TemplateStatus
 from app.core.exceptions import BadRequestException, ForbiddenException, NotFoundException
 from app.core.otp_service import otp_service
 from app.crud.crud_credential import CRUDCredential
@@ -22,7 +22,9 @@ from app.crud.crud_task import CRUDTask
 from app.crud.crud_task_approval import CRUDTaskApprovalStep
 from app.models.task import Task
 from app.models.task_approval import TaskApprovalStep
+from app.models.template import Template
 from app.schemas.deploy import DeployCreateRequest, DeviceDeployResult
+from app.services.render_service import RenderService
 
 
 class DeployService:
@@ -192,6 +194,16 @@ class DeployService:
         if task.status not in {TaskStatus.APPROVED.value, TaskStatus.PAUSED.value}:
             raise BadRequestException("非审批通过/暂停状态的任务不可执行")
 
+        template = None
+        if task.template_id:
+            template = await self.db.get(Template, task.template_id)
+        if not template or template.is_deleted:
+            raise BadRequestException("模板不存在或已被删除")
+        if template.status != TemplateStatus.APPROVED.value:
+            raise BadRequestException("模板未处于已审批状态")
+        if template.approval_status != ApprovalStatus.APPROVED.value:
+            raise BadRequestException("模板审批状态未通过")
+
         device_ids = self._get_target_device_ids(task)
         if not device_ids:
             raise BadRequestException("任务未包含目标设备")
@@ -286,6 +298,23 @@ class DeployService:
     async def create_deploy_task(self, data: DeployCreateRequest, *, submitter_id: UUID) -> Task:
         if data.approver_ids is not None and len(data.approver_ids) != 3:
             raise BadRequestException("approver_ids 必须为 3 个（三级审批）")
+
+        template = await self.db.get(Template, data.template_id)
+        if not template or template.is_deleted:
+            raise BadRequestException("模板不存在或已被删除")
+        if template.status != TemplateStatus.APPROVED.value:
+            raise BadRequestException("模板未处于已审批状态")
+        if template.approval_status != ApprovalStatus.APPROVED.value:
+            raise BadRequestException("模板审批状态未通过")
+
+        reserved_keys = {"params", "device"}
+        conflict_keys = reserved_keys.intersection(data.template_params.keys())
+        if conflict_keys:
+            conflict = ", ".join(sorted(conflict_keys))
+            raise BadRequestException(f"模板参数名与保留关键字冲突: {conflict}")
+
+        # 在任务创建时先做参数校验，避免执行阶段失败
+        RenderService().validate_params(template.parameters, data.template_params)
 
         task = Task(
             name=data.name,

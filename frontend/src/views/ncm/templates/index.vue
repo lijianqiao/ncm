@@ -40,6 +40,8 @@ import {
   createTemplateV2,
   updateTemplateV2,
   getTemplateV2,
+  getTemplateExamples,
+  previewTemplateRender,
   type Template,
   type TemplateSearchParams,
   type TemplateType,
@@ -47,10 +49,11 @@ import {
   type DeviceType,
   type TemplateParamType,
   type TemplateParameterCreate,
+  type TemplateExample,
+  type TemplateResponseV2,
 } from '@/api/templates'
 import { getUsers } from '@/api/users'
 import { getDeviceOptions, type Device, type DeviceVendor } from '@/api/devices'
-import { renderTemplate } from '@/api/render'
 import { formatDateTime } from '@/utils/date'
 import { formatUserDisplayNameParts } from '@/utils/user'
 import ProTable, { type FilterConfig } from '@/components/common/ProTable.vue'
@@ -149,32 +152,21 @@ const handleBatchHardDelete = async (ids: Array<string | number>) => {
   }
 }
 
-const templateContentExample = `# 1) 直接使用 params
+const templateContentExample = `# 推荐：使用顶层变量
+interface {{ interface_name }}
+ ip address {{ ip_address }} {{ netmask }}
 
-# 创建 VLAN
-vlan {{ params.vlan_id }}
- name {{ params.vlan_name }}
+# 兼容写法（不推荐，无法自动提取）
+# interface {{ params.interface_name }}
 
-# 2) 可选字段写法（避免缺参）
-{% if params.get('desc') %}
- description {{ params.get('desc') }}
+# 逻辑控制
+{% if description %}
+ description {{ description }}
 {% endif %}
 
-# 3) 设备上下文（预览时可选 device_id 注入）
-{% if device %}
-# device: {{ device.name }} ({{ device.ip_address }})
-{% endif %}
-
-# 4) 按厂商分支
-{% if device and device.vendor == 'h3c' %}
-# H3C 命令...
-{% elif device and device.vendor == 'huawei' %}
-# Huawei 命令...
-{% elif device and device.vendor == 'cisco' %}
-# Cisco 命令...
-{% else %}
-# other/unknown
-{% endif %}`
+# 设备上下文
+# device.name: {{ device.name }}
+`
 
 // ==================== 常量定义 ====================
 
@@ -386,14 +378,14 @@ const handleRecycleBin = () => {
 // ==================== 查看模板 ====================
 
 const showViewModal = ref(false)
-const viewData = ref<Template | null>(null)
+const viewData = ref<TemplateResponseV2 | null>(null)
 const viewLoading = ref(false)
 
 const handleView = async (row: Template) => {
   viewLoading.value = true
   showViewModal.value = true
   try {
-    const res = await getTemplate(row.id)
+    const res = await getTemplateV2(row.id)
     viewData.value = res.data
   } catch {
     showViewModal.value = false
@@ -432,9 +424,33 @@ const loadRenderDevices = async () => {
 }
 
 const handleRenderPreview = async (row: Template) => {
-  renderTarget.value = row
+  // 先获取最新详情（主要是 parameters_list）
+  let tpl = row as unknown as TemplateResponseV2
+  try {
+    const res = await getTemplateV2(row.id)
+    tpl = res.data
+  } catch {
+    // ignore
+  }
+
+  renderTarget.value = tpl
   renderResult.value = ''
   renderDeviceId.value = null
+
+  // 自动填充参数示例
+  const exampleParams: Record<string, unknown> = {}
+  if (tpl.parameters_list && tpl.parameters_list.length > 0) {
+    tpl.parameters_list.forEach((p) => {
+      // 优先用默认值，其次根据类型给空值
+      if (p.default_value) {
+        exampleParams[p.name] = p.default_value
+      } else {
+        exampleParams[p.name] = p.param_type === 'integer' ? 0 : ''
+      }
+    })
+  }
+  renderParamsText.value = JSON.stringify(exampleParams, null, 2)
+
   showRenderModal.value = true
   await loadRenderDevices()
 }
@@ -455,8 +471,8 @@ const submitRenderPreview = async () => {
 
   renderLoading.value = true
   try {
-    const res = await renderTemplate(renderTarget.value.id, {
-      params,
+    const res = await previewTemplateRender(renderTarget.value.id, {
+      variables: params,
       device_id: renderDeviceId.value || undefined,
     })
     renderResult.value = res.data.rendered
@@ -473,6 +489,7 @@ const modalType = ref<'create' | 'edit'>('create')
 const showCreateModal = ref(false)
 const createFormRef = ref()
 const paramTypes = ref<TemplateParamType[]>([])
+const templateExamples = ref<TemplateExample[]>([])
 
 const createModel = ref({
   id: '',
@@ -490,6 +507,19 @@ const createRules = {
   name: { required: true, message: '请输入模板名称', trigger: 'blur' },
   content: { required: true, message: '请输入模板内容', trigger: 'blur' },
   vendors: { required: true, message: '请选择适用厂商', trigger: 'change', type: 'array' as const },
+  parameters_list: {
+    validator: (_rule: unknown, value: TemplateParameterCreate[]) => {
+      // 校验参数名冲突
+      const invalidNames = ['params', 'device']
+      for (const p of value) {
+        if (invalidNames.includes(p.name)) {
+          return new Error(`参数名 "${p.name}" 是保留关键字，请修改`)
+        }
+      }
+      return true
+    },
+    trigger: 'change',
+  },
 }
 
 const loadParamTypes = async () => {
@@ -500,6 +530,28 @@ const loadParamTypes = async () => {
   } catch (e) {
     console.error(e)
   }
+}
+
+const loadTemplateExamples = async () => {
+  if (templateExamples.value.length > 0) return
+  try {
+    const res = await getTemplateExamples()
+    templateExamples.value = res.data.examples
+  } catch {
+    // ignore
+  }
+}
+
+const handleSelectExample = (value: string) => {
+  const example = templateExamples.value.find((e) => e.id === value)
+  if (!example) return
+
+  // 填充示例数据
+  createModel.value.name = example.name
+  createModel.value.description = example.description
+  createModel.value.template_type = example.template_type
+  createModel.value.content = example.content
+  createModel.value.parameters_list = [...example.parameters] // copy
 }
 
 const handleExtractVars = async () => {
@@ -566,6 +618,7 @@ const handleCreate = async () => {
   }
   showCreateModal.value = true
   await loadParamTypes()
+  await loadTemplateExamples()
 }
 
 const handleEdit = async (row: Template) => {
@@ -804,7 +857,7 @@ const submitApprove = async () => {
 
     // 若详情弹窗打开，顺便刷新一次详情
     if (showViewModal.value && viewData.value && viewData.value.id === approveTarget.value.id) {
-      const res = await getTemplate(approveTarget.value.id)
+      const res = await getTemplateV2(approveTarget.value.id)
       viewData.value = res.data
     }
   } catch {
@@ -890,7 +943,8 @@ const submitApprove = async () => {
     </n-modal>
 
     <!-- 查看模板 Modal -->
-    <n-modal v-model:show="showViewModal" preset="card" title="模板详情" style="width: 900px; max-height: 80vh">
+    <n-modal v-model:show="showViewModal" preset="card" title="模板详情"
+      style="width: 900px; max-height: 80vh; overflow: auto">
       <div v-if="viewLoading" style="text-align: center; padding: 40px">加载中...</div>
       <template v-else-if="viewData">
         <n-space vertical>
@@ -940,9 +994,15 @@ const submitApprove = async () => {
             <strong>模板内容:</strong>
             <n-code :code="viewData.content" language="jinja2" style="max-height: 400px; overflow: auto" />
           </div>
-          <div v-if="viewData.parameters">
+          <div v-if="
+            viewData.parameters ||
+            (viewData.parameters_list && viewData.parameters_list.length > 0)
+          ">
             <strong>参数定义:</strong>
-            <n-code :code="viewData.parameters" language="json" style="max-height: 200px; overflow: auto" />
+            <n-code :code="viewData.parameters_list && viewData.parameters_list.length > 0
+                ? JSON.stringify(viewData.parameters_list, null, 2)
+                : viewData.parameters || ''
+              " language="json" style="max-height: 200px; overflow: auto; margin-top: 8px" />
           </div>
         </n-space>
       </template>
@@ -955,6 +1015,11 @@ const submitApprove = async () => {
         <n-space vertical size="large">
           <!-- 基本信息 -->
           <n-card title="基本信息" size="small" embedded :bordered="false">
+            <template #header-extra>
+              <n-select v-if="modalType === 'create'" placeholder="加载示例模板..."
+                :options="templateExamples.map((e) => ({ label: e.name, value: e.id }))"
+                @update:value="handleSelectExample" style="width: 200px" size="small" />
+            </template>
             <n-grid :x-gap="24" :y-gap="24" :cols="2">
               <n-form-item-gi label="模板名称" path="name">
                 <n-input v-model:value="createModel.name" placeholder="请输入模板名称" />
@@ -992,7 +1057,7 @@ const submitApprove = async () => {
                   <n-code language="jinja2" :code="templateContentExample" style="max-height: 260px; overflow: auto" />
                 </n-popover>
                 <n-button size="small" type="primary" secondary @click="handleExtractVars">
-                  从内容提取变量
+                  从内容提取变量 (推荐顶层变量)
                 </n-button>
               </n-space>
             </template>
