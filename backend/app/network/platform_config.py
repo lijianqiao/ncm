@@ -142,21 +142,17 @@ SCRAPLI_DEFAULTS: dict[str, Any] = {
 
 
 # ===== 关闭分页命令 =====
+_CISCO_PAGING_COMMANDS = [
+    "terminal datadump",  # 某些 Cisco 设备需要此命令而非 terminal length 0
+    "terminal length 0",
+    "terminal pager 0",
+    "no page",
+    "terminal length 0\nterminal width 512",
+]
+
 PAGING_DISABLE_COMMANDS: dict[str, list[str]] = {
-    "cisco_iosxe": [
-        "terminal datadump",  # 某些 Cisco 设备需要此命令而非 terminal length 0
-        "terminal length 0",
-        "terminal pager 0",
-        "no page",
-        "terminal length 0\nterminal width 512",
-    ],
-    "cisco_ios": [
-        "terminal datadump",  # 某些 Cisco 设备需要此命令而非 terminal length 0
-        "terminal length 0",
-        "terminal pager 0",
-        "no page",
-        "terminal length 0\nterminal width 512",
-    ],
+    "cisco_iosxe": _CISCO_PAGING_COMMANDS,
+    "cisco_ios": _CISCO_PAGING_COMMANDS,  # 复用 iosxe 配置
     "cisco_nxos": [
         "terminal length 0",
         "terminal pager 0",
@@ -180,6 +176,15 @@ PAGING_DISABLE_COMMANDS: dict[str, list[str]] = {
 
 
 # ===== 平台特定 Scrapli 参数 =====
+_CISCO_SCRAPLI_OPTIONS: dict[str, Any] = {
+    "auth_strict_key": False,
+    "ssh_config_file": "",
+    "transport": "ssh2",
+    "timeout_socket": 10,
+    "timeout_transport": 60,
+    "timeout_ops": 60,
+}
+
 PLATFORM_SCRAPLI_OPTIONS: dict[str, dict[str, Any]] = {
     "hp_comware": {
         "auth_strict_key": False,
@@ -191,22 +196,8 @@ PLATFORM_SCRAPLI_OPTIONS: dict[str, dict[str, Any]] = {
         "ssh_config_file": "",
         "transport": "ssh2",
     },
-    "cisco_iosxe": {
-        "auth_strict_key": False,
-        "ssh_config_file": "",
-        "transport": "ssh2",
-        "timeout_socket": 10,
-        "timeout_transport": 60,
-        "timeout_ops": 60,
-    },
-    "cisco_ios": {
-        "auth_strict_key": False,
-        "ssh_config_file": "",
-        "transport": "ssh2",
-        "timeout_socket": 10,
-        "timeout_transport": 60,
-        "timeout_ops": 60,
-    },
+    "cisco_iosxe": _CISCO_SCRAPLI_OPTIONS,
+    "cisco_ios": _CISCO_SCRAPLI_OPTIONS,  # 复用 iosxe 配置
 }
 
 

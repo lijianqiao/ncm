@@ -21,7 +21,6 @@ from nornir.core.inventory import ConnectionOptions, Defaults, Group, Groups, Ho
 from nornir.core.plugins.connections import ConnectionPluginRegister
 from nornir.plugins.runners import ThreadedRunner
 
-from app.core.config import settings
 from app.core.logger import logger
 
 
@@ -156,10 +155,8 @@ def create_nornir_inventory(
             connection_options={"scrapli": ConnectionOptions(extras=scrapli_extras)},
         )
 
-    # 创建默认配置
+    # 创建默认配置（不设置默认凭据，每个主机应提供自己的凭据）
     defaults = Defaults(
-        username=settings.FIRST_SUPERUSER,  # 后续替换为设备凭据
-        password=settings.FIRST_SUPERUSER_PASSWORD,  # 后续替换为设备凭据
         connection_options={
             "scrapli": ConnectionOptions(
                 extras={
@@ -210,22 +207,17 @@ def init_nornir(
     return nr
 
 
-def init_nornir_from_db(
-    devices: list[Any],
-    num_workers: int = 50,
-) -> Nornir:
+def _devices_to_hosts_data(devices: list[Any]) -> list[dict[str, Any]]:
     """
-    从数据库 Device 模型列表初始化 Nornir。
+    将数据库 Device 模型列表转换为 Nornir hosts_data 格式。
 
     Args:
         devices: Device 模型实例列表
-        num_workers: 并发 Worker 数量
 
     Returns:
-        Nornir: 初始化完成的 Nornir 实例
+        hosts_data: Nornir 主机数据列表
     """
     hosts_data = []
-
     for device in devices:
         host_info = {
             "name": str(device.id),  # 使用设备 ID 作为唯一标识
@@ -244,7 +236,24 @@ def init_nornir_from_db(
             },
         }
         hosts_data.append(host_info)
+    return hosts_data
 
+
+def init_nornir_from_db(
+    devices: list[Any],
+    num_workers: int = 50,
+) -> Nornir:
+    """
+    从数据库 Device 模型列表初始化 Nornir。
+
+    Args:
+        devices: Device 模型实例列表
+        num_workers: 并发 Worker 数量
+
+    Returns:
+        Nornir: 初始化完成的 Nornir 实例
+    """
+    hosts_data = _devices_to_hosts_data(devices)
     return init_nornir(hosts_data, num_workers=num_workers)
 
 
@@ -307,25 +316,5 @@ def init_nornir_async_from_db(
     Returns:
         Inventory: Nornir Inventory 实例
     """
-    hosts_data = []
-
-    for device in devices:
-        host_info = {
-            "name": str(device.id),
-            "hostname": device.ip_address,
-            "platform": device.platform,
-            "username": device.username,
-            "password": device.password,
-            "port": device.ssh_port or 22,
-            "groups": [device.device_group] if device.device_group else [],
-            "data": {
-                "device_id": str(device.id),
-                "device_name": device.name,
-                "vendor": device.vendor,
-                "model": device.model,
-                "location": device.location,
-            },
-        }
-        hosts_data.append(host_info)
-
+    hosts_data = _devices_to_hosts_data(devices)
     return init_nornir_async(hosts_data, num_workers=num_workers)

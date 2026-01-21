@@ -16,19 +16,8 @@ import textfsm
 from ntc_templates.parse import parse_output
 
 from app.core.logger import logger
+from app.network.platform_config import get_command, get_ntc_platform
 from app.network.templates import get_template_path
-
-# 平台名称映射（Nornir/Scrapli 平台名 -> ntc-templates 平台名）
-PLATFORM_MAPPING: dict[str, str] = {
-    "cisco_iosxe": "cisco_ios",
-    "cisco_nxos": "cisco_nxos",
-    "cisco_iosxr": "cisco_xr",
-    "huawei_vrp": "huawei_vrp",
-    "hp_comware": "hp_comware",
-    "hp_procurve": "hp_procurve",
-    "arista_eos": "arista_eos",
-    "juniper_junos": "juniper_junos",
-}
 
 
 def _parse_with_custom_template(
@@ -76,8 +65,8 @@ def parse_command_output(
     Returns:
         list[dict]: 解析后的结构化数据列表
     """
-    # 获取 ntc-templates 平台名
-    ntc_platform = PLATFORM_MAPPING.get(platform, platform)
+    # 获取 ntc-templates 平台名（复用 platform_config 的映射）
+    ntc_platform = get_ntc_platform(platform)
 
     # 1. 优先尝试自定义模板
     custom_template = get_template_path(ntc_platform, command)
@@ -124,6 +113,14 @@ def parse_command_output(
 # ===== 常用命令的解析快捷方法 =====
 
 
+def _get_command_safe(command_type: str, platform: str, fallback: str) -> str:
+    """安全获取命令，失败时返回 fallback。"""
+    try:
+        return get_command(command_type, platform)
+    except ValueError:
+        return fallback
+
+
 def parse_arp_table(platform: str, output: str) -> list[dict[str, Any]]:
     """
     解析 ARP 表输出。
@@ -131,13 +128,7 @@ def parse_arp_table(platform: str, output: str) -> list[dict[str, Any]]:
     Returns:
         list[dict]: 包含 ip_address, mac_address, interface 等字段
     """
-    command_mapping = {
-        "cisco_ios": "show ip arp",
-        "cisco_iosxe": "show ip arp",
-        "huawei_vrp": "display arp",
-        "hp_comware": "display arp",
-    }
-    command = command_mapping.get(platform, "show ip arp")
+    command = _get_command_safe("arp_table", platform, "show ip arp")
     return parse_command_output(platform, command, output)
 
 
@@ -148,13 +139,7 @@ def parse_mac_table(platform: str, output: str) -> list[dict[str, Any]]:
     Returns:
         list[dict]: 包含 vlan, mac_address, type, port 等字段
     """
-    command_mapping = {
-        "cisco_ios": "show mac address-table",
-        "cisco_iosxe": "show mac address-table",
-        "huawei_vrp": "display mac-address",
-        "hp_comware": "display mac-address",
-    }
-    command = command_mapping.get(platform, "show mac address-table")
+    command = _get_command_safe("mac_table", platform, "show mac address-table")
     return parse_command_output(platform, command, output)
 
 
@@ -165,13 +150,7 @@ def parse_lldp_neighbors(platform: str, output: str) -> list[dict[str, Any]]:
     Returns:
         list[dict]: 包含 local_interface, neighbor, neighbor_interface 等字段
     """
-    command_mapping = {
-        "cisco_ios": "show lldp neighbors detail",
-        "cisco_iosxe": "show lldp neighbors detail",
-        "huawei_vrp": "display lldp neighbor brief",
-        "hp_comware": "display lldp neighbor-information list",
-    }
-    command = command_mapping.get(platform, "show lldp neighbors detail")
+    command = _get_command_safe("lldp_neighbors", platform, "show lldp neighbors detail")
     return parse_command_output(platform, command, output)
 
 
@@ -182,13 +161,7 @@ def parse_interface_status(platform: str, output: str) -> list[dict[str, Any]]:
     Returns:
         list[dict]: 包含 port, status, vlan, duplex, speed 等字段
     """
-    command_mapping = {
-        "cisco_ios": "show interfaces status",
-        "cisco_iosxe": "show interfaces status",
-        "huawei_vrp": "display interface brief",
-        "hp_comware": "display interface brief",
-    }
-    command = command_mapping.get(platform, "show interfaces status")
+    command = _get_command_safe("interface_brief", platform, "show interfaces status")
     return parse_command_output(platform, command, output)
 
 
@@ -199,11 +172,5 @@ def parse_version(platform: str, output: str) -> list[dict[str, Any]]:
     Returns:
         list[dict]: 包含 version, model, uptime 等字段
     """
-    command_mapping = {
-        "cisco_ios": "show version",
-        "cisco_iosxe": "show version",
-        "huawei_vrp": "display version",
-        "hp_comware": "display version",
-    }
-    command = command_mapping.get(platform, "show version")
+    command = _get_command_safe("version", platform, "show version")
     return parse_command_output(platform, command, output)

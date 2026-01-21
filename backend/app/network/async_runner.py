@@ -31,16 +31,27 @@ class AsyncRunner:
 
     Attributes:
         semaphore_limit: 最大并发连接数（通过 asyncio.Semaphore 控制）
+        max_retries: 失败重试次数（0 表示不重试）
+        retry_delay: 重试间隔（秒）
     """
 
-    def __init__(self, num_workers: int | None = None):
+    def __init__(
+        self,
+        num_workers: int | None = None,
+        max_retries: int = 0,
+        retry_delay: float = 1.0,
+    ):
         """
         初始化异步运行器。
 
         Args:
             num_workers: 最大并发数，默认从配置读取 ASYNC_SSH_SEMAPHORE
+            max_retries: 失败重试次数（默认 0 不重试）
+            retry_delay: 重试间隔秒数（默认 1.0）
         """
         self.semaphore_limit = num_workers or settings.ASYNC_SSH_SEMAPHORE
+        self.max_retries = max_retries
+        self.retry_delay = retry_delay
 
     def run(
         self,
@@ -79,11 +90,12 @@ class AsyncRunner:
         """
         异步执行主体。
 
-        使用 Semaphore 控制并发，asyncio.gather 并行执行所有任务。
+        使用 Semaphore 控制并发，支持可配置的重试机制。
 
         Args:
             task: 异步任务函数
             hosts: 主机字典
+            progress_callback: 可选的进度回调
             **kwargs: 额外参数
 
         Returns:
@@ -94,26 +106,42 @@ class AsyncRunner:
         semaphore = asyncio.Semaphore(self.semaphore_limit)
 
         async def _execute_host(host: "Host") -> tuple[str, Result]:
-            """单设备执行（带信号量控制）。"""
-            async with semaphore:
+            """单设备执行（带信号量控制和可选重试）。"""
+            last_exception: Exception | None = None
+
+            for attempt in range(self.max_retries + 1):
                 try:
-                    logger.debug("开始执行异步任务", host=host.name, task=task_name)
-                    result_data = await task(host, **kwargs)
-                    return host.name, Result(host=host, result=result_data)
+                    async with semaphore:
+                        logger.debug("开始执行异步任务", host=host.name, task=task_name, attempt=attempt + 1)
+                        result_data = await task(host, **kwargs)
+                        return host.name, Result(host=host, result=result_data)
                 except OTPRequiredException as e:
+                    # OTP 异常不重试，直接返回
                     return host.name, Result(host=host, exception=e, failed=True)
                 except asyncio.CancelledError:
                     raise
-                except TimeoutError:
-                    logger.warning("任务超时", host=host.name, task=task_name)
-                    return host.name, Result(
-                        host=host,
-                        exception=TimeoutError(f"任务超时: {host.name}"),
-                        failed=True,
-                    )
                 except Exception as e:
-                    logger.error("任务执行失败", host=host.name, task=task_name, error=str(e), exc_info=True)
-                    return host.name, Result(host=host, exception=e, failed=True)
+                    last_exception = e
+                    if attempt < self.max_retries:
+                        logger.warning(
+                            "任务失败，准备重试",
+                            host=host.name,
+                            task=task_name,
+                            attempt=attempt + 1,
+                            max_retries=self.max_retries,
+                            error=str(e),
+                        )
+                        await asyncio.sleep(self.retry_delay)
+                    else:
+                        logger.error(
+                            "任务执行失败",
+                            host=host.name,
+                            task=task_name,
+                            error=str(e),
+                            exc_info=True,
+                        )
+
+            return host.name, Result(host=host, exception=last_exception, failed=True)
 
         # 并行执行所有主机任务
         tasks = [asyncio.create_task(_execute_host(host)) for host in hosts.values()]
@@ -222,7 +250,7 @@ class AsyncRunnerWithRetry(AsyncRunner):
     """
     带重试机制的异步运行器。
 
-    继承 AsyncRunner，增加失败重试逻辑。
+    继承 AsyncRunner，默认启用重试（max_retries=2）。
     """
 
     def __init__(
@@ -236,63 +264,7 @@ class AsyncRunnerWithRetry(AsyncRunner):
 
         Args:
             num_workers: 最大并发数
-            max_retries: 最大重试次数
-            retry_delay: 重试间隔（秒）
+            max_retries: 最大重试次数（默认 2）
+            retry_delay: 重试间隔秒数（默认 1.0）
         """
-        super().__init__(num_workers)
-        self.max_retries = max_retries
-        self.retry_delay = retry_delay
-
-    async def _run_async(
-        self,
-        task: Callable[["Host"], Coroutine[Any, Any, Any]],
-        hosts: dict[str, "Host"],
-        progress_callback: Callable[[str, Result], Awaitable[None] | None] | None = None,
-        **kwargs: Any,
-    ) -> AggregatedResult:
-        """带重试的异步执行。"""
-        task_name = getattr(task, "__name__", "async_task")
-        results = AggregatedResult(task_name)
-        semaphore = asyncio.Semaphore(self.semaphore_limit)
-
-        async def _execute_with_retry(host: "Host") -> tuple[str, Result]:
-            """单设备执行（带重试）。"""
-            last_exception: Exception | None = None
-
-            for attempt in range(self.max_retries + 1):
-                try:
-                    async with semaphore:
-                        result_data = await task(host, **kwargs)
-                    return host.name, Result(host=host, result=result_data)
-                except asyncio.CancelledError:
-                    raise
-                except Exception as e:
-                    last_exception = e
-                    if attempt < self.max_retries:
-                        logger.warning(
-                            "任务失败，准备重试",
-                            host=host.name,
-                            attempt=attempt + 1,
-                            max_retries=self.max_retries,
-                            error=str(e),
-                        )
-                        await asyncio.sleep(self.retry_delay)
-
-            return host.name, Result(host=host, exception=last_exception, failed=True)
-
-        tasks = [asyncio.create_task(_execute_with_retry(host)) for host in hosts.values()]
-        completed = await asyncio.gather(*tasks, return_exceptions=False)
-
-        for host_name, result in completed:
-            multi = MultiResult(host_name)
-            multi.append(result)
-            results[host_name] = multi
-            if progress_callback:
-                try:
-                    maybe_awaitable = progress_callback(host_name, result)
-                    if asyncio.iscoroutine(maybe_awaitable):
-                        await maybe_awaitable
-                except Exception as e:
-                    logger.debug("进度回调失败", host=host_name, error=str(e))
-
-        return results
+        super().__init__(num_workers, max_retries=max_retries, retry_delay=retry_delay)

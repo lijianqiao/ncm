@@ -264,6 +264,55 @@ def get_lldp_neighbors(task: Task) -> MultiResult:
     return task.run(task=execute_command, command=command, parse=True)
 
 
+def _is_otp_error_text(error_text: str) -> bool:
+    """检查错误文本是否为 OTP 相关错误。"""
+    text = (error_text or "").lower()
+    return "otp" in text and ("过期" in text or "required" in text or "认证" in text)
+
+
+def _handle_otp_exception(
+    otp_exc: OTPRequiredException,
+    error_text: str,
+    otp_failed_device_ids: list[str],
+    otp_required_info: dict[str, Any] | None,
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """
+    处理 OTPRequiredException，返回 (host_result, updated_otp_info)。
+    """
+    host_result = {
+        "status": "otp_required",
+        "error": error_text,
+        "result": None,
+        "otp_dept_id": str(otp_exc.dept_id),
+        "otp_device_group": otp_exc.device_group,
+    }
+    if otp_exc.failed_devices:
+        otp_failed_device_ids.extend(str(did) for did in otp_exc.failed_devices)
+
+    if otp_required_info is None:
+        otp_required_info = {
+            "otp_required": True,
+            "otp_dept_id": str(otp_exc.dept_id),
+            "otp_device_group": otp_exc.device_group,
+        }
+    return host_result, otp_required_info
+
+
+def _extract_error_and_exception(multi_result: MultiResult) -> tuple[str, Exception | None]:
+    """从 MultiResult 中提取错误信息和异常。"""
+    if multi_result.exception:
+        return str(multi_result.exception), multi_result.exception
+
+    if multi_result:
+        last_result = multi_result[-1]
+        if isinstance(last_result.result, dict) and last_result.result.get("error"):
+            return str(last_result.result.get("error")), None
+        if last_result.exception:
+            return str(last_result.exception), last_result.exception
+
+    return "Unknown error", None
+
+
 def aggregate_results(results: AggregatedResult) -> dict[str, Any]:
     """
     聚合 Nornir 任务结果。
@@ -274,102 +323,39 @@ def aggregate_results(results: AggregatedResult) -> dict[str, Any]:
     Returns:
         dict: 包含成功/失败统计和详细结果的字典
     """
-    success_hosts = []
-    failed_hosts = []
-    host_results = {}
+    success_hosts: list[str] = []
+    failed_hosts: list[str] = []
+    host_results: dict[str, dict[str, Any]] = {}
     otp_required_info: dict[str, Any] | None = None
     otp_failed_device_ids: list[str] = []
-
-    def _is_otp_error(error_text: str) -> bool:
-        text = (error_text or "").lower()
-        return "otp" in text and ("过期" in text or "required" in text or "认证" in text)
 
     for host, multi_result in results.items():
         if multi_result.failed:
             failed_hosts.append(host)
+            error_text, exception = _extract_error_and_exception(multi_result)
 
-            error_text = "Unknown error"
-            if multi_result.exception:
-                error_text = str(multi_result.exception)
-                if isinstance(multi_result.exception, OTPRequiredException):
-                    otp_required = multi_result.exception
-                    host_results[host] = {
-                        "status": "otp_required",
-                        "error": error_text,
-                        "result": None,
-                        "otp_dept_id": str(otp_required.dept_id),
-                        "otp_device_group": otp_required.device_group,
-                    }
-                    if otp_required.failed_devices:
-                        for did in otp_required.failed_devices:
-                            otp_failed_device_ids.append(str(did))
-                    if otp_required_info is None:
-                        otp_required_info = {
-                            "otp_required": True,
-                            "otp_dept_id": str(otp_required.dept_id),
-                            "otp_device_group": otp_required.device_group,
-                        }
-                    continue
-                if _is_otp_error(error_text):
-                    host_results[host] = {
-                        "status": "otp_required",
-                        "error": error_text,
-                        "result": None,
-                    }
-                    if otp_required_info is None:
-                        otp_required_info = {"otp_required": True}
-                    continue
-            elif multi_result:
-                # 若任务函数内部捕获并返回了 failed Result，则从最后一个结果里取 error
-                last_result = multi_result[-1]
-                if isinstance(last_result.result, dict) and last_result.result.get("error"):
-                    error_text = str(last_result.result.get("error"))
-                elif last_result.exception:
-                    error_text = str(last_result.exception)
-                    if isinstance(last_result.exception, OTPRequiredException):
-                        otp_required = last_result.exception
-                        host_results[host] = {
-                            "status": "otp_required",
-                            "error": error_text,
-                            "result": None,
-                            "otp_dept_id": str(otp_required.dept_id),
-                            "otp_device_group": otp_required.device_group,
-                        }
-                        if otp_required.failed_devices:
-                            for did in otp_required.failed_devices:
-                                otp_failed_device_ids.append(str(did))
-                        if otp_required_info is None:
-                            otp_required_info = {
-                                "otp_required": True,
-                                "otp_dept_id": str(otp_required.dept_id),
-                                "otp_device_group": otp_required.device_group,
-                            }
-                        continue
-                    if _is_otp_error(error_text):
-                        host_results[host] = {
-                            "status": "otp_required",
-                            "error": error_text,
-                            "result": None,
-                        }
-                        if otp_required_info is None:
-                            otp_required_info = {"otp_required": True}
-                        continue
+            # 处理 OTPRequiredException
+            if isinstance(exception, OTPRequiredException):
+                host_results[host], otp_required_info = _handle_otp_exception(
+                    exception, error_text, otp_failed_device_ids, otp_required_info
+                )
+                continue
 
-            host_results[host] = {
-                "status": "failed",
-                "error": error_text,
-            }
+            # 处理文本中的 OTP 错误
+            if _is_otp_error_text(error_text):
+                host_results[host] = {"status": "otp_required", "error": error_text, "result": None}
+                if otp_required_info is None:
+                    otp_required_info = {"otp_required": True}
+                continue
+
+            # 普通失败
+            host_results[host] = {"status": "failed", "error": error_text}
         else:
             success_hosts.append(host)
-            # 获取最后一个结果（通常是主任务的结果）
             if multi_result:
-                last_result = multi_result[-1]
-                host_results[host] = {
-                    "status": "success",
-                    "result": last_result.result,
-                }
+                host_results[host] = {"status": "success", "result": multi_result[-1].result}
 
-    summary = {
+    summary: dict[str, Any] = {
         "total": len(results),
         "success": len(success_hosts),
         "failed": len(failed_hosts),
