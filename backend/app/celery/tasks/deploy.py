@@ -153,6 +153,29 @@ def deploy_task(self, task_id: str) -> dict[str, Any]:
 
     try:
         return run_async(_deploy_task_async(self, task_id, celery_task_id=celery_task_id))
+    except OTPRequiredException as otp_exc:
+        # OTP 认证失败：标记为 PAUSED，让用户重新输入 OTP
+        otp_message = otp_exc.message
+        otp_details = otp_exc.details
+        logger.info("下发需要 OTP 输入", deploy_task_id=task_id, message=otp_message)
+
+        async def _mark_paused_sync() -> None:
+            async with AsyncSessionLocal() as db:
+                task_uuid = UUID(task_id)
+                task = await db.get(Task, task_uuid)
+                if not task:
+                    return
+                task.status = TaskStatus.PAUSED.value
+                task.error_message = otp_message
+                task.result = otp_details
+                await db.flush()
+                await db.commit()
+
+        try:
+            run_async(_mark_paused_sync())
+        except Exception:
+            pass
+        return {"status": "paused", "otp_required": otp_details}
     except Exception as e:
         error_text = str(e)
         logger.error("下发任务执行异常", deploy_task_id=task_id, error=error_text, exc_info=True)
@@ -198,6 +221,21 @@ async def _deploy_task_async(self, task_id: str, *, celery_task_id: str | None) 
                 raise ValueError("任务不存在")
             if task.task_type != TaskType.DEPLOY.value:
                 raise ValueError("非下发任务")
+
+            # 检查任务状态：如果已暂停/取消/失败，则不继续执行
+            if task.status in {
+                TaskStatus.PAUSED.value,
+                TaskStatus.CANCELLED.value,
+                TaskStatus.FAILED.value,
+                TaskStatus.SUCCESS.value,
+                TaskStatus.PARTIAL.value,
+            }:
+                logger.info(
+                    "任务状态不允许执行，跳过",
+                    deploy_task_id=task_id,
+                    current_status=task.status,
+                )
+                return {"status": task.status, "skipped": True, "reason": f"任务状态为 {task.status}"}
 
             changed = False
             if task.status != TaskStatus.RUNNING.value:
@@ -308,7 +346,14 @@ async def _deploy_task_async(self, task_id: str, *, celery_task_id: str | None) 
                             "password": cred.password,
                             "port": d.ssh_port or 22,
                             "groups": [d.device_group] if d.device_group else [],
-                            "data": {"deploy_configs": rendered_map[str(d.id)], "device_id": str(d.id)},
+                            "data": {
+                                "deploy_configs": rendered_map[str(d.id)],
+                                "device_id": str(d.id),
+                                # OTP 认证所需字段
+                                "auth_type": d.auth_type,
+                                "dept_id": str(d.dept_id) if d.dept_id else None,
+                                "device_group": d.device_group,
+                            },
                         }
                     )
             except OTPRequiredException as e:
@@ -498,6 +543,30 @@ def async_deploy_task(self, task_id: str) -> dict[str, Any]:
 
     try:
         return run_async(_async_deploy_task_impl(self, task_id, celery_task_id=celery_task_id))
+    except OTPRequiredException as otp_exc:
+        # OTP 认证失败：标记为 PAUSED，让用户重新输入 OTP
+        otp_message = otp_exc.message
+        otp_details = otp_exc.details
+        logger.info("异步下发需要 OTP 输入", deploy_task_id=task_id, message=otp_message)
+
+        async def _mark_paused() -> None:
+            async with AsyncSessionLocal() as db:
+                task_uuid = UUID(task_id)
+                task = await db.get(Task, task_uuid)
+                if not task:
+                    return
+                task.status = TaskStatus.PAUSED.value
+                task.error_message = otp_message
+                task.result = otp_details
+                await db.flush()
+                await db.commit()
+
+        try:
+            run_async(_mark_paused())
+        except Exception:
+            pass
+        # 返回 paused 状态而不是抛出异常
+        return {"status": "paused", "otp_required": otp_details}
     except Exception as e:
         error_text = str(e)
         logger.error("异步下发任务执行异常", deploy_task_id=task_id, error=error_text, exc_info=True)
@@ -543,6 +612,21 @@ async def _async_deploy_task_impl(self, task_id: str, *, celery_task_id: str | N
             raise ValueError("任务不存在")
         if task.task_type != TaskType.DEPLOY.value:
             raise ValueError("非下发任务")
+
+        # 检查任务状态：如果已暂停/取消/失败，则不继续执行
+        if task.status in {
+            TaskStatus.PAUSED.value,
+            TaskStatus.CANCELLED.value,
+            TaskStatus.FAILED.value,
+            TaskStatus.SUCCESS.value,
+            TaskStatus.PARTIAL.value,
+        }:
+            logger.info(
+                "任务状态不允许执行，跳过",
+                deploy_task_id=task_id,
+                current_status=task.status,
+            )
+            return {"status": task.status, "skipped": True, "reason": f"任务状态为 {task.status}"}
 
         # 使用共享函数处理并发冲突
         await _update_task_status_with_retry(db, task, task_id)
@@ -629,6 +713,10 @@ async def _async_deploy_task_impl(self, task_id: str, *, celery_task_id: str | N
                             "deploy_configs": rendered_map[str(d.id)],
                             "device_id": str(d.id),
                             "device_name": d.name,
+                            # OTP 认证所需字段
+                            "auth_type": d.auth_type,
+                            "dept_id": str(d.dept_id) if d.dept_id else None,
+                            "device_group": d.device_group,
                         },
                     }
                 )
@@ -652,57 +740,64 @@ async def _async_deploy_task_impl(self, task_id: str, *, celery_task_id: str | N
 
         nr = init_nornir(hosts_data, num_workers=concurrency)
 
-        # 变更前备份（异步）
+        # 变更前备份（异步）- 使用 aggregate_results 检测 OTP 错误
         _update_progress({"stage": "pre_change_backup", "total": len(nr.inventory.hosts)})
         backup_results = nr.run(task=backup_config)
+        backup_summary = aggregate_results(backup_results)
+
+        # 检查是否有 OTP 错误
+        if backup_summary.get("otp_required"):
+            task.status = TaskStatus.PAUSED.value
+            task.error_message = "需要重新输入 OTP 验证码"
+            task.result = {
+                "otp_required": True,
+                "otp_dept_id": backup_summary.get("otp_dept_id"),
+                "otp_device_group": backup_summary.get("otp_device_group"),
+                "otp_failed_device_ids": backup_summary.get("otp_failed_device_ids", []),
+            }
+            await db.flush()
+            await db.commit()
+            return {"status": "paused", "otp_required": task.result}
 
         pre_change_backup_ids: dict[str, str] = {}
-        for host_name, multi_result in backup_results.items():
-            if not multi_result or multi_result.failed:
+        for host_name, result_data in backup_summary.get("results", {}).items():
+            if result_data.get("status") != "success":
                 continue
-            r = multi_result[0].result or {}
-            if r.get("success") and r.get("config"):
+            config_content = result_data.get("result")
+            if config_content and isinstance(config_content, str):
                 # 查找对应设备
                 device = next((d for d in devices if str(d.id) == host_name), None)
                 if device:
-                    b = await _save_pre_change_backup(db, device, r["config"])
+                    b = await _save_pre_change_backup(db, device, config_content)
                     pre_change_backup_ids[host_name] = str(b.id)
                     if task.rollback_backup_id is None:
                         task.rollback_backup_id = b.id
         await db.commit()
 
-        # 异步下发
+        # 异步下发 - 使用 aggregate_results 检测 OTP 错误
         _update_progress({"stage": "deploying", "total": len(nr.inventory.hosts)})
         deploy_results = nr.run(task=deploy_from_host_data)
+        deploy_summary = aggregate_results(deploy_results)
 
-        # 聚合结果
-        all_results: dict[str, Any] = {"results": {}}
-        success_count = 0
-        failed_count = 0
+        # 检查下发是否有 OTP 错误
+        if deploy_summary.get("otp_required"):
+            task.status = TaskStatus.PAUSED.value
+            task.error_message = "需要重新输入 OTP 验证码"
+            task.result = {
+                "otp_required": True,
+                "otp_dept_id": deploy_summary.get("otp_dept_id"),
+                "otp_device_group": deploy_summary.get("otp_device_group"),
+                "otp_failed_device_ids": deploy_summary.get("otp_failed_device_ids", []),
+                "pre_change_backup_ids": pre_change_backup_ids,
+            }
+            await db.flush()
+            await db.commit()
+            return {"status": "paused", "otp_required": task.result}
 
-        for host_name, multi_result in deploy_results.items():
-            if not multi_result or multi_result.failed:
-                failed_count += 1
-                error_msg = "执行失败"
-                if multi_result and len(multi_result) > 0:
-                    r = multi_result[0]
-                    if r.exception:
-                        error_msg = str(r.exception)
-                all_results["results"][host_name] = {"status": "failed", "error": error_msg}
-            else:
-                r = multi_result[0].result or {}
-                if r.get("success"):
-                    success_count += 1
-                    all_results["results"][host_name] = {
-                        "status": "success",
-                        "result": r.get("result"),
-                    }
-                else:
-                    failed_count += 1
-                    all_results["results"][host_name] = {
-                        "status": "failed",
-                        "error": r.get("error", "未知错误"),
-                    }
+        # 聚合结果 - 直接使用 aggregate_results 返回的格式化数据
+        all_results: dict[str, Any] = {"results": deploy_summary.get("results", {})}
+        success_count = deploy_summary.get("success", 0)
+        failed_count = deploy_summary.get("failed", 0)
 
         # 更新任务状态
         task.success_count = success_count

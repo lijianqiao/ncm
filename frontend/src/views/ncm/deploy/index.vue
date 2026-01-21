@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, h } from 'vue'
+import { ref, h, type VNode } from 'vue'
 import {
   NButton,
   NModal,
@@ -25,6 +25,8 @@ import {
   createDeployTask,
   approveDeployTask,
   executeDeployTask,
+  cancelDeployTask,
+  retryDeployTask,
   rollbackDeployTask,
   getRecycleBinDeployTasks,
   batchDeleteDeployTasks,
@@ -37,6 +39,7 @@ import {
   type DeployTaskStatus,
   type DeviceDeployResult,
 } from '@/api/deploy'
+import { getDevice } from '@/api/devices'
 import { cacheOTP } from '@/api/credentials'
 import { getTemplates, type Template } from '@/api/templates'
 import { getUsers, type User } from '@/api/users'
@@ -145,100 +148,6 @@ const formatJson = (value: unknown): string => {
   }
 }
 
-// ==================== 表格列定义 ====================
-
-const columns: DataTableColumns<DeployTask> = [
-  { type: 'selection', fixed: 'left' },
-  { title: '任务名称', key: 'name', width: 200, fixed: 'left', ellipsis: { tooltip: true } },
-  {
-    title: '模板',
-    key: 'template_name',
-    width: 150,
-    ellipsis: { tooltip: true },
-    render: (row) => row.template_name || '-',
-  },
-  {
-    title: '设备数',
-    key: 'device_count',
-    width: 80,
-    render: (row) => getTaskDeviceCount(row),
-  },
-  {
-    title: '审批状态',
-    key: 'approval_status',
-    width: 100,
-    render: (row) => {
-      const s = row.approval_status || '-'
-      if (s === '-') return '-'
-      return h(
-        NTag,
-        { type: approvalStatusColorMap[s] || 'info', bordered: false, size: 'small' },
-        { default: () => approvalStatusLabelMap[s] || s },
-      )
-    },
-  },
-  {
-    title: '审批进度',
-    key: 'current_approval_level',
-    width: 90,
-    render: (row) => `${row.current_approval_level ?? 0}/3`,
-  },
-  {
-    title: '状态',
-    key: 'status',
-    width: 100,
-    render(row) {
-      return h(
-        NTag,
-        { type: statusColorMap[row.status], bordered: false, size: 'small' },
-        { default: () => statusLabelMap[row.status] },
-      )
-    },
-  },
-  {
-    title: '创建人',
-    key: 'created_by_name',
-    width: 100,
-    render: (row) => row.created_by_name || '-',
-  },
-  {
-    title: '成功/失败',
-    key: 'result_count',
-    width: 100,
-    render: (row) => `${row.success_count ?? 0}/${row.failed_count ?? 0}`,
-  },
-  {
-    title: '干跑',
-    key: 'dry_run',
-    width: 70,
-    render: (row) => (row.deploy_plan?.dry_run ? '是' : '否'),
-  },
-  {
-    title: '并发',
-    key: 'concurrency',
-    width: 70,
-    render: (row) => row.deploy_plan?.concurrency ?? '-',
-  },
-  {
-    title: '批次',
-    key: 'batch_size',
-    width: 70,
-    render: (row) => row.deploy_plan?.batch_size ?? '-',
-  },
-  {
-    title: '创建时间',
-    key: 'created_at',
-    width: 180,
-    render: (row) => formatDateTime(row.created_at),
-  },
-  {
-    title: '更新时间',
-    key: 'updated_at',
-    width: 180,
-    render: (row) => formatDateTime(row.updated_at),
-  },
-]
-
 // ==================== 搜索筛选 ====================
 
 const searchFilters: FilterConfig[] = [
@@ -327,24 +236,6 @@ const handleRecycleBinBatchHardDelete = async (ids: Array<string | number>) => {
   } catch {
     // Error handled
   }
-}
-
-// ==================== 右键菜单 ====================
-
-const contextMenuOptions: DropdownOption[] = [
-  { label: '查看详情', key: 'view' },
-  { label: '查看结果', key: 'result' },
-  { label: '审批', key: 'approve' },
-  { label: '执行', key: 'execute' },
-  { label: '回滚', key: 'rollback' },
-]
-
-const handleContextMenuSelect = (key: string | number, row: DeployTask) => {
-  if (key === 'view') handleView(row)
-  if (key === 'result') handleResult(row)
-  if (key === 'approve') handleApprove(row)
-  if (key === 'execute') handleExecute(row)
-  if (key === 'rollback') handleRollback(row)
 }
 
 // ==================== 查看详情（Plan/Approval） ====================
@@ -564,10 +455,6 @@ const openOtpModal = (task: DeployTask) => {
 }
 
 const handleApprove = (row: DeployTask) => {
-  if (row.status !== 'pending' && row.status !== 'approving') {
-    $alert.warning('该任务不在审批阶段')
-    return
-  }
   // 找到待审批的级别
   const pendingApproval = (row.approvals || []).find((a) => a.status === 'pending')
   approveModel.value = {
@@ -598,10 +485,6 @@ const submitApprove = async () => {
 // ==================== 执行 ====================
 
 const handleExecute = (row: DeployTask) => {
-  if (row.status !== 'approved') {
-    $alert.warning('只能执行已批准的任务')
-    return
-  }
   const count = getTaskDeviceCount(row)
   dialog.warning({
     title: '执行下发',
@@ -609,42 +492,119 @@ const handleExecute = (row: DeployTask) => {
     positiveText: '确认',
     negativeText: '取消',
     onPositiveClick: async () => {
-      try {
-        const res = await executeDeployTask(row.id)
-        const task = res.data
-        if (task.status === 'paused') {
-          $alert.warning('需要输入 OTP 验证码')
-          openOtpModal(task)
-          return
-        }
-        $alert.success('下发任务已提交执行')
-        tableRef.value?.reload()
-      } catch (error) {
-        // 尝试处理 428 OTP
-        otpFlow.tryHandleOtpRequired(error, async (otpCode) => {
-          const d = otpFlow.details.value
-          if (!d) return
-
-          // 1. 缓存 OTP
-          const cacheRes = await cacheOTP({
-            dept_id: d.dept_id,
-            device_group: d.device_group as DeviceGroupType,
-            otp_code: otpCode,
-          })
-          if (!cacheRes.data?.success) {
-            throw new Error(cacheRes.data?.message || 'OTP 缓存失败')
-          }
-
-          // 2. 重试执行
+      // 封装执行逻辑
+      const doExecute = async () => {
+        try {
           const res = await executeDeployTask(row.id)
           const task = res.data
           if (task.status === 'paused') {
+            $alert.warning('需要输入 OTP 验证码')
             openOtpModal(task)
-          } else {
-            $alert.success('下发任务已提交执行')
-            tableRef.value?.reload()
+            return
           }
-        })
+          $alert.success('下发任务已提交执行')
+          tableRef.value?.reload()
+        } catch (error) {
+          // 尝试处理 428 OTP (兜底)
+          otpFlow.tryHandleOtpRequired(error, async (otpCode) => {
+            const d = otpFlow.details.value
+            if (!d) return
+
+            // 1. 缓存 OTP
+            const cacheRes = await cacheOTP({
+              dept_id: d.dept_id,
+              device_group: d.device_group as DeviceGroupType,
+              otp_code: otpCode,
+            })
+            if (!cacheRes.data?.success) {
+              throw new Error(cacheRes.data?.message || 'OTP 缓存失败')
+            }
+
+            // 2. 重试执行
+            await doExecute()
+          })
+        }
+      }
+
+      // 1. 尝试主动获取设备信息进行预判
+      try {
+        const taskRes = await getDeployTask(row.id)
+        const deviceIds = taskRes.data.target_devices?.device_ids || taskRes.data.device_ids || []
+
+        if (deviceIds.length > 0 && deviceIds[0]) {
+          // 获取第一个设备的详情，检查是否需要 OTP
+          const deviceRes = await getDevice(deviceIds[0])
+          const device = deviceRes.data
+
+          // 如果设备配置为手动 OTP，且具备必要的部门/分组信息
+          if (device.auth_type === 'otp_manual' && device.dept_id && device.device_group) {
+            otpFlow.open(
+              {
+                dept_id: device.dept_id!,
+                device_group: device.device_group!,
+                failed_devices: [],
+                message: '安全下发需要进行 OTP 验证',
+              },
+              async (otpCode) => {
+                // 先缓存 OTP
+                await cacheOTP({
+                  dept_id: device.dept_id!,
+                  device_group: device.device_group!,
+                  otp_code: otpCode,
+                })
+                // 再执行
+                await doExecute()
+              },
+            )
+            return // 中断后续直接执行，等待 OTP 回调
+          }
+        }
+      } catch (e) {
+        // 获取设备信息失败，忽略错误，降级到直接执行（依赖后端 428）
+        console.warn('Failed to pre-check OTP requirement:', e)
+      }
+
+      // 2. 如果不需要预先 OTP，或预检查失败，直接执行
+      await doExecute()
+    },
+  })
+}
+
+// ==================== 取消 ====================
+
+const handleCancel = (row: DeployTask) => {
+  dialog.warning({
+    title: '确认取消',
+    content: `确定要取消任务 "${row.name}" 吗？取消后已执行的设备不会自动回滚。`,
+    positiveText: '确认取消',
+    negativeText: '不取消',
+    onPositiveClick: async () => {
+      try {
+        await cancelDeployTask(row.id)
+        $alert.success('任务已取消')
+        tableRef.value?.reload()
+      } catch {
+        // Error handled
+      }
+    },
+  })
+}
+
+// ==================== 重试 ====================
+
+const handleRetry = (row: DeployTask) => {
+  dialog.warning({
+    title: '确认重试',
+    content: `确定要重试任务 "${row.name}" 中的失败设备吗？`,
+    positiveText: '确认重试',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      try {
+        await retryDeployTask(row.id)
+        $alert.success('重试任务已提交')
+        tableRef.value?.reload()
+      } catch {
+        // Error handled
       }
     },
   })
@@ -653,10 +613,6 @@ const handleExecute = (row: DeployTask) => {
 // ==================== 回滚 ====================
 
 const handleRollback = (row: DeployTask) => {
-  if (row.status !== 'success' && row.status !== 'failed') {
-    $alert.warning('只能回滚已完成或失败的任务')
-    return
-  }
   dialog.error({
     title: '回滚确认',
     content: `确定要回滚下发任务 "${row.name}" 吗？这将尝试撤销之前的配置变更。`,
@@ -687,6 +643,212 @@ const handleRollback = (row: DeployTask) => {
     },
   })
 }
+
+// ==================== 右键菜单 ====================
+
+const contextMenuOptions: DropdownOption[] = [
+  { label: '查看详情', key: 'view' },
+  { label: '查看结果', key: 'result' },
+  { label: '审批', key: 'approve' },
+  { label: '执行', key: 'execute' },
+  { label: '回滚', key: 'rollback' },
+]
+
+const handleContextMenuSelect = (key: string | number, row: DeployTask) => {
+  if (key === 'view') handleView(row)
+  if (key === 'result') handleResult(row)
+  if (key === 'approve') handleApprove(row)
+  if (key === 'execute') handleExecute(row)
+  if (key === 'rollback') handleRollback(row)
+}
+
+// ==================== 表格列定义 ====================
+
+const columns: DataTableColumns<DeployTask> = [
+  { type: 'selection', fixed: 'left' },
+  { title: '任务名称', key: 'name', width: 200, fixed: 'left', ellipsis: { tooltip: true } },
+  {
+    title: '模板',
+    key: 'template_name',
+    width: 150,
+    ellipsis: { tooltip: true },
+    render: (row) => row.template_name || '-',
+  },
+  {
+    title: '设备数',
+    key: 'device_count',
+    width: 80,
+    render: (row) => getTaskDeviceCount(row),
+  },
+  {
+    title: '审批状态',
+    key: 'approval_status',
+    width: 100,
+    render: (row) => {
+      const s = row.approval_status || '-'
+      if (s === '-') return '-'
+      return h(
+        NTag,
+        { type: approvalStatusColorMap[s] || 'info', bordered: false, size: 'small' },
+        { default: () => approvalStatusLabelMap[s] || s },
+      )
+    },
+  },
+  {
+    title: '审批进度',
+    key: 'current_approval_level',
+    width: 90,
+    render: (row) => `${row.current_approval_level ?? 0}/3`,
+  },
+  {
+    title: '状态',
+    key: 'status',
+    width: 100,
+    render(row) {
+      return h(
+        NTag,
+        { type: statusColorMap[row.status], bordered: false, size: 'small' },
+        { default: () => statusLabelMap[row.status] },
+      )
+    },
+  },
+  {
+    title: '创建人',
+    key: 'created_by_name',
+    width: 100,
+    render: (row) => row.created_by_name || '-',
+  },
+  {
+    title: '成功/失败',
+    key: 'result_count',
+    width: 100,
+    render: (row) => `${row.success_count ?? 0}/${row.failed_count ?? 0}`,
+  },
+  {
+    title: '干跑',
+    key: 'dry_run',
+    width: 70,
+    render: (row) => (row.deploy_plan?.dry_run ? '是' : '否'),
+  },
+  {
+    title: '并发',
+    key: 'concurrency',
+    width: 70,
+    render: (row) => row.deploy_plan?.concurrency ?? '-',
+  },
+  {
+    title: '批次',
+    key: 'batch_size',
+    width: 70,
+    render: (row) => row.deploy_plan?.batch_size ?? '-',
+  },
+  {
+    title: '创建时间',
+    key: 'created_at',
+    width: 180,
+    render: (row) => formatDateTime(row.created_at),
+  },
+  {
+    title: '更新时间',
+    key: 'updated_at',
+    width: 180,
+    render: (row) => formatDateTime(row.updated_at),
+  },
+  {
+    title: '操作',
+    key: 'actions',
+    width: 180,
+    fixed: 'right',
+    render(row) {
+      const btns: VNode[] = []
+      const s = row.status
+
+      // 查看详情 (所有状态)
+      btns.push(
+        h(
+          NButton,
+          {
+            size: 'tiny',
+            secondary: true,
+            onClick: () => handleView(row),
+          },
+          { default: () => '详情' },
+        ),
+      )
+
+      // 执行 (approved, paused, cancelled)
+      if (['approved', 'paused', 'cancelled'].includes(s)) {
+        btns.push(
+          h(
+            NButton,
+            {
+              size: 'tiny',
+              type: 'primary',
+              secondary: true,
+              onClick: () => handleExecute(row),
+            },
+            { default: () => (s === 'approved' ? '执行' : '重试') },
+          ),
+        )
+      }
+
+      // 取消 (running)
+      if (s === 'running') {
+        btns.push(
+          h(
+            NButton,
+            {
+              size: 'tiny',
+              type: 'warning',
+              secondary: true,
+              onClick: () => handleCancel(row),
+            },
+            { default: () => '取消' },
+          ),
+        )
+      }
+
+      // 重试失败 (partial, failed)
+      if (['partial', 'failed'].includes(s)) {
+        btns.push(
+          h(
+            NButton,
+            {
+              size: 'tiny',
+              type: 'error',
+              secondary: true,
+              onClick: () => handleRetry(row),
+            },
+            { default: () => '重试失败' },
+          ),
+        )
+      }
+
+      // 回滚 (success, partial)
+      if (['success', 'partial'].includes(s)) {
+        btns.push(
+          h(
+            NButton,
+            {
+              size: 'tiny',
+              type: 'warning',
+              secondary: true,
+              onClick: () => handleRollback(row),
+            },
+            { default: () => '回滚' },
+          ),
+        )
+      }
+
+      // 删除 (failed, success, cancelled)
+      // 注意：这里只提供软删除入口，彻底删除在回收站
+      // 实际上 ProTable 可能已经有了删除按钮，或者我们这里只放常用操作
+      // 如果放太多按钮会很挤，这里只放核心流程按钮
+
+      return h(NSpace, { size: 'small' }, { default: () => btns })
+    },
+  },
+]
 </script>
 
 <template>

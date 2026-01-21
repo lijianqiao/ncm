@@ -148,7 +148,7 @@ const columns: DataTableColumns<Backup> = [
   {
     title: '厂商',
     key: 'vendor',
-    width: 80,
+    width: 100,
     render: (row) => (row.device?.vendor ? String(row.device.vendor).toUpperCase() : '-'),
   },
   {
@@ -836,13 +836,6 @@ const closeBatchBackupModal = () => {
   resetBatchTask()
 }
 
-// const selectAllDevices = () => {
-//   batchBackupModel.value.device_ids = deviceOptions.value.map((d) => d.value)
-// }
-
-// const clearAllDevices = () => {
-//   batchBackupModel.value.device_ids = []
-// }
 </script>
 
 <template>

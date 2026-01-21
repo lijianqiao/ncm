@@ -201,6 +201,9 @@ def deploy_from_host_data(task: Task) -> Result:
                 detail_parts.append(f"子任务: {sub_name}")
             if sub_exc:
                 detail_parts.append(f"异常: {sub_exc}")
+                # 检查子任务异常是否是 OTPRequiredException
+                if isinstance(sub_exc, OTPRequiredException):
+                    raise sub_exc from None
         error_text = "\n".join([x for x in detail_parts if x])
         logger.error("下发子任务失败", host=str(task.host), error=error_text, exc_info=True)
         return Result(
@@ -209,6 +212,9 @@ def deploy_from_host_data(task: Task) -> Result:
             changed=False,
             failed=True,
         )
+    except OTPRequiredException:
+        # OTP 异常必须传播，让 Celery 任务处理
+        raise
     except Exception as e:
         logger.error("下发任务失败", host=str(task.host), error=str(e), exc_info=True)
         return Result(

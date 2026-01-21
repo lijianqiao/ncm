@@ -134,6 +134,9 @@ def create_nornir_inventory(
             "auth_strict_key": False,
             "ssh_config_file": "",
             "transport": "ssh2",
+            # 认证超时设置（秒）- 加快 OTP 失败检测
+            "timeout_socket": 10,  # Socket 连接超时
+            "timeout_transport": 15,  # Transport 层超时（含认证）
         }
 
         host_groups = []

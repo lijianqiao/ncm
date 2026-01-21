@@ -158,6 +158,52 @@ async def rollback_task(task_id: UUID) -> ResponseBase[DeployRollbackResponse]:
     )
 
 
+@router.post(
+    "/{task_id}/cancel",
+    response_model=ResponseBase[DeployTaskResponse],
+    dependencies=[Depends(require_permissions([PermissionCode.DEPLOY_EXECUTE.value]))],
+    summary="取消执行中的任务",
+)
+async def cancel_task(task_id: UUID, service: DeployServiceDep) -> ResponseBase[DeployTaskResponse]:
+    """取消正在执行的下发任务。
+
+    仅当任务处于 RUNNING 状态时可取消。会尝试终止对应的 Celery 任务。
+
+    Args:
+        task_id (UUID): 任务 ID。
+        service (DeployService): 下发服务依赖。
+
+    Returns:
+        ResponseBase[DeployTaskResponse]: 取消后的任务详情。
+    """
+    task = await service.cancel_task(task_id)
+    task_response = DeployTaskResponse.model_validate(task)
+    return ResponseBase(data=task_response, message="任务已取消")
+
+
+@router.post(
+    "/{task_id}/retry",
+    response_model=ResponseBase[DeployTaskResponse],
+    dependencies=[Depends(require_permissions([PermissionCode.DEPLOY_EXECUTE.value]))],
+    summary="重试失败的设备",
+)
+async def retry_failed_devices(task_id: UUID, service: DeployServiceDep) -> ResponseBase[DeployTaskResponse]:
+    """重试部分成功或失败任务中的失败设备。
+
+    仅当任务处于 PARTIAL 或 FAILED 状态时可重试。
+
+    Args:
+        task_id (UUID): 任务 ID。
+        service (DeployService): 下发服务依赖。
+
+    Returns:
+        ResponseBase[DeployTaskResponse]: 重新执行后的任务详情。
+    """
+    task = await service.retry_failed_devices(task_id)
+    task_response = DeployTaskResponse.model_validate(task)
+    return ResponseBase(data=task_response, message="已开始重试失败设备")
+
+
 @router.get(
     "/",
     response_model=ResponseBase[PaginatedResponse[DeployTaskResponse]],
@@ -344,32 +390,6 @@ async def restore_deploy_task(
 
 
 @router.delete(
-    "/{task_id}/hard",
-    response_model=ResponseBase[dict],
-    dependencies=[
-        Depends(deps.get_current_active_superuser),
-        Depends(require_permissions([PermissionCode.DEPLOY_DELETE.value])),
-    ],
-    summary="彻底删除下发任务",
-)
-async def hard_delete_deploy_task(
-    task_id: UUID,
-    service: DeployServiceDep,
-) -> ResponseBase[dict]:
-    """彻底删除单个下发任务（物理删除，不可恢复）。
-
-    Args:
-        task_id (UUID): 任务 ID。
-        service (DeployService): 下发服务依赖。
-
-    Returns:
-        ResponseBase[dict]: 操作结果消息。
-    """
-    await service.hard_delete_task(task_id=task_id)
-    return ResponseBase(data={"message": "下发任务已彻底删除"}, message="下发任务已彻底删除")
-
-
-@router.delete(
     "/batch/hard",
     response_model=ResponseBase[BatchOperationResult],
     dependencies=[
@@ -399,6 +419,32 @@ async def batch_hard_delete_deploy_tasks(
             message=f"成功彻底删除 {success_count} 个下发任务" if not failed_ids else "部分彻底删除成功",
         )
     )
+
+
+@router.delete(
+    "/{task_id}/hard",
+    response_model=ResponseBase[dict],
+    dependencies=[
+        Depends(deps.get_current_active_superuser),
+        Depends(require_permissions([PermissionCode.DEPLOY_DELETE.value])),
+    ],
+    summary="彻底删除下发任务",
+)
+async def hard_delete_deploy_task(
+    task_id: UUID,
+    service: DeployServiceDep,
+) -> ResponseBase[dict]:
+    """彻底删除单个下发任务（物理删除，不可恢复）。
+
+    Args:
+        task_id (UUID): 任务 ID。
+        service (DeployService): 下发服务依赖。
+
+    Returns:
+        ResponseBase[dict]: 操作结果消息。
+    """
+    await service.hard_delete_task(task_id=task_id)
+    return ResponseBase(data={"message": "下发任务已彻底删除"}, message="下发任务已彻底删除")
 
 
 @router.get(

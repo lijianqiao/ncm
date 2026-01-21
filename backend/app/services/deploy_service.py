@@ -122,7 +122,9 @@ class DeployService:
 
     @transactional()
     async def hard_delete_task(self, *, task_id: UUID) -> None:
-        stmt = select(Task.id).where(Task.id == task_id, Task.task_type == TaskType.DEPLOY.value, Task.is_deleted.is_(True))
+        stmt = select(Task.id).where(
+            Task.id == task_id, Task.task_type == TaskType.DEPLOY.value, Task.is_deleted.is_(True)
+        )
         exists = (await self.db.execute(stmt)).scalars().first()
         if exists is None:
             raise NotFoundException("任务不存在或未被软删除")
@@ -188,7 +190,7 @@ class DeployService:
         if task.approval_status != ApprovalStatus.APPROVED.value:
             raise BadRequestException("任务未审批通过")
         if task.status not in {TaskStatus.APPROVED.value, TaskStatus.PAUSED.value}:
-            raise BadRequestException("任务当前状态不可执行")
+            raise BadRequestException("非审批通过/暂停状态的任务不可执行")
 
         device_ids = self._get_target_device_ids(task)
         if not device_ids:
@@ -421,6 +423,102 @@ class DeployService:
         task.finished_at = datetime.now(UTC)
         task.result = result
         task.error_message = error
+        await self.db.flush()
+        await self.db.refresh(task)
+        task_with_related = await self.task_crud.get_with_related(self.db, id=task.id)
+        if not task_with_related:
+            raise NotFoundException("任务不存在")
+        return task_with_related
+
+    @transactional()
+    async def cancel_task(self, task_id: UUID) -> Task:
+        """取消正在执行的任务。
+
+        仅 RUNNING 状态可取消。会尝试终止 Celery 任务。
+        """
+        task = await self.get_task(task_id)
+
+        if task.status not in {TaskStatus.RUNNING.value, TaskStatus.PAUSED.value}:
+            raise BadRequestException(f"任务状态为 {task.status}，无法取消（仅执行中或暂停的任务可取消）")
+
+        # 尝试撤销 Celery 任务（不使用 terminate，因为 ThreadPool 不支持）
+        # 任务会在下次执行时检查状态并跳过
+        if task.celery_task_id:
+            try:
+                from app.celery.app import celery_app
+
+                # 仅 revoke，不 terminate（ThreadPool 不支持 kill_job）
+                celery_app.control.revoke(task.celery_task_id)
+            except Exception as e:
+                # 即使 Celery 撤销失败，仍然更新状态
+                from app.core.logger import logger
+
+                logger.warning(f"撤销 Celery 任务失败: {e}", task_id=str(task_id))
+
+        task.status = TaskStatus.CANCELLED.value
+        task.finished_at = datetime.now(UTC)
+        task.error_message = "任务已被用户取消"
+
+        await self.db.flush()
+        await self.db.refresh(task)
+        task_with_related = await self.task_crud.get_with_related(self.db, id=task.id)
+        if not task_with_related:
+            raise NotFoundException("任务不存在")
+        return task_with_related
+
+    @transactional()
+    async def retry_failed_devices(self, task_id: UUID) -> Task:
+        """重试失败的设备。
+
+        仅 PARTIAL 或 FAILED 状态可重试。
+        """
+        task = await self.get_task(task_id)
+
+        if task.status not in {TaskStatus.PARTIAL.value, TaskStatus.FAILED.value}:
+            raise BadRequestException(f"任务状态为 {task.status}，无法重试（仅部分成功或失败的任务可重试）")
+
+        # 提取失败的设备 ID
+        failed_device_ids: list[str] = []
+        if task.result and isinstance(task.result, dict):
+            results = task.result.get("results", {})
+            for device_id, res in results.items():
+                if isinstance(res, dict) and res.get("status") != "success":
+                    failed_device_ids.append(device_id)
+
+        # 如果没有从 results 中找到失败设备，但任务状态是 FAILED，
+        # 可能是任务执行前就失败了（如凭据问题），此时重试所有目标设备
+        if not failed_device_ids and task.status == TaskStatus.FAILED.value:
+            # 回退到原始目标设备列表
+            original_device_ids = self._get_target_device_ids(task)
+            failed_device_ids = [str(d) for d in original_device_ids]
+
+        if not failed_device_ids:
+            raise BadRequestException("没有需要重试的失败设备")
+
+        # 更新 target_devices 仅包含失败设备
+        task.target_devices = {"device_ids": failed_device_ids}
+        task.total_devices = len(failed_device_ids)
+        task.success_count = 0
+        task.failed_count = 0
+        task.progress = 0
+        task.error_message = None
+        # 保留原有结果用于审计，但清除以便重新执行
+        # task.result = None  # 可选：是否清除
+
+        # 重新提交执行
+        from app.celery.tasks.deploy import async_deploy_task, deploy_task
+        from app.core.config import settings
+
+        if settings.USE_ASYNC_NETWORK_TASKS:
+            celery_result = async_deploy_task.delay(task_id=str(task_id))  # type: ignore[attr-defined]
+        else:
+            celery_result = deploy_task.delay(task_id=str(task_id))  # type: ignore[attr-defined]
+
+        task.celery_task_id = celery_result.id
+        task.status = TaskStatus.RUNNING.value
+        task.started_at = datetime.now(UTC)
+        task.finished_at = None
+
         await self.db.flush()
         await self.db.refresh(task)
         task_with_related = await self.task_crud.get_with_related(self.db, id=task.id)

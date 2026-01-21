@@ -172,6 +172,22 @@ export function executeDeployTask(id: string) {
   })
 }
 
+/** 取消执行中的任务 */
+export function cancelDeployTask(id: string) {
+  return request<ResponseBase<DeployTask>>({
+    url: `/deploy/${id}/cancel`,
+    method: 'post',
+  })
+}
+
+/** 重试失败的设备 */
+export function retryDeployTask(id: string) {
+  return request<ResponseBase<DeployTask>>({
+    url: `/deploy/${id}/retry`,
+    method: 'post',
+  })
+}
+
 /** 回滚下发任务 */
 export function rollbackDeployTask(id: string) {
   return request<ResponseBase<DeployRollbackResponse>>({
