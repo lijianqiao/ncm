@@ -9,6 +9,7 @@
 """
 
 from typing import Any
+from uuid import UUID
 
 from app.celery.app import celery_app
 from app.celery.base import BaseTask, run_async, safe_update_state
@@ -17,6 +18,7 @@ from app.core.logger import logger
 from app.crud.crud_device import device as device_crud
 from app.crud.crud_discovery import discovery_crud
 from app.services.scan_service import ScanService
+from app.schemas.discovery import ScanResult as ScanResultSchema
 
 
 def _parse_dept_uuid(dept_id: str | None) -> "UUID | None":
@@ -34,7 +36,7 @@ async def _execute_scan(
     subnet: str,
     scan_type: str = "auto",
     ports: str | None = None,
-) -> "ScanResultSchema":
+) -> ScanResultSchema:
     """执行单个网段扫描的共用逻辑。
 
     Args:
@@ -47,8 +49,6 @@ async def _execute_scan(
         扫描结果 Schema
     """
     from datetime import datetime
-
-    from app.schemas.discovery import ScanResult as ScanResultSchema
 
     resolved = scan_service.resolve_scan_type(scan_type)
 
@@ -151,7 +151,8 @@ def scan_subnet(
                 meta={"progress": 100, "stage": "done", "subnet": subnet},
             )
 
-            return result.model_dump()
+            # 使用 mode="json" 确保 datetime 等类型被序列化为 JSON 兼容格式
+            return result.model_dump(mode="json")
 
     return run_async(_scan())
 
@@ -316,7 +317,8 @@ def compare_cmdb(self) -> dict[str, Any]:
                 offline_devices=result.offline_devices,
             )
 
-            return result.model_dump()
+            # 使用 mode="json" 确保 datetime 等类型被序列化为 JSON 兼容格式
+            return result.model_dump(mode="json")
 
     return run_async(_compare())
 
@@ -392,7 +394,8 @@ def scheduled_network_scan(self) -> dict[str, Any]:
                 "total_subnets": len(subnets),
                 "total_hosts": total_hosts,
                 "scan_results": scan_results,
-                "compare_result": compare_result.model_dump(),
+                # 使用 mode="json" 确保 datetime 等类型被序列化为 JSON 兼容格式
+                "compare_result": compare_result.model_dump(mode="json"),
             }
 
     return run_async(_scheduled_scan())

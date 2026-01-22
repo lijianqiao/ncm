@@ -49,7 +49,8 @@ def collect_device_tables(self, device_id: str) -> dict[str, Any]:
                 collect_arp=True,
                 collect_mac=True,
             )
-            return result.model_dump()
+            # 使用 mode="json" 确保 datetime 等类型被序列化为 JSON 兼容格式
+            return result.model_dump(mode="json")
 
     try:
         result = run_async(_collect())
@@ -97,7 +98,8 @@ def batch_collect_tables(
                 otp_code=otp_code,
             )
             result = await service.batch_collect(request)
-            return result.model_dump()
+            # 使用 mode="json" 确保 datetime 等类型被序列化为 JSON 兼容格式
+            return result.model_dump(mode="json")
 
     try:
         result = run_async(_batch_collect())
@@ -136,7 +138,8 @@ def scheduled_collect_all(self) -> dict[str, Any]:
                 collect_mac=True,
                 concurrency=10,
             )
-            return result.model_dump()
+            # 使用 mode="json" 确保 datetime 等类型被序列化为 JSON 兼容格式
+            return result.model_dump(mode="json")
 
     try:
         result = run_async(_collect_all())

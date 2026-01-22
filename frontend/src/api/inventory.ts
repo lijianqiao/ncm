@@ -31,6 +31,27 @@ export interface InventoryAuditStats {
   config_diff_count: number
 }
 
+/** 盘点结果详情 */
+export interface InventoryAuditResult {
+  subnets?: string[]
+  processed_hosts?: number
+  discoveries_total?: number
+  discoveries_by_status?: {
+    matched: number
+    pending: number
+    shadow: number
+  }
+  cmdb_compare?: {
+    total_discovered: number
+    total_cmdb: number
+    matched: number
+    shadow_assets: number
+    offline_devices: number
+    compared_at: string
+  }
+  errors?: string[]
+}
+
 /** 盘点响应 */
 export interface InventoryAudit {
   id: string
@@ -39,11 +60,15 @@ export interface InventoryAudit {
   status: InventoryAuditStatusType
   celery_task_id: string | null
   stats: InventoryAuditStats | null
+  result: InventoryAuditResult | null
   created_by: string | null
   created_by_name: string | null
+  operator_name?: string
   created_at: string
   completed_at: string | null
+  finished_at?: string | null
   error: string | null
+  error_message?: string | null
 }
 
 /** 创建盘点任务参数 */
@@ -102,11 +127,12 @@ export function getInventoryAudit(id: string) {
   })
 }
 
-/** 导出盘点报告 */
+/** 导出盘点报告 (Excel) */
 export function exportInventoryAudit(id: string) {
-  return request<ResponseBase<InventoryAuditReport>>({
+  return request<Blob>({
     url: `/inventory_audit/${id}/export`,
     method: 'get',
+    responseType: 'blob', // 关键：指定响应类型为 blob
   })
 }
 

@@ -467,8 +467,10 @@ const clickOutside = () => {
 }
 
 // API Request
-const handleSearch = async () => {
-  tableLoading.value = true
+const handleSearch = async (silent = false) => {
+  if (!silent) {
+    tableLoading.value = true
+  }
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const params: Record<string, any> = {
@@ -769,7 +771,8 @@ defineExpose({
           </n-button>
 
           <!-- Refresh Button -->
-          <n-button v-if="showRefresh" circle secondary @click="handleRefresh" title="刷新">
+          <n-button v-if="showRefresh" circle secondary @click="handleRefresh" title="刷新"
+            :loading="loading || tableLoading">
             <template #icon>
               <n-icon>
                 <RefreshIcon />

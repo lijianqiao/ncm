@@ -1,4 +1,4 @@
-"""\
+"""
 @Author: li
 @Email: lijianqiao2906@live.com
 @FileName: user_display.py

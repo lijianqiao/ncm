@@ -104,6 +104,7 @@ class InventoryAuditResponse(BaseModel):
     started_at: datetime | None = None
     finished_at: datetime | None = None
     operator_id: UUID | None = None
+    operator_name: str | None = None  # 格式: nickname(username)
     celery_task_id: str | None = None
     created_at: datetime
     updated_at: datetime

@@ -64,7 +64,8 @@ def collect_topology(
                 total_links=result.total_links,
             )
 
-            return result.model_dump()
+            # 使用 mode="json" 确保 datetime 等类型被序列化为 JSON 兼容格式
+            return result.model_dump(mode="json")
 
     return run_async(_collect())
 
@@ -148,7 +149,8 @@ def scheduled_topology_refresh(self) -> dict[str, Any]:
                 total_links=result.total_links,
             )
 
-            return result.model_dump()
+            # 使用 mode="json" 确保 datetime 等类型被序列化为 JSON 兼容格式
+            return result.model_dump(mode="json")
 
     return run_async(_refresh())
 

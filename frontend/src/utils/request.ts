@@ -211,6 +211,7 @@ const responseSuccessInterceptor = (response: AxiosResponse): unknown => {
 
   const url = response.config?.url || ''
   const responseType = response.config?.responseType
+  // 支持 Blob 响应，直接返回响应对象，由调用方处理 data
   if (responseType === 'blob' || responseType === 'arraybuffer') {
     return response
   }
