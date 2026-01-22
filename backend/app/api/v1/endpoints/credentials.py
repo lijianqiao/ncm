@@ -33,6 +33,7 @@ from app.import_export import (
     delete_export_file,
 )
 from app.schemas.common import PaginatedResponse, ResponseBase
+from app.core.otp_notice import build_otp_required_response
 from app.schemas.credential import (
     CredentialBatchRequest,
     CredentialBatchResult,
@@ -41,6 +42,8 @@ from app.schemas.credential import (
     DeviceGroupCredentialUpdate,
     OTPCacheRequest,
     OTPCacheResponse,
+    OTPVerifyRequest,
+    OTPVerifyResponse,
 )
 
 router = APIRouter()
@@ -233,6 +236,45 @@ async def cache_otp(
     """
     result = await credential_service.cache_otp(request)
     return ResponseBase(data=result, message=result.message)
+
+
+@router.post(
+    "/otp/verify",
+    response_model=ResponseBase[OTPVerifyResponse],
+    summary="验证并缓存 OTP 验证码",
+)
+async def verify_otp(
+    request: OTPVerifyRequest,
+    credential_service: deps.CredentialServiceDep,
+    current_user: deps.CurrentUser,
+    _: deps.User = Depends(deps.require_permissions([PermissionCode.CREDENTIAL_USE.value])),
+) -> Any:
+    """验证并缓存用户手动输入的 OTP 验证码。
+
+    通过连接一台代表设备来验证 OTP 是否正确：
+    1. 查找该部门+分组下一台 otp_manual 类型的设备作为测试设备
+    2. 使用提供的 OTP 尝试连接该设备
+    3. 连接成功 → 缓存 OTP（30s）→ 返回验证成功
+    4. 连接失败（认证错误）→ 不缓存 → 返回 428
+
+    前端收到 428 响应后，应继续弹出 OTP 输入框让用户重新输入。
+
+    Args:
+        request (OTPVerifyRequest): 包含凭据标识和 OTP 验证码的请求。
+        credential_service (CredentialService): 凭据服务依赖。
+        current_user (User): 当前登录用户。
+
+    Returns:
+        ResponseBase[OTPVerifyResponse]: 验证成功时返回验证结果。
+        JSONResponse (428): OTP 验证失败，需要重新输入。
+    """
+    from app.core.exceptions import OTPRequiredException
+
+    try:
+        result = await credential_service.verify_and_cache_otp(request)
+        return ResponseBase(data=result, message=result.message)
+    except OTPRequiredException as e:
+        return build_otp_required_response(e)
 
 
 @router.delete(

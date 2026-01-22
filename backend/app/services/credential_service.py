@@ -23,6 +23,8 @@ from app.schemas.credential import (
     DeviceGroupCredentialUpdate,
     OTPCacheRequest,
     OTPCacheResponse,
+    OTPVerifyRequest,
+    OTPVerifyResponse,
 )
 
 
@@ -333,6 +335,153 @@ class CredentialService:
             raise
         except Exception as e:
             raise BadRequestException(message=f"OTP 缓存失败: {str(e)}") from e
+
+    async def verify_and_cache_otp(self, request: OTPVerifyRequest) -> OTPVerifyResponse:
+        """
+        验证并缓存 OTP 验证码。
+
+        通过连接一台代表设备来验证 OTP 是否正确：
+        1. 查找该部门+分组下一台 otp_manual 类型的设备
+        2. 使用提供的 OTP 尝试连接该设备
+        3. 连接成功 → 缓存 OTP → 返回成功
+        4. 连接失败 → 不缓存 → 抛出 OTPRequiredException
+
+        Args:
+            request: OTP 验证请求
+
+        Returns:
+            OTPVerifyResponse: 验证结果
+
+        Raises:
+            BadRequestException: 找不到可测试的设备
+            OTPRequiredException: OTP 验证失败
+        """
+        from scrapli import AsyncScrapli
+        from scrapli.exceptions import ScrapliAuthenticationFailed, ScrapliConnectionError
+        from sqlalchemy import select
+
+        from app.core.exceptions import OTPRequiredException
+        from app.core.logger import logger
+        from app.crud.crud_credential import credential as credential_crud
+        from app.models.device import Device
+        from app.network.platform_config import get_platform_for_vendor, get_scrapli_options
+
+        # 1. 查找一台代表设备（指定部门+分组+otp_manual）
+        query = (
+            select(Device)
+            .where(Device.dept_id == request.dept_id)
+            .where(Device.device_group == request.device_group.value)
+            .where(Device.auth_type == AuthType.OTP_MANUAL.value)
+            .where(Device.is_deleted.is_(False))
+            .limit(1)
+        )
+        result = await self.db.execute(query)
+        test_device = result.scalars().first()
+
+        if not test_device:
+            raise BadRequestException(
+                message=f"该部门/分组下没有 otp_manual 类型的设备可供测试"
+            )
+
+        # 2. 获取该设备组的凭据（用户名）
+        credential = await credential_crud.get_by_dept_and_group(
+            self.db, request.dept_id, request.device_group.value
+        )
+        if not credential:
+            raise BadRequestException(
+                message=f"该部门/分组未配置凭据"
+            )
+
+        # 3. 构建 Scrapli 连接参数
+        platform = get_platform_for_vendor(test_device.vendor or "hp_comware")
+        base_options = get_scrapli_options(platform)
+
+        scrapli_kwargs = {
+            **base_options,
+            "host": test_device.ip_address,
+            "auth_username": credential.username,
+            "auth_password": request.otp_code,
+            "port": test_device.ssh_port or 22,
+            "platform": platform,
+            "transport": "asyncssh",  # 必须使用异步 transport
+            "timeout_socket": 10,
+            "timeout_transport": 15,
+            "timeout_ops": 10,
+        }
+
+        # 4. 尝试连接设备验证 OTP
+        logger.info(
+            "OTP 验证：尝试连接设备",
+            device=test_device.name,
+            ip=test_device.ip_address,
+            dept_id=str(request.dept_id),
+            device_group=request.device_group.value,
+        )
+
+        try:
+            conn = AsyncScrapli(**scrapli_kwargs)
+            try:
+                await conn.open()
+                # 连接成功，获取提示符确认登录
+                prompt = await conn.get_prompt()
+                logger.info(
+                    "OTP 验证成功",
+                    device=test_device.name,
+                    prompt=prompt[:50] if prompt else None,
+                )
+            finally:
+                try:
+                    await conn.close()
+                except Exception:
+                    pass
+
+            # 5. 验证成功，缓存 OTP
+            ttl = await otp_service.cache_otp(
+                request.dept_id, request.device_group, request.otp_code
+            )
+
+            return OTPVerifyResponse(
+                verified=True,
+                message="OTP 验证成功",
+                expires_in=ttl,
+                device_tested=test_device.name,
+            )
+
+        except ScrapliAuthenticationFailed as e:
+            # 认证失败，OTP 错误
+            logger.warning(
+                "OTP 验证失败：认证错误",
+                device=test_device.name,
+                error=str(e),
+            )
+            raise OTPRequiredException(
+                dept_id=request.dept_id,
+                device_group=request.device_group.value,
+                failed_devices=[str(test_device.id)],
+                message="OTP 验证失败，请检查验证码是否正确",
+            )
+
+        except (ScrapliConnectionError, TimeoutError, OSError) as e:
+            # 连接失败（网络问题），不能确定 OTP 是否正确
+            logger.warning(
+                "OTP 验证失败：连接错误",
+                device=test_device.name,
+                error=str(e),
+            )
+            raise BadRequestException(
+                message=f"无法连接测试设备 {test_device.name}，请检查网络或稍后重试"
+            )
+
+        except Exception as e:
+            logger.error(
+                "OTP 验证失败：未知错误",
+                device=test_device.name,
+                error=str(e),
+                exc_info=True,
+            )
+            raise BadRequestException(
+                message=f"OTP 验证过程中发生错误: {str(e)}"
+            )
 
     def to_response(self, credential: DeviceGroupCredential) -> DeviceGroupCredentialResponse:
         """

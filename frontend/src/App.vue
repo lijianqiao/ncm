@@ -48,8 +48,9 @@ hljs.registerLanguage('json', json)
         <n-notification-provider>
           <GlobalAlerts />
           <router-view />
-          <OtpModal v-model:show="globalOtpFlow.show.value" :loading="globalOtpFlow.loading.value"
+          <OtpModal :show="globalOtpFlow.show.value" :loading="globalOtpFlow.loading.value"
             :info-items="globalOtpFlow.infoItems.value" :alert-text="globalOtpFlow.details.value?.message"
+            :error-message="globalOtpFlow.errorMessage.value" @update:show="(v) => !v && globalOtpFlow.close()"
             @confirm="globalOtpFlow.confirm" />
         </n-notification-provider>
       </n-dialog-provider>

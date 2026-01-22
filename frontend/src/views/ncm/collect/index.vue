@@ -131,8 +131,8 @@ const submitManualCollect = async () => {
         device_group: String(device?.device_group || 'access'),
         failed_devices: [],
       },
-      async (otpCode) => {
-        await runManualCollect(collectModel.value.device_id, otpCode)
+      async () => {
+        await runManualCollect(collectModel.value.device_id)
       },
     )
     return
@@ -203,8 +203,8 @@ const submitBatchCollect = async () => {
           device_group: String(first.device_group || 'access'),
           failed_devices: [],
         },
-        async (otpCode) => {
-          await submitBatchCollectInternal(otpCode)
+        async () => {
+          await submitBatchCollectInternal()
         },
       )
       return
@@ -257,8 +257,8 @@ const retryOtpExpiredDevices = () => {
       device_group: String(first?.device_group || 'access'),
       failed_devices: [],
     },
-    async (otpCode) => {
-      await submitBatchCollectInternal(otpCode)
+    async () => {
+      await submitBatchCollectInternal()
     },
   )
 }

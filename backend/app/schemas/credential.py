@@ -47,6 +47,23 @@ class OTPCacheResponse(BaseModel):
     expires_in: int = Field(..., description="剩余有效期（秒）")
 
 
+class OTPVerifyRequest(BaseModel):
+    """OTP 验证请求（验证 + 缓存）。"""
+
+    dept_id: UUID = Field(..., description="部门ID")
+    device_group: DeviceGroup = Field(..., description="设备分组")
+    otp_code: str = Field(..., min_length=6, max_length=8, description="OTP 验证码")
+
+
+class OTPVerifyResponse(BaseModel):
+    """OTP 验证响应。"""
+
+    verified: bool = Field(..., description="验证是否成功")
+    message: str = Field(..., description="消息")
+    expires_in: int = Field(default=0, description="OTP 缓存剩余有效期（秒）")
+    device_tested: str | None = Field(default=None, description="测试连接的设备名称")
+
+
 class DeviceGroupCredentialCreate(BaseModel):
     """创建设备分组凭据请求。"""
 

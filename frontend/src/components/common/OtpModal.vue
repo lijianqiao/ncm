@@ -20,6 +20,7 @@ const props = withDefaults(
     alertTitle?: string
     alertText?: string
     infoItems?: InfoItem[]
+    errorMessage?: string
     confirmText?: string
   }>(),
   {
@@ -30,6 +31,7 @@ const props = withDefaults(
     alertText: '请输入当前有效的 OTP 验证码以继续操作。',
     infoItems: () => [],
     confirmText: '确认',
+    errorMessage: '',
   },
 )
 
@@ -50,6 +52,16 @@ watch(
     if (v) resetOtp()
   },
   { immediate: true },
+)
+
+// 当错误信息出现时，自动清空输入框，方便用户重新输入
+watch(
+  () => props.errorMessage,
+  (newVal) => {
+    if (newVal) {
+      resetOtp()
+    }
+  }
 )
 
 const otpCode = computed(() => otpChars.value.join('').trim())
@@ -80,7 +92,8 @@ const submit = () => {
         </n-descriptions-item>
       </n-descriptions>
 
-      <n-form-item label="OTP 验证码" required>
+      <n-form-item label="OTP 验证码" required :validation-status="errorMessage ? 'error' : undefined"
+        :feedback="errorMessage">
         <div style="width: 100%; display: flex; justify-content: center">
           <n-input-otp v-model:value="otpChars" :length="length" :disabled="loading" @finish="submit" />
         </div>

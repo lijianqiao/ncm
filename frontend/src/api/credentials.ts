@@ -128,6 +128,15 @@ export function cacheOTP(data: OTPCacheRequest) {
   })
 }
 
+/** 验证 OTP 验证码 (新) */
+export function verifyOTP(data: OTPCacheRequest) {
+  return request<ResponseBase<OTPCacheResponse & { verified: boolean; device_tested: string }>>({
+    url: '/credentials/otp/verify',
+    method: 'post',
+    data,
+  })
+}
+
 // ==================== 批量操作和回收站 API ====================
 
 /** 批量操作结果 */

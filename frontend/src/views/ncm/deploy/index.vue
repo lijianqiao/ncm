@@ -43,7 +43,6 @@ import {
   type RollbackPreviewResponse,
 } from '@/api/deploy'
 import { getDevice } from '@/api/devices'
-import { cacheOTP } from '@/api/credentials'
 import { getTemplates, getTemplateV2, type Template } from '@/api/templates'
 import { getUsers, type User } from '@/api/users'
 import { formatDateTime } from '@/utils/date'
@@ -457,17 +456,8 @@ const openOtpModal = (task: DeployTask) => {
       failed_devices: [],
       message: `任务 "${task.name}" 需要 OTP 验证码才能继续执行。`,
     },
-    async (otpCode) => {
-      const cacheRes = await cacheOTP({
-        dept_id: first.dept_id,
-        device_group: first.device_group,
-        otp_code: otpCode,
-      })
-
-      if (!cacheRes.data?.success) {
-        throw new Error(cacheRes.data?.message || 'OTP 缓存失败')
-      }
-
+    async () => {
+      // useOtpFlow 内部已完成 verifyOTP
       const execRes = await executeDeployTask(task.id)
       const updatedTask = execRes.data
       if (updatedTask.status === 'paused') {
@@ -555,14 +545,8 @@ const handleExecute = (row: DeployTask) => {
                 failed_devices: [],
                 message: '安全下发需要进行 OTP 验证',
               },
-              async (otpCode) => {
-                // 先缓存 OTP
-                await cacheOTP({
-                  dept_id: device.dept_id!,
-                  device_group: device.device_group!,
-                  otp_code: otpCode,
-                })
-                // 再执行
+              async () => {
+                // useOtpFlow 内部已完成 verifyOTP
                 await doExecute()
               },
             )
@@ -899,10 +883,10 @@ const columns: DataTableColumns<DeployTask> = [
           <n-descriptions :column="2" label-placement="left" bordered>
             <n-descriptions-item label="任务名称" :span="2">{{
               viewData.name
-            }}</n-descriptions-item>
+              }}</n-descriptions-item>
             <n-descriptions-item label="模板">{{
               viewData.template_name || '-'
-            }}</n-descriptions-item>
+              }}</n-descriptions-item>
             <n-descriptions-item label="状态">
               <n-tag :type="statusColorMap[viewData.status]" size="small">
                 {{ statusLabelMap[viewData.status] }}
@@ -910,13 +894,13 @@ const columns: DataTableColumns<DeployTask> = [
             </n-descriptions-item>
             <n-descriptions-item label="Celery任务ID" :span="2">{{
               viewData.celery_task_id || '-'
-            }}</n-descriptions-item>
+              }}</n-descriptions-item>
             <n-descriptions-item label="设备数">{{
               getTaskDeviceCount(viewData)
-            }}</n-descriptions-item>
+              }}</n-descriptions-item>
             <n-descriptions-item label="创建人">{{
               viewData.created_by_name || '-'
-            }}</n-descriptions-item>
+              }}</n-descriptions-item>
             <n-descriptions-item label="变更说明" :span="2">
               <div style="white-space: pre-wrap; word-break: break-word">
                 {{ viewData.change_description || '-' }}

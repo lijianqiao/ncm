@@ -509,8 +509,6 @@ class DeployService:
         Returns:
             Task: 验证后的任务对象（若 OTP 缺失，result 中包含 otp_required 信息）
         """
-        from app.core.enums import AuthType
-        from app.core.otp_service import otp_service
 
         task = await self.get_task(task_id)
 

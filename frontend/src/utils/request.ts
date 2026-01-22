@@ -12,7 +12,6 @@ import { getCsrfToken } from '@/utils/cookie'
 import router from '@/router'
 import type { ResponseBase } from '@/types/api'
 import { globalOtpFlow } from '@/composables/useOtpFlow'
-import type { DeviceGroupType } from '@/types/enums'
 
 // 内存中存储的 Access Token（不再使用 localStorage）
 let accessToken: string | null = null
@@ -269,17 +268,10 @@ const responseErrorInterceptor = async (error: unknown) => {
   if (status === 428) {
     return new Promise((resolve, reject) => {
       // 尝试自动处理 428
-      const handled = globalOtpFlow.tryHandleOtpRequired(error as AxiosError, async (otpCode) => {
-        const d = globalOtpFlow.details.value
-        if (d && originalRequest) {
+      const handled = globalOtpFlow.tryHandleOtpRequired(error as AxiosError, async () => {
+        // 注意：useOtpFlow 内部已经调用了 verifyOTP 并验证成功，这里只需要重试原请求
+        if (originalRequest) {
           try {
-            // 动态导入以避免循环依赖
-            const { cacheOTP } = await import('@/api/credentials')
-            await cacheOTP({
-              dept_id: d.dept_id,
-              device_group: d.device_group as DeviceGroupType,
-              otp_code: otpCode,
-            })
             // 重试原始请求
             const retryRes = await service(originalRequest)
             resolve(retryRes)
