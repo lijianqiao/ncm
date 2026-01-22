@@ -159,10 +159,18 @@ export function useOtpFlow(options?: { length?: number }) {
         // 2. 验证成功后关闭弹窗
         show.value = false
         details.value = null
-        pendingAction.value = null
+        // 这里不要清空 pendingAction，因为下面还要用
+        // pendingAction.value = null
         errorMessage.value = ''
+
+        // 关键修复：在执行后续耗时操作前，必须结束 loading 状态
+        // 否则如果后续操作触发新的 428 弹窗，loading=true 会导致新弹窗不可输入
+        loading.value = false
+
         // 3. 执行后续操作（即重试原请求）
         await action(otpCode.trim())
+        // 执行完后再清空
+        pendingAction.value = null
       }
     } catch (error: unknown) {
       const err = error as AxiosLikeError
@@ -178,7 +186,9 @@ export function useOtpFlow(options?: { length?: number }) {
         errorMessage.value = msg || '验证失败，请重试'
       }
     } finally {
-      loading.value = false
+      // 只有当 loading 为 true 时才重置（避免覆盖我们在 try 块中手动设置的 false）
+      // 其实这里再次设置 false 也没问题，只要确保 try 块中 await action 之前已经设为 false
+      if (loading.value) loading.value = false
     }
   }
 

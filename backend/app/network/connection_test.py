@@ -32,6 +32,7 @@ from app.network.scrapli_utils import (
     build_scrapli_config,
     disable_paging,
     is_command_error,
+    save_device_config,
     send_command_with_paging,
 )
 
@@ -319,14 +320,28 @@ async def execute_commands_on_device(
     port: int = 22,
     timeout: int = 120,
     is_config: bool = False,
+    auto_save: bool = False,
+    vendor: str | None = None,
 ) -> dict[str, Any]:
     """在设备上执行命令列表。
 
     - 查看类：默认只执行第一条；若传入多条则依次执行并拼接输出。
     - 配置类：使用 scrapli 的 send_configs 逐条下发（模板里应包含进入/退出配置视图的命令）。
 
+    Args:
+        host: 设备 IP 地址或主机名
+        username: SSH 用户名
+        password: SSH 密码
+        commands: 要执行的命令列表
+        platform: Scrapli 平台
+        port: SSH 端口
+        timeout: 命令执行超时时间（秒）
+        is_config: 是否为配置类命令
+        auto_save: 配置类命令执行成功后是否自动保存配置
+        vendor: 设备厂商（用于保存配置，h3c/huawei/cisco）
+
     Returns:
-        dict: {"success": bool, "output": str, "error": str | None}
+        dict: {"success": bool, "output": str, "error": str | None, "save_output": str | None}
     """
     safe_commands = [c.strip() for c in (commands or []) if isinstance(c, str) and c.strip()]
     if not safe_commands:
@@ -391,7 +406,32 @@ async def execute_commands_on_device(
                 )
                 if response.failed:
                     return {"success": False, "output": "", "error": f"配置下发失败: {response.result}"}
-                return {"success": True, "output": response.result, "error": None}
+
+                # 配置成功后，根据 auto_save 参数决定是否保存配置
+                config_output = response.result or ""
+                save_output = None
+                if auto_save and vendor:
+                    stage = "save_config"
+                    logger.info("配置下发成功，开始保存配置", host=host, vendor=vendor, auto_save=auto_save)
+                    save_result = save_device_config(conn, vendor, timeout_ops=timeout)
+                    save_output = save_result.get("output", "")
+                    if not save_result.get("success"):
+                        # 保存失败，但配置已下发成功，返回警告
+                        logger.warning(
+                            "配置保存失败",
+                            host=host,
+                            vendor=vendor,
+                            error=save_result.get("error"),
+                        )
+                        return {
+                            "success": True,
+                            "output": config_output,
+                            "error": f"配置下发成功，但保存失败: {save_result.get('error')}",
+                            "save_output": save_output,
+                        }
+                    logger.info("配置保存成功", host=host, vendor=vendor)
+
+                return {"success": True, "output": config_output, "error": None, "save_output": save_output}
 
             if len(safe_commands) == 1:
                 stage = "send_command"

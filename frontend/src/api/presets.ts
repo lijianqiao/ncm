@@ -60,5 +60,6 @@ export function executePreset(presetId: string, data: PresetExecuteRequest) {
     url: `/presets/${presetId}/execute`,
     method: 'post',
     data,
+    timeout: 60000, // 设置超时时间为 60 秒
   })
 }

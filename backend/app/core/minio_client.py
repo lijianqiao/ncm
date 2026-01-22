@@ -6,7 +6,6 @@
 @Docs: MinIO 客户端封装（用于大配置备份存储）。
 """
 
-from __future__ import annotations
 
 import asyncio
 from io import BytesIO

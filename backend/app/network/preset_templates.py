@@ -207,6 +207,12 @@ end
                     "title": "描述",
                     "description": "可选",
                 },
+                "auto_save": {
+                    "type": "boolean",
+                    "title": "自动保存",
+                    "description": "配置完成后是否自动保存到启动配置",
+                    "default": False,
+                },
             },
             "required": ["vlan_id", "vlan_name"],
         },
@@ -231,6 +237,12 @@ description {{ params.description }}""",
                     "type": "string",
                     "title": "接口描述",
                     "maxLength": 80,
+                },
+                "auto_save": {
+                    "type": "boolean",
+                    "title": "自动保存",
+                    "description": "配置完成后是否自动保存到启动配置",
+                    "default": False,
                 },
             },
             "required": ["interface_name", "description"],
@@ -298,6 +310,12 @@ end
                     "enum": ["access", "trunk"],
                     "description": "access=接入端口, trunk=中继端口",
                 },
+                "auto_save": {
+                    "type": "boolean",
+                    "title": "自动保存",
+                    "description": "配置完成后是否自动保存到启动配置",
+                    "default": False,
+                },
             },
             "required": ["interface_name", "vlan_id", "port_type"],
         },
@@ -345,6 +363,12 @@ end
                     "type": "string",
                     "title": "子网掩码",
                     "description": "例如: 255.255.255.0",
+                },
+                "auto_save": {
+                    "type": "boolean",
+                    "title": "自动保存",
+                    "description": "配置完成后是否自动保存到启动配置",
+                    "default": False,
                 },
             },
             "required": ["interface_name", "ip_address", "netmask"],
@@ -398,6 +422,12 @@ end
                     "type": "boolean",
                     "title": "启用接口",
                     "description": "true=启用, false=禁用",
+                },
+                "auto_save": {
+                    "type": "boolean",
+                    "title": "自动保存",
+                    "description": "配置完成后是否自动保存到启动配置",
+                    "default": False,
                 },
             },
             "required": ["interface_name", "enable"],
@@ -458,6 +488,12 @@ end
                     "type": "string",
                     "title": "通配符掩码",
                     "description": "例如: 0.0.0.255",
+                },
+                "auto_save": {
+                    "type": "boolean",
+                    "title": "自动保存",
+                    "description": "配置完成后是否自动保存到启动配置",
+                    "default": False,
                 },
             },
             "required": ["acl_number", "rule_id", "action", "source_ip", "source_wildcard"],
@@ -541,6 +577,12 @@ end
                     "minimum": 1,
                     "maximum": 65535,
                 },
+                "auto_save": {
+                    "type": "boolean",
+                    "title": "自动保存",
+                    "description": "配置完成后是否自动保存到启动配置",
+                    "default": False,
+                },
             },
             "required": ["acl_number", "rule_id", "action", "protocol", "source_ip", "source_wildcard", "dest_ip", "dest_wildcard"],
         },
@@ -593,6 +635,12 @@ end
                     "description": "可选，路由优先级",
                     "minimum": 1,
                     "maximum": 255,
+                },
+                "auto_save": {
+                    "type": "boolean",
+                    "title": "自动保存",
+                    "description": "配置完成后是否自动保存到启动配置",
+                    "default": False,
                 },
             },
             "required": ["dest_network", "dest_mask", "next_hop"],
@@ -689,6 +737,174 @@ show memory statistics
             "huawei": "display cpu-usage",
             "cisco": "show processes cpu",
         },
+    },
+    # ===== 新增配置类操作 =====
+    "config_save": {
+        "name": "保存配置",
+        "description": "将当前配置保存到启动配置（持久化）",
+        "category": PRESET_CATEGORY_CONFIG,
+        "supported_vendors": ["h3c", "huawei", "cisco"],
+        "template": "",  # 空模板，直接调用保存函数
+        "parameters_schema": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+        },
+        "parse_commands": None,
+        "is_save_only": True,  # 标记为仅保存操作
+    },
+    "delete_vlan": {
+        "name": "删除 VLAN",
+        "description": "删除指定的 VLAN",
+        "category": PRESET_CATEGORY_CONFIG,
+        "supported_vendors": ["h3c", "huawei", "cisco"],
+        "template": """{% if device.vendor == 'h3c' %}
+system-view
+undo vlan {{ params.vlan_id }}
+return
+{% elif device.vendor == 'huawei' %}
+system-view
+undo vlan {{ params.vlan_id }}
+return
+{% elif device.vendor == 'cisco' %}
+configure terminal
+no vlan {{ params.vlan_id }}
+end
+{% endif %}""",
+        "parameters_schema": {
+            "type": "object",
+            "properties": {
+                "vlan_id": {
+                    "type": "integer",
+                    "title": "VLAN ID",
+                    "description": "要删除的 VLAN ID",
+                    "minimum": 1,
+                    "maximum": 4094,
+                },
+                "auto_save": {
+                    "type": "boolean",
+                    "title": "自动保存",
+                    "description": "配置完成后是否自动保存到启动配置",
+                    "default": False,
+                },
+            },
+            "required": ["vlan_id"],
+        },
+        "parse_commands": None,
+    },
+    "config_ntp": {
+        "name": "NTP 配置",
+        "description": "配置 NTP 时间同步服务器",
+        "category": PRESET_CATEGORY_CONFIG,
+        "supported_vendors": ["h3c", "huawei", "cisco"],
+        "template": """{% if device.vendor == 'h3c' %}
+system-view
+ntp-service unicast-server {{ params.ntp_server }}
+return
+{% elif device.vendor == 'huawei' %}
+system-view
+ntp-service unicast-server {{ params.ntp_server }}
+return
+{% elif device.vendor == 'cisco' %}
+configure terminal
+ntp server {{ params.ntp_server }}
+end
+{% endif %}""",
+        "parameters_schema": {
+            "type": "object",
+            "properties": {
+                "ntp_server": {
+                    "type": "string",
+                    "title": "NTP 服务器",
+                    "description": "NTP 服务器 IP 地址或域名",
+                    "format": "ipv4",
+                },
+                "auto_save": {
+                    "type": "boolean",
+                    "title": "自动保存",
+                    "description": "配置完成后是否自动保存到启动配置",
+                    "default": False,
+                },
+            },
+            "required": ["ntp_server"],
+        },
+        "parse_commands": None,
+    },
+    "config_hostname": {
+        "name": "修改主机名",
+        "description": "修改设备主机名",
+        "category": PRESET_CATEGORY_CONFIG,
+        "supported_vendors": ["h3c", "huawei", "cisco"],
+        "template": """{% if device.vendor == 'h3c' %}
+system-view
+sysname {{ params.hostname }}
+return
+{% elif device.vendor == 'huawei' %}
+system-view
+sysname {{ params.hostname }}
+return
+{% elif device.vendor == 'cisco' %}
+configure terminal
+hostname {{ params.hostname }}
+end
+{% endif %}""",
+        "parameters_schema": {
+            "type": "object",
+            "properties": {
+                "hostname": {
+                    "type": "string",
+                    "title": "主机名",
+                    "description": "新的设备主机名",
+                    "maxLength": 64,
+                },
+                "auto_save": {
+                    "type": "boolean",
+                    "title": "自动保存",
+                    "description": "配置完成后是否自动保存到启动配置",
+                    "default": False,
+                },
+            },
+            "required": ["hostname"],
+        },
+        "parse_commands": None,
+    },
+    "config_syslog": {
+        "name": "Syslog 配置",
+        "description": "配置日志服务器（Syslog）",
+        "category": PRESET_CATEGORY_CONFIG,
+        "supported_vendors": ["h3c", "huawei", "cisco"],
+        "template": """{% if device.vendor == 'h3c' %}
+system-view
+info-center loghost {{ params.server_ip }}
+return
+{% elif device.vendor == 'huawei' %}
+system-view
+info-center loghost {{ params.server_ip }}
+return
+{% elif device.vendor == 'cisco' %}
+configure terminal
+logging host {{ params.server_ip }}
+end
+{% endif %}""",
+        "parameters_schema": {
+            "type": "object",
+            "properties": {
+                "server_ip": {
+                    "type": "string",
+                    "title": "日志服务器 IP",
+                    "description": "Syslog 服务器 IP 地址",
+                    "format": "ipv4",
+                },
+                "auto_save": {
+                    "type": "boolean",
+                    "title": "自动保存",
+                    "description": "配置完成后是否自动保存到启动配置",
+                    "default": False,
+                },
+            },
+            "required": ["server_ip"],
+        },
+        "parse_commands": None,
     },
 }
 

@@ -495,8 +495,15 @@ def get_permission_service() -> PermissionService:
     return PermissionService()
 
 
-def get_preset_service(db: SessionDep, device_crud: DeviceCRUDDep, credential_crud: CredentialCRUDDep) -> PresetService:
-    return PresetService(db, device_crud, credential_crud)
+def get_preset_service(
+    db: SessionDep,
+    device_crud: DeviceCRUDDep,
+    credential_crud: CredentialCRUDDep,
+    backup_crud: BackupCRUDDep,
+) -> PresetService:
+    # 创建 BackupService 实例用于变更前/后备份
+    backup_service = BackupService(db, backup_crud, device_crud, credential_crud)
+    return PresetService(db, device_crud, credential_crud, backup_service)
 
 
 def get_render_service() -> RenderService:

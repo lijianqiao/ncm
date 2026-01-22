@@ -20,6 +20,7 @@ import {
   NResult,
   NTag,
   NPopover,
+  NSwitch,
 } from 'naive-ui'
 import {
   getPresets,
@@ -31,9 +32,9 @@ import {
 } from '@/api/presets'
 import { getDeviceOptions, type Device, type AuthType, type DeviceGroup } from '@/api/devices'
 import { backupDevice, batchBackup } from '@/api/backups'
-import { cacheOTP } from '@/api/credentials'
 import { $alert } from '@/utils/alert'
 import { globalOtpFlow } from '@/composables/useOtpFlow'
+// import { cacheOTP } from '@/api/credentials'
 
 defineOptions({
   name: 'PresetOperations',
@@ -120,7 +121,19 @@ const openExecuteModal = async (preset: PresetInfo) => {
   try {
     const res = await getPreset(preset.id)
     currentPreset.value = res.data
-    formParams.value = {}
+
+    // 初始化默认参数
+    const defaults: Record<string, unknown> = {}
+    const schema = currentPreset.value.parameters_schema as { properties?: Record<string, { default?: unknown }> }
+    if (schema?.properties) {
+      Object.entries(schema.properties).forEach(([key, val]) => {
+        if (val.default !== undefined) {
+          defaults[key] = val.default
+        }
+      })
+    }
+    formParams.value = defaults
+
     selectedDeviceId.value = null
     showExecuteModal.value = true
     await loadDevices()
@@ -195,11 +208,10 @@ const doExecutePreset = async (
         failed_devices: [],
         message: '操作需要 OTP 验证码',
       },
-      async (otpCode) => {
-        await executeWithOtpCache(
-          first!.dept_id,
-          first!.device_group as DeviceGroup,
-          otpCode,
+      async () => {
+        // OTP 验证成功后，重新执行预设
+        // 后端会检查缓存的 OTP，如果有效则通过
+        await doExecutePreset(
           presetId,
           deviceId,
           params,
@@ -240,6 +252,8 @@ const schemaProperties = computed(() => {
         minimum?: number
         maximum?: number
         maxLength?: number
+        enum?: (string | number)[]
+        default?: unknown
       }
     >
     required?: string[]
@@ -255,6 +269,8 @@ const schemaProperties = computed(() => {
     minimum: value.minimum,
     maximum: value.maximum,
     maxLength: value.maxLength,
+    enum: value.enum as (string | number)[] | undefined,
+    default: value.default,
   }))
 })
 
@@ -274,9 +290,9 @@ const handleExecute = async () => {
   }
 
   const currentDev = selectedDevice.value!
-  const presetId = currentPreset.value.id
-  const deviceId = selectedDeviceId.value
-  const params = formParams.value
+  // const presetId = currentPreset.value.id
+  // const deviceId = selectedDeviceId.value
+  // const params = formParams.value
 
   // otp_manual：执行前先提示输入 OTP
   if (currentDev.auth_type === 'otp_manual') {
@@ -292,15 +308,16 @@ const handleExecute = async () => {
         failed_devices: [],
         message: `设备 "${currentDev.device_name}" 需要 OTP 验证码`,
       },
-      async (otpCode) => {
-        await executeWithOtpCache(
-          currentDev.dept_id!,
-          currentDev.device_group!,
-          otpCode,
-          presetId,
-          deviceId,
-          params,
-        )
+      async () => {
+        // OTP 验证成功后，直接执行预设
+        // 注意：这里需要再次设置 executing 状态，因为 globalOtpFlow 回调是在异步流程中
+        executing.value = true
+        try {
+          await backupBeforeConfigChange(selectedDeviceId.value!)
+          await doExecutePreset(currentPreset.value!.id, selectedDeviceId.value!, formParams.value)
+        } finally {
+          executing.value = false
+        }
       },
     )
     return
@@ -317,30 +334,30 @@ const handleExecute = async () => {
   }
 }
 
-const executeWithOtpCache = async (
-  deptId: string,
-  group: DeviceGroup,
-  otpCode: string,
-  presetId: string,
-  deviceId: string,
-  params: Record<string, unknown>,
-) => {
-  const cacheRes = await cacheOTP({
-    dept_id: deptId,
-    device_group: group,
-    otp_code: otpCode,
-  })
-  if (!cacheRes.data?.success) throw new Error(cacheRes.data?.message || 'OTP 缓存失败')
+// const executeWithOtpCache = async (
+//   deptId: string,
+//   group: DeviceGroup,
+//   otpCode: string,
+//   presetId: string,
+//   deviceId: string,
+//   params: Record<string, unknown>,
+// ) => {
+//   const cacheRes = await cacheOTP({
+//     dept_id: deptId,
+//     device_group: group,
+//     otp_code: otpCode,
+//   })
+//   if (!cacheRes.data?.success) throw new Error(cacheRes.data?.message || 'OTP 缓存失败')
 
-  // 重新触发执行流程
-  executing.value = true
-  try {
-    await backupBeforeConfigChange(deviceId)
-    await doExecutePreset(presetId, deviceId, params)
-  } finally {
-    executing.value = false
-  }
-}
+//   // 重新触发执行流程
+//   executing.value = true
+//   try {
+//     await backupBeforeConfigChange(deviceId)
+//     await doExecutePreset(presetId, deviceId, params)
+//   } finally {
+//     executing.value = false
+//   }
+// }
 
 // 格式化解析结果
 const formattedParsedOutput = computed(() => {
@@ -425,10 +442,22 @@ onMounted(() => {
 
           <!-- 动态参数表单 -->
           <n-form-item v-for="prop in schemaProperties" :key="prop.key" :label="prop.title" :required="prop.required">
+            <!-- 枚举类型 (Select) -->
+            <n-select v-if="prop.enum" v-model:value="formParams[prop.key] as string | number"
+              :options="prop.enum.map((e: string | number) => ({ label: String(e), value: e }))"
+              :placeholder="prop.description || `请选择${prop.title}`" />
+
+            <!-- 布尔类型 (Switch) -->
+            <n-switch v-else-if="prop.type === 'boolean'" v-model:value="formParams[prop.key] as boolean">
+              <template #checked>是</template>
+              <template #unchecked>否</template>
+            </n-switch>
+
             <!-- 数字类型 -->
-            <n-input-number v-if="prop.type === 'integer' || prop.type === 'number'"
+            <n-input-number v-else-if="prop.type === 'integer' || prop.type === 'number'"
               v-model:value="formParams[prop.key] as number" :placeholder="prop.description || `请输入${prop.title}`"
               :min="prop.minimum" :max="prop.maximum" style="width: 100%" />
+
             <!-- 字符串类型 -->
             <n-input v-else v-model:value="formParams[prop.key] as string"
               :placeholder="prop.description || `请输入${prop.title}`" :maxlength="prop.maxLength" />

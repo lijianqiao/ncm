@@ -6,7 +6,7 @@
 @Docs: 预设模板执行服务。
 """
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 from jinja2 import Template as Jinja2Template
@@ -14,27 +14,38 @@ from scrapli.exceptions import ScrapliAuthenticationFailed
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.command_policy import normalize_rendered_config, validate_commands
-from app.core.enums import AuthType
+from app.core.enums import AuthType, BackupType
 from app.core.exceptions import BadRequestException, NotFoundException, OTPRequiredException
 from app.core.logger import logger
 from app.crud.crud_credential import CRUDCredential
 from app.crud.crud_device import CRUDDevice
 from app.network.connection_test import execute_commands_on_device
-from app.network.otp_utils import handle_otp_auth_failure_sync
+from app.network.otp_utils import handle_otp_auth_failure
 from app.network.platform_config import get_ntc_platform, get_platform_for_vendor
 from app.network.preset_templates import PRESET_CATEGORY_CONFIG, get_preset, list_presets
+from app.network.save_config import save_device_config_standalone
 from app.network.textfsm_parser import parse_command_output
 from app.schemas.preset import PresetDetail, PresetExecuteResult, PresetInfo
 from app.services.base import DeviceCredentialMixin
+
+if TYPE_CHECKING:
+    from app.services.backup_service import BackupService
 
 
 class PresetService(DeviceCredentialMixin):
     """预设模板服务。"""
 
-    def __init__(self, db: AsyncSession, device_crud: CRUDDevice, credential_crud: CRUDCredential):
+    def __init__(
+        self,
+        db: AsyncSession,
+        device_crud: CRUDDevice,
+        credential_crud: CRUDCredential,
+        backup_service: "BackupService | None" = None,
+    ):
         self.db = db
         self.device_crud = device_crud
         self.credential_crud = credential_crud
+        self.backup_service = backup_service
 
     async def list_presets(self) -> list[PresetInfo]:
         """列出所有预设模板。"""
@@ -80,28 +91,7 @@ class PresetService(DeviceCredentialMixin):
 
         self._validate_params(preset, params)
 
-        # 4. 渲染命令
-        try:
-            template = Jinja2Template(preset["template"])
-            device_context = {
-                "id": str(device.id),
-                "name": device.name,
-                "ip_address": device.ip_address,
-                "vendor": device.vendor,
-                "platform": device.platform or get_platform_for_vendor(device.vendor),
-            }
-            rendered = template.render(device=device_context, params=params)
-            commands = normalize_rendered_config(rendered)
-            if not commands:
-                return PresetExecuteResult(success=False, error_message="渲染结果为空")
-        except Exception as e:
-            logger.error("预设模板渲染失败", preset=preset_id, error=str(e))
-            return PresetExecuteResult(
-                success=False,
-                error_message=f"模板渲染失败: {e}",
-            )
-
-        # 5. 获取凭据
+        # 4. 获取凭据
         try:
             cred = await self._get_device_credential(device)
         except OTPRequiredException as e:
@@ -119,13 +109,59 @@ class PresetService(DeviceCredentialMixin):
                 error_message=f"获取凭据失败: {e}",
             )
 
-        # 6. 执行命令
-        try:
-            platform = device.platform or get_platform_for_vendor(device.vendor)
+        platform = device.platform or get_platform_for_vendor(device.vendor)
 
+        # 5. 特殊处理: config_save 预设（仅保存配置）
+        if preset.get("is_save_only"):
+            return await self._execute_save_only(
+                device=device,
+                cred=cred,
+                platform=platform,
+            )
+
+        # 6. 渲染命令
+        try:
+            template = Jinja2Template(preset["template"])
+            device_context = {
+                "id": str(device.id),
+                "name": device.name,
+                "ip_address": device.ip_address,
+                "vendor": device.vendor,
+                "platform": platform,
+            }
+            rendered = template.render(device=device_context, params=params)
+            commands = normalize_rendered_config(rendered)
+            if not commands:
+                return PresetExecuteResult(success=False, error_message="渲染结果为空")
+        except Exception as e:
+            logger.error("预设模板渲染失败", preset=preset_id, error=str(e))
+            return PresetExecuteResult(
+                success=False,
+                error_message=f"模板渲染失败: {e}",
+            )
+
+        # 7. 执行命令
+        try:
             # 配置类增加黑名单校验（不启用严格白名单，避免各厂商关键字差异导致误伤）
-            if preset["category"] == PRESET_CATEGORY_CONFIG:
+            is_config = preset["category"] == PRESET_CATEGORY_CONFIG
+            if is_config:
                 validate_commands(commands, strict_allowlist=False)
+
+            # 提取 auto_save 参数（仅配置类有效）
+            auto_save = bool(params.get("auto_save", False)) if is_config else False
+
+            # 配置类操作：变更前备份（复用已验证的凭据）
+            if is_config and self.backup_service:
+                try:
+                    pre_backup = await self.backup_service.backup_with_credential(
+                        device=device,
+                        credential=cred,
+                        backup_type=BackupType.PRE_CHANGE,
+                    )
+                    logger.info("变更前备份完成", device=device.name, backup_id=str(pre_backup.id))
+                except Exception as e:
+                    # 变更前备份失败不阻塞配置下发，仅记录警告
+                    logger.warning("变更前备份失败", device=device.name, error=str(e))
 
             result = await execute_commands_on_device(
                 host=device.ip_address,
@@ -134,12 +170,30 @@ class PresetService(DeviceCredentialMixin):
                 commands=commands,
                 platform=platform,
                 port=device.ssh_port or 22,
-                is_config=preset["category"] == PRESET_CATEGORY_CONFIG,
+                is_config=is_config,
+                auto_save=auto_save,
+                vendor=device.vendor if auto_save else None,
             )
             if not result.get("success"):
                 return PresetExecuteResult(success=False, error_message=result.get("error") or "命令执行失败")
 
             raw_output = str(result.get("output") or "")
+            save_output = result.get("save_output")
+            if save_output:
+                raw_output = f"{raw_output}\n\n===== 配置保存输出 =====\n{save_output}"
+
+            # 配置类操作：变更后备份（复用已验证的凭据）
+            if is_config and self.backup_service:
+                try:
+                    post_backup = await self.backup_service.backup_with_credential(
+                        device=device,
+                        credential=cred,
+                        backup_type=BackupType.POST_CHANGE,
+                    )
+                    logger.info("变更后备份完成", device=device.name, backup_id=str(post_backup.id))
+                except Exception as e:
+                    # 变更后备份失败不影响配置结果，仅记录警告
+                    logger.warning("变更后备份失败", device=device.name, error=str(e))
 
         except ScrapliAuthenticationFailed as e:
             # 认证失败：调用 OTP 处理逻辑
@@ -152,7 +206,7 @@ class PresetService(DeviceCredentialMixin):
                 "device_id": str(device.id),
             }
             try:
-                handle_otp_auth_failure_sync(host_data, e)
+                await handle_otp_auth_failure(host_data, e)
             except OTPRequiredException as otp_e:
                 return PresetExecuteResult(
                     success=False,
@@ -263,3 +317,74 @@ class PresetService(DeviceCredentialMixin):
 
         # 兜底：不给解析，直接让上层走解析失败提示
         return ""
+
+    async def _execute_save_only(
+        self,
+        device: Any,
+        cred: Any,
+        platform: str,
+    ) -> PresetExecuteResult:
+        """
+        执行仅保存配置的操作（config_save 预设）。
+
+        Args:
+            device: 设备对象
+            cred: 凭据对象
+            platform: Scrapli 平台
+
+        Returns:
+            PresetExecuteResult: 执行结果
+        """
+        try:
+            result = await save_device_config_standalone(
+                host=device.ip_address,
+                username=cred.username,
+                password=cred.password,
+                vendor=device.vendor,
+                platform=platform,
+                port=device.ssh_port or 22,
+            )
+
+            if result.get("success"):
+                return PresetExecuteResult(
+                    success=True,
+                    raw_output=result.get("output", ""),
+                )
+            else:
+                return PresetExecuteResult(
+                    success=False,
+                    error_message=result.get("error") or "配置保存失败",
+                    raw_output=result.get("output", ""),
+                )
+
+        except ScrapliAuthenticationFailed as e:
+            # 认证失败：调用 OTP 处理逻辑
+            from app.core.enums import AuthType
+
+            host_data = {
+                "auth_type": "otp_manual"
+                if device.auth_type and AuthType(device.auth_type) == AuthType.OTP_MANUAL
+                else "static",
+                "dept_id": str(device.dept_id) if device.dept_id else None,
+                "device_group": device.device_group,
+                "device_id": str(device.id),
+            }
+            try:
+                await handle_otp_auth_failure(host_data, e)
+            except OTPRequiredException as otp_e:
+                return PresetExecuteResult(
+                    success=False,
+                    error_message=otp_e.message,
+                    otp_required=True,
+                    otp_required_groups=[{"dept_id": str(otp_e.dept_id), "device_group": str(otp_e.device_group)}],
+                    expires_in=None,
+                    next_action="cache_otp_and_retry_execute_preset",
+                )
+            raise
+
+        except Exception as e:
+            logger.error("配置保存失败", device=str(device.id), error=str(e))
+            return PresetExecuteResult(
+                success=False,
+                error_message=f"配置保存失败: {e}",
+            )

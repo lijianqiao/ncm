@@ -314,3 +314,75 @@ async def send_command_with_paging_async(
 
     combined = "".join(output_parts)
     return _strip_paging_markers(combined, prompt=prompt)
+
+
+# ===== 配置保存函数 =====
+
+
+def save_device_config(conn: Any, vendor: str, timeout_ops: int = 30) -> dict[str, Any]:
+    """
+    同步保存设备配置到启动配置。
+
+    根据厂商类型使用不同的保存命令：
+    - H3C/Huawei: 使用 `save force` 非交互式命令
+    - Cisco: 使用 `send_interactive` 处理 `write memory` 的确认交互
+
+    Args:
+        conn: Scrapli 连接对象
+        vendor: 设备厂商 (h3c, huawei, cisco)
+        timeout_ops: 操作超时时间（秒）
+
+    Returns:
+        dict: {"success": bool, "output": str, "error": str | None}
+    """
+    vendor_lower = (vendor or "").lower()
+
+    try:
+        if vendor_lower in ("h3c", "huawei"):
+            # H3C/Huawei 使用 save force，无需确认
+            logger.info("执行配置保存", vendor=vendor_lower, command="save force")
+            response = conn.send_command("save force", timeout_ops=timeout_ops)
+            output = response.result or ""
+
+            # 检查是否保存成功
+            success_keywords = ["successfully", "成功", "saved", "configuration is saved"]
+            is_success = not response.failed and any(kw in output.lower() for kw in success_keywords)
+
+            if not is_success and not response.failed:
+                # 如果没有明确的成功关键词，但也没有失败，认为成功
+                is_success = not is_command_error(output)
+
+            logger.info("配置保存完成", vendor=vendor_lower, success=is_success)
+            return {"success": is_success, "output": output, "error": None}
+
+        elif vendor_lower == "cisco":
+            # Cisco 使用 send_interactive 处理确认
+            # 根据实际设备输出: Overwrite file [startup-config].... (Y/N)[N] ?
+            logger.info("执行配置保存", vendor=vendor_lower, command="write memory (interactive)")
+
+            interact_events = [
+                ("write memory", "(Y/N)", False),  # 发送命令，等待 (Y/N) 提示
+                ("Y", "#", False),  # 发送 Y，等待命令提示符
+            ]
+            response = conn.send_interactive(interact_events, timeout_ops=timeout_ops)
+            output = response.result or ""
+
+            # Cisco 保存成功的标志
+            success_keywords = ["copy operation was completed successfully", "building configuration", "[ok]"]
+            is_success = not response.failed and any(kw in output.lower() for kw in success_keywords)
+
+            if not is_success and not response.failed:
+                is_success = not is_command_error(output)
+
+            logger.info("配置保存完成", vendor=vendor_lower, success=is_success)
+            return {"success": is_success, "output": output, "error": None}
+
+        else:
+            error_msg = f"不支持的厂商: {vendor}"
+            logger.warning("配置保存失败", vendor=vendor_lower, error=error_msg)
+            return {"success": False, "output": "", "error": error_msg}
+
+    except Exception as e:
+        error_msg = f"保存配置时发生异常: {str(e)}"
+        logger.error("配置保存异常", vendor=vendor_lower, error=str(e), exc_info=True)
+        return {"success": False, "output": "", "error": error_msg}

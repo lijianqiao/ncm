@@ -25,7 +25,7 @@ from app.crud.crud_credential import CRUDCredential
 from app.crud.crud_device import CRUDDevice
 from app.models.backup import Backup
 from app.models.device import Device
-from app.network.otp_utils import handle_otp_auth_failure_sync
+from app.network.otp_utils import handle_otp_auth_failure, handle_otp_auth_failure_sync
 from app.network.platform_config import get_platform_for_vendor
 from app.schemas.backup import (
     BackupBatchDeleteResult,
@@ -37,6 +37,7 @@ from app.schemas.backup import (
     BackupTaskStatus,
     OTPNotice,
 )
+from app.schemas.credential import DeviceCredential
 from app.services.base import DeviceCredentialMixin
 from app.utils.validators import compute_text_md5, should_skip_backup_save_due_to_unchanged_md5
 
@@ -427,6 +428,86 @@ class BackupService(DeviceCredentialMixin):
             }
             handle_otp_auth_failure_sync(host_data, e)
             raise  # handle_otp_auth_failure_sync 会 raise，这里仅仅是为了通过静态检查
+
+        except Exception as e:
+            logger.error(f"设备 {device.name} 备份失败: {e}")
+            # 保存失败备份
+            return await self._save_backup_result(
+                device=device,
+                backup_type=backup_type,
+                operator_id=operator_id,
+                config_content=None,
+                status=BackupStatus.FAILED,
+                error_message=str(e),
+            )
+
+    async def backup_with_credential(
+        self,
+        device: Device,
+        credential: DeviceCredential,
+        backup_type: BackupType = BackupType.MANUAL,
+        operator_id: UUID | None = None,
+    ) -> Backup:
+        """
+        使用已验证的凭据备份设备配置（不带事务装饰器）。
+
+        专为 preset_service 等内部调用设计，避免：
+        1. 重复获取凭据（复用已验证的 OTP）
+        2. 事务嵌套问题
+
+        Args:
+            device: 设备对象
+            credential: 已验证的凭据（DeviceCredential）
+            backup_type: 备份类型
+            operator_id: 操作人ID
+
+        Returns:
+            Backup: 备份记录
+        """
+        from app.network.connection_test import execute_command_on_device
+        from app.network.platform_config import get_command, get_platform_for_vendor
+
+        platform = device.platform or get_platform_for_vendor(device.vendor or "")
+        try:
+            backup_command = get_command("backup_config", platform)
+        except ValueError as e:
+            raise BadRequestException(message=str(e)) from e
+
+        try:
+            result_dict = await execute_command_on_device(
+                host=device.ip_address,
+                username=credential.username,
+                password=credential.password,
+                command=backup_command,
+                platform=platform,
+                port=device.ssh_port,
+                timeout=60,
+            )
+
+            if not result_dict.get("success"):
+                raise Exception(result_dict.get("error", "备份命令执行失败"))
+
+            result = result_dict.get("output", "")
+
+            # 保存成功备份
+            return await self._save_backup_result(
+                device=device,
+                backup_type=backup_type,
+                operator_id=operator_id,
+                config_content=result,
+                status=BackupStatus.SUCCESS,
+            )
+
+        except ScrapliAuthenticationFailed as e:
+            # 认证失败：调用 OTP 处理逻辑（使用异步版本）
+            host_data = {
+                "auth_type": "otp_manual" if AuthType(device.auth_type) == AuthType.OTP_MANUAL else "static",
+                "dept_id": str(device.dept_id) if device.dept_id else None,
+                "device_group": device.device_group,
+                "device_id": str(device.id),
+            }
+            await handle_otp_auth_failure(host_data, e)
+            raise  # handle_otp_auth_failure 会 raise OTPRequiredException
 
         except Exception as e:
             logger.error(f"设备 {device.name} 备份失败: {e}")
