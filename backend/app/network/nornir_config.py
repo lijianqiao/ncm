@@ -75,7 +75,7 @@ def create_nornir_inventory(
     hosts = Hosts()
     groups = Groups()
 
-    # 创建默认分组
+    # 创建默认分组（所有分组使用 asyncssh transport）
     default_groups = {
         "core": Group(name="core", data={"role": "core", "priority": 1}),
         "distribution": Group(name="distribution", data={"role": "distribution", "priority": 2}),
@@ -85,7 +85,7 @@ def create_nornir_inventory(
             platform="cisco_iosxe",
             connection_options={
                 "scrapli": ConnectionOptions(
-                    extras={"auth_strict_key": False, "ssh_config_file": "", "transport": "ssh2"}
+                    extras={"auth_strict_key": False, "ssh_config_file": "", "transport": "asyncssh"}
                 )
             },
         ),
@@ -94,7 +94,7 @@ def create_nornir_inventory(
             platform="huawei_vrp",
             connection_options={
                 "scrapli": ConnectionOptions(
-                    extras={"auth_strict_key": False, "ssh_config_file": "", "transport": "ssh2"}
+                    extras={"auth_strict_key": False, "ssh_config_file": "", "transport": "asyncssh"}
                 )
             },
         ),
@@ -103,7 +103,7 @@ def create_nornir_inventory(
             platform="hp_comware",
             connection_options={
                 "scrapli": ConnectionOptions(
-                    extras={"auth_strict_key": False, "ssh_config_file": "", "transport": "ssh2"}
+                    extras={"auth_strict_key": False, "ssh_config_file": "", "transport": "asyncssh"}
                 )
             },
         ),
@@ -132,10 +132,11 @@ def create_nornir_inventory(
         scrapli_extras: dict[str, Any] = {
             "auth_strict_key": False,
             "ssh_config_file": "",
-            "transport": "ssh2",
-            # 认证超时设置（秒）- 加快 OTP 失败检测
+            "transport": "asyncssh",
+            # 超时设置（秒）- 加快故障检测
             "timeout_socket": 10,  # Socket 连接超时
             "timeout_transport": 15,  # Transport 层超时（含认证）
+            "timeout_ops": 30,  # 命令执行超时
         }
 
         host_groups = []
@@ -156,13 +157,14 @@ def create_nornir_inventory(
         )
 
     # 创建默认配置（不设置默认凭据，每个主机应提供自己的凭据）
+    # 注意：所有任务现在都使用 asyncssh transport（异步模式）
     defaults = Defaults(
         connection_options={
             "scrapli": ConnectionOptions(
                 extras={
                     "auth_strict_key": False,
                     "ssh_config_file": "",
-                    "transport": "ssh2",
+                    "transport": "asyncssh",
                 }
             )
         },

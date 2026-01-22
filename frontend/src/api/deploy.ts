@@ -120,6 +120,25 @@ export interface DeployRollbackResponse {
   rollback_task_id: string
 }
 
+/** 回滚预检详情 */
+export interface RollbackDevicePreview {
+  device_id: string
+  device_name: string | null
+  reason: string
+  current_md5?: string
+  expected_md5?: string
+}
+
+/** 回滚预检响应 */
+export interface RollbackPreviewResponse {
+  task_id: string
+  task_name: string | null
+  need_rollback: RollbackDevicePreview[]
+  skip: RollbackDevicePreview[]
+  cannot_rollback: RollbackDevicePreview[]
+  summary: string
+}
+
 /** 下发任务查询参数 */
 export interface DeploySearchParams {
   page?: number
@@ -192,6 +211,14 @@ export function retryDeployTask(id: string) {
 export function rollbackDeployTask(id: string) {
   return request<ResponseBase<DeployRollbackResponse>>({
     url: `/deploy/${id}/rollback`,
+    method: 'post',
+  })
+}
+
+/** 回滚预检 */
+export function previewRollback(id: string) {
+  return request<ResponseBase<RollbackPreviewResponse>>({
+    url: `/deploy/${id}/rollback/preview`,
     method: 'post',
   })
 }

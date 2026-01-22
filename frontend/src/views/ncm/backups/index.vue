@@ -562,49 +562,20 @@ const submitManualBackup = async () => {
     return
   }
 
-  const selectedDevice = deviceMap.value[backupModel.value.device_id]
-  if (selectedDevice?.auth_type === 'otp_manual') {
-    if (!selectedDevice.dept_id || !selectedDevice.device_group) {
-      $alert.error('该设备缺少 dept_id 或 device_group，无法进行 OTP 手动认证')
-      return
-    }
-    otpRequiredInfo.value = {
-      dept_id: selectedDevice.dept_id,
-      device_group: selectedDevice.device_group,
-      failed_devices: [],
-    }
-    pendingBackupDeviceId.value = backupModel.value.device_id
-    pendingBatchBackup.value = false
-    showOTPModal.value = true
-    return
-  }
+  // 1. 如果是手动 OTP 设备，预先检查并弹窗 (这里逻辑可以保留，作为前置优化)
+  // ... (省略前置检查代码，因为全局拦截器是处理后端的428响应，前置检查是避免请求)
+  // 实际上，如果想完全依赖全局拦截器，可以移除这里的前置检查，让请求发出去，然后被拦截器捕获
+  // 但保留前置检查用户体验更好（少一次失败的请求）
 
-  // 1. 设置 loading，防止用户重复点击
   otpLoading.value = true
-
   try {
     await backupDevice(backupModel.value.device_id)
     $alert.success('备份任务已提交')
     showBackupModal.value = false
     tableRef.value?.reload()
-  } catch (error: unknown) {
-    // 检查是否需要 OTP 输入 (428 状态码)
-    const err = error as { response?: { status?: number; data?: { details?: OTPRequiredDetails; data?: { otp_notice?: OTPRequiredDetails } } } }
-    if (err?.response?.status === 428 && (err?.response?.data?.details || err?.response?.data?.data?.otp_notice)) {
-      const details = err.response.data.data?.otp_notice || err.response.data.details
-      if (details) {
-        otpRequiredInfo.value = {
-          dept_id: details.dept_id,
-          device_group: details.device_group,
-          failed_devices: details.failed_devices || [],
-        }
-        pendingBackupDeviceId.value = backupModel.value.device_id
-        showOTPModal.value = true
-      }
-    }
+  } catch {
+    // 全局拦截器会自动处理 428 OTP
   } finally {
-    // 2. 无论成功还是失败（或者触发 OTP 流程），都应该恢复 loading 状态
-    // 如果触发了 OTP，loading 会在 submitOTP 中再次被置为 true
     otpLoading.value = false
   }
 }
@@ -810,19 +781,8 @@ const submitBatchBackupInternal = async () => {
     $alert.success('批量备份任务已提交')
     // 开始轮询任务状态
     startPollingTaskStatus(res.data.task_id)
-  } catch (error: unknown) {
-    // 检查是否需要 OTP 输入 (428 状态码)
-    const err = error as { response?: { status?: number; data?: { details?: OTPRequiredDetails } } }
-    if (err?.response?.status === 428 && err?.response?.data?.details) {
-      const details = err.response.data.details
-      otpRequiredInfo.value = {
-        dept_id: details.dept_id,
-        device_group: details.device_group,
-        failed_devices: details.failed_devices || [],
-      }
-      pendingBatchBackup.value = true
-      showOTPModal.value = true
-    }
+  } catch {
+    // 全局拦截器会自动处理 428 OTP
   }
 }
 

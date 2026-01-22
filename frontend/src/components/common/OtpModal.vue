@@ -67,15 +67,8 @@ const submit = () => {
 </script>
 
 <template>
-  <n-modal
-    :show="show"
-    preset="card"
-    :title="title"
-    style="width: 480px"
-    :closable="!loading"
-    :mask-closable="!loading"
-    @update:show="(v) => emit('update:show', v)"
-  >
+  <n-modal :show="show" preset="card" :title="title" style="width: 480px; z-index: 2001;" :closable="!loading"
+    :mask-closable="!loading" @update:show="(v) => emit('update:show', v)">
     <n-space vertical size="large">
       <n-alert type="warning" :title="alertTitle" :show-icon="false">
         {{ alertText }}
@@ -89,12 +82,7 @@ const submit = () => {
 
       <n-form-item label="OTP 验证码" required>
         <div style="width: 100%; display: flex; justify-content: center">
-          <n-input-otp
-            v-model:value="otpChars"
-            :length="length"
-            :disabled="loading"
-            @finish="submit"
-          />
+          <n-input-otp v-model:value="otpChars" :length="length" :disabled="loading" @finish="submit" />
         </div>
       </n-form-item>
 

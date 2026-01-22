@@ -67,7 +67,21 @@ export function useOtpFlow(options?: { length?: number }) {
     // 支持 HTTP 428 或 业务码 428
     if (status !== 428 && code !== 428) return null
 
-    // 优先尝试从 data.otp_notice 获取
+    // 1. 尝试从 data.otp_required_groups 获取 (新结构)
+    const data = err?.response?.data?.data as { otp_required_groups?: Array<{ dept_id: string; device_group: string }> } | undefined
+    if (data?.otp_required_groups && data.otp_required_groups.length > 0) {
+       const first = data.otp_required_groups[0]
+       if (first) {
+         return {
+           dept_id: first.dept_id,
+           device_group: first.device_group,
+           failed_devices: [],
+           message: err?.response?.data?.message || '回滚需要输入 OTP',
+         }
+       }
+    }
+
+    // 2. 优先尝试从 data.otp_notice 获取 (旧结构)
     const otpNotice = err?.response?.data?.data?.otp_notice as OtpRequiredDetails | undefined
     if (otpNotice && otpNotice.dept_id && otpNotice.device_group) {
       return {
@@ -139,3 +153,6 @@ export function useOtpFlow(options?: { length?: number }) {
     tryHandleOtpRequired,
   }
 }
+
+// 创建一个全局的 otpFlow 实例，用于处理全局的 428 响应（如 request.ts 拦截器）
+export const globalOtpFlow = useOtpFlow()

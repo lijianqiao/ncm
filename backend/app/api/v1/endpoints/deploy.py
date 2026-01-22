@@ -29,6 +29,7 @@ from app.schemas.deploy import (
     DeployCreateRequest,
     DeployRollbackResponse,
     DeployTaskResponse,
+    RollbackPreviewResponse,
 )
 
 router = APIRouter(tags=["安全批量下发"])
@@ -134,22 +135,93 @@ async def execute_task(task_id: UUID, service: DeployServiceDep) -> ResponseBase
 
 
 @router.post(
+    "/{task_id}/rollback/preview",
+    response_model=ResponseBase[RollbackPreviewResponse],
+    dependencies=[Depends(require_permissions([PermissionCode.DEPLOY_ROLLBACK.value]))],
+    summary="回滚预检",
+)
+async def preview_rollback(
+    task_id: UUID,
+    service: DeployServiceDep,
+) -> ResponseBase[RollbackPreviewResponse] | JSONResponse:
+    """回滚预检：连接设备比对 MD5，判断哪些设备需要回滚。
+
+    此接口会连接设备获取当前配置，与变更前备份比对 MD5：
+    - MD5 不同：需要回滚
+    - MD5 相同：可跳过（配置未变化）
+
+    若存在 otp_manual 设备且 OTP 未缓存，会返回 428 状态码，
+    提示前端弹窗让用户输入 OTP 验证码后重试。
+
+    Args:
+        task_id (UUID): 任务 ID。
+        service (DeployService): 下发服务依赖。
+
+    Returns:
+        ResponseBase[RollbackPreviewResponse]: 回滚预检结果。
+        JSONResponse (428): 需要输入 OTP 验证码。
+    """
+    result = await service.preview_rollback(task_id)
+
+    # 检查是否需要 OTP（服务层标记为 PAUSED）
+    if result.summary == "需要输入 OTP 验证码":
+        # 获取任务的 OTP 详情
+        task = await service.get_task(task_id)
+        if task.result and isinstance(task.result, dict) and task.result.get("otp_required"):
+            return build_otp_required_response(
+                message=task.error_message or "回滚预检需要输入 OTP 验证码",
+                details={
+                    "otp_required": True,
+                    "otp_required_groups": task.result.get("otp_required_groups"),
+                    "expires_in": task.result.get("expires_in"),
+                    "next_action": "cache_otp_and_retry_preview",
+                },
+            )
+
+    return ResponseBase(data=result)
+
+
+@router.post(
     "/{task_id}/rollback",
     response_model=ResponseBase[DeployRollbackResponse],
     dependencies=[Depends(require_permissions([PermissionCode.DEPLOY_ROLLBACK.value]))],
     summary="触发回滚（Celery）",
 )
-async def rollback_task(task_id: UUID) -> ResponseBase[DeployRollbackResponse]:
+async def rollback_task(
+    task_id: UUID,
+    service: DeployServiceDep,
+) -> ResponseBase[DeployRollbackResponse] | JSONResponse:
     """对发生故障或需要撤回的下发任务进行回滚操作。
 
-    回滚通常通过在设备上执行反向指令或还原历史配置实现（具体视设备支持而定）。
+    回滚前会自动检测配置是否变化，只对配置实际变化的设备执行回滚。
+    仅支持 SUCCESS、PARTIAL 或 ROLLBACK 状态的任务。
+
+    若存在 otp_manual 设备且 OTP 未缓存，会返回 428 状态码，
+    提示前端弹窗让用户输入 OTP 验证码后重试。
 
     Args:
         task_id (UUID): 原下发任务 ID。
+        service (DeployService): 下发服务依赖。
 
     Returns:
         ResponseBase[DeployRollbackResponse]: 包含回滚 Celery 任务 ID 的响应。
+        JSONResponse (428): 需要输入 OTP 验证码。
     """
+    # 先验证任务状态是否允许回滚（含 OTP 预检）
+    task = await service.validate_rollback(task_id)
+
+    # 检查是否需要 OTP
+    if task.result and isinstance(task.result, dict) and task.result.get("otp_required"):
+        return build_otp_required_response(
+            message=task.error_message or "回滚需要输入 OTP 验证码",
+            details={
+                "otp_required": True,
+                "otp_required_groups": task.result.get("otp_required_groups"),
+                "expires_in": task.result.get("expires_in"),
+                "next_action": task.result.get("next_action"),
+            },
+        )
+
     from app.celery.tasks.deploy import rollback_task
 
     celery_result = cast(Any, rollback_task).delay(task_id=str(task_id))  # type: ignore[attr-defined]

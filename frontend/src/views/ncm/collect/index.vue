@@ -36,8 +36,8 @@ import {
 } from '@/api/collect'
 import { type Device } from '@/api/devices'
 import { formatDateTime } from '@/utils/date'
-import { useDeviceOptions, useOtpFlow, useTaskPolling } from '@/composables'
-import OtpModal from '@/components/common/OtpModal.vue'
+import { useDeviceOptions, useTaskPolling } from '@/composables'
+import { globalOtpFlow } from '@/composables/useOtpFlow'
 import DeviceSelector from '@/components/common/DeviceSelector.vue'
 
 defineOptions({
@@ -80,13 +80,6 @@ const handleManualCollect = async () => {
   collectResult.value = null
   showCollectModal.value = true
 }
-
-const otpFlow = useOtpFlow({ length: 6 })
-const showOTPModal = otpFlow.show
-const otpLoading = otpFlow.loading
-const otpInfoItems = otpFlow.infoItems
-const submitOTP = otpFlow.confirm
-const closeOTP = otpFlow.close
 
 const getRequestErrorMessage = (error: unknown): string => {
   if (error instanceof Error && error.message) return error.message
@@ -132,7 +125,7 @@ const submitManualCollect = async () => {
 
   const device = getSelectedDevice(collectModel.value.device_id)
   if (isOtpManualDevice(device)) {
-    otpFlow.open(
+    globalOtpFlow.open(
       {
         dept_id: device?.dept_id || '',
         device_group: String(device?.device_group || 'access'),
@@ -147,10 +140,8 @@ const submitManualCollect = async () => {
 
   try {
     await runManualCollect(collectModel.value.device_id)
-  } catch (error) {
-    otpFlow.tryHandleOtpRequired(error, async (otpCode) => {
-      await runManualCollect(collectModel.value.device_id, otpCode)
-    })
+  } catch {
+    // 全局拦截器会自动处理 428 OTP
   }
 }
 
@@ -206,7 +197,7 @@ const submitBatchCollect = async () => {
     )
     if (groups.size === 1) {
       const first = otpManualDevices[0]!
-      otpFlow.open(
+      globalOtpFlow.open(
         {
           dept_id: first.dept_id || '',
           device_group: String(first.device_group || 'access'),
@@ -238,10 +229,8 @@ const submitBatchCollectInternal = async (otpCode?: string) => {
     })
     $alert.success('批量采集任务已提交')
     startPollingTaskStatus(res.data.task_id)
-  } catch (error: unknown) {
-    otpFlow.tryHandleOtpRequired(error, async (nextOtp) => {
-      await submitBatchCollectInternal(nextOtp)
-    })
+  } catch {
+    // 全局拦截器会自动处理 428 OTP
   }
 }
 
@@ -262,7 +251,7 @@ const retryOtpExpiredDevices = () => {
   }
   batchCollectModel.value.device_ids = ids
   const first = getSelectedDevice(ids[0] || '')
-  otpFlow.open(
+  globalOtpFlow.open(
     {
       dept_id: first?.dept_id || '',
       device_group: String(first?.device_group || 'access'),
@@ -637,10 +626,10 @@ const submitLocate = async () => {
           </div>
           <n-progress v-if="batchTaskStatus.progress !== null" type="line" :percentage="batchTaskStatus.progress"
             :status="batchTaskStatus.status === 'SUCCESS'
-                ? 'success'
-                : batchTaskStatus.status === 'FAILURE'
-                  ? 'error'
-                  : 'default'
+              ? 'success'
+              : batchTaskStatus.status === 'FAILURE'
+                ? 'error'
+                : 'default'
               " />
           <template v-if="batchTaskStatus.result">
             <div style="text-align: center">
@@ -686,9 +675,6 @@ const submitLocate = async () => {
         </template>
       </n-space>
     </n-modal>
-
-    <OtpModal v-model:show="showOTPModal" :loading="otpLoading" :info-items="otpInfoItems"
-      @update:show="(v) => (!v ? closeOTP() : undefined)" @confirm="submitOTP" />
   </div>
 </template>
 

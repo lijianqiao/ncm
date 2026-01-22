@@ -32,9 +32,8 @@ import {
 import { getDeviceOptions, type Device, type AuthType, type DeviceGroup } from '@/api/devices'
 import { backupDevice, batchBackup } from '@/api/backups'
 import { cacheOTP } from '@/api/credentials'
-import OtpModal from '@/components/common/OtpModal.vue'
 import { $alert } from '@/utils/alert'
-import { useOtpFlow } from '@/composables'
+import { globalOtpFlow } from '@/composables/useOtpFlow'
 
 defineOptions({
   name: 'PresetOperations',
@@ -65,9 +64,6 @@ const deviceLoading = ref(false)
 const selectedDeviceId = ref<string | null>(null)
 const formParams = ref<Record<string, unknown>>({})
 const executing = ref(false)
-
-// OTP 流程
-const otpFlow = useOtpFlow()
 
 // 执行结果
 const showResultModal = ref(false)
@@ -192,7 +188,7 @@ const doExecutePreset = async (
     }
 
     showExecuteModal.value = false
-    otpFlow.open(
+    globalOtpFlow.open(
       {
         dept_id: first!.dept_id,
         device_group: first!.device_group,
@@ -289,7 +285,7 @@ const handleExecute = async () => {
       return
     }
 
-    otpFlow.open(
+    globalOtpFlow.open(
       {
         dept_id: currentDev.dept_id,
         device_group: currentDev.device_group,
@@ -314,20 +310,8 @@ const handleExecute = async () => {
   try {
     await backupBeforeConfigChange(selectedDeviceId.value)
     await doExecutePreset(currentPreset.value.id, selectedDeviceId.value, formParams.value)
-  } catch (error) {
-    otpFlow.tryHandleOtpRequired(error, async (otpCode) => {
-      const d = otpFlow.details.value
-      if (d) {
-        await executeWithOtpCache(
-          d.dept_id,
-          d.device_group as DeviceGroup,
-          otpCode,
-          presetId,
-          deviceId,
-          params,
-        )
-      }
-    })
+  } catch {
+    // 全局拦截器会自动处理 428 OTP，此处无需手动处理
   } finally {
     executing.value = false
   }
@@ -461,12 +445,6 @@ onMounted(() => {
         </n-space>
       </template>
     </n-modal>
-
-    <!-- OTP 弹窗 -->
-    <OtpModal v-model:show="otpFlow.show.value" :loading="otpFlow.loading.value"
-      :title="otpFlow.details.value?.message ? '需要 OTP 验证码' : '需要 OTP 验证码'" :alert-title="'需要 OTP'"
-      :alert-text="otpFlow.details.value?.message || '当前操作需要 OTP 验证'" :info-items="otpFlow.infoItems.value"
-      confirm-text="提交并继续" @confirm="otpFlow.confirm" />
 
     <!-- 结果弹窗 -->
     <n-modal v-model:show="showResultModal" preset="card" title="执行结果" style="width: 800px; max-height: 80vh">

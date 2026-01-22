@@ -485,3 +485,85 @@ async def async_deploy_from_host_data(host: "Host") -> dict[str, Any]:
     except Exception as e:
         logger.error("异步配置下发失败", host=device_name, device_id=device_id, error=str(e), exc_info=True)
         raise
+
+
+async def async_get_lldp_neighbors(host: "Host") -> dict[str, Any]:
+    """
+    异步获取设备 LLDP 邻居信息（使用原生 AsyncScrapli）。
+
+    根据设备平台自动选择正确的命令，并使用 TextFSM 解析输出。
+
+    Args:
+        host: Nornir Host 对象
+
+    Returns:
+        包含 LLDP 邻居信息的字典：
+        - success: 是否成功
+        - raw: 原始输出
+        - parsed: 解析后的结构化数据
+        - platform: 设备平台
+    """
+    from app.network.platform_config import get_command, get_platform_for_vendor
+    from app.network.textfsm_parser import parse_command_output
+
+    raw_platform = host.platform or "hp_comware"
+    platform = get_platform_for_vendor(raw_platform)
+
+    # 使用统一的命令映射
+    try:
+        command = get_command("lldp_neighbors", platform)
+    except ValueError:
+        command = "show lldp neighbors detail"
+
+    kwargs = _get_scrapli_kwargs(host)
+    kwargs = await _apply_otp_manual_password(host, kwargs)
+    device_name = host.data.get("device_name", host.name)
+
+    start = time.monotonic()
+    conn = AsyncScrapli(**kwargs)
+    try:
+        logger.info("AsyncScrapli 打开连接（LLDP 采集）", host=device_name, device=host.hostname, platform=platform)
+        await conn.open()
+
+        response = await conn.send_command(command)
+
+        raw_output = response.result
+        parsed = None
+
+        # 使用 TextFSM 解析
+        if platform:
+            try:
+                parsed = parse_command_output(
+                    platform=platform,
+                    command=command,
+                    output=raw_output,
+                )
+            except Exception as e:
+                logger.warning("TextFSM 解析失败", host=device_name, error=str(e))
+
+        logger.info(
+            "AsyncScrapli LLDP 采集完成",
+            host=device_name,
+            device=host.hostname,
+            platform=platform,
+            elapsed_ms=int((time.monotonic() - start) * 1000),
+            parsed_count=len(parsed) if parsed else 0,
+        )
+
+        return {
+            "success": not response.failed,
+            "raw": raw_output,
+            "parsed": parsed,
+            "platform": platform,
+        }
+    except ScrapliAuthenticationFailed as e:
+        await handle_otp_auth_failure(dict(host.data), e)
+        raise
+    except Exception as e:
+        logger.error("LLDP 采集失败", host=device_name, error=str(e), exc_info=True)
+        raise
+    finally:
+        try:
+            await conn.close()
+        except Exception:
+            pass

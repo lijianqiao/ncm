@@ -17,6 +17,7 @@ import {
   NCode,
   NTable,
   type DropdownOption,
+  NSpin,
 } from 'naive-ui'
 import { $alert } from '@/utils/alert'
 import {
@@ -28,6 +29,7 @@ import {
   cancelDeployTask,
   retryDeployTask,
   rollbackDeployTask,
+  previewRollback,
   getRecycleBinDeployTasks,
   batchDeleteDeployTasks,
   restoreDeployTask,
@@ -38,6 +40,7 @@ import {
   type DeploySearchParams,
   type DeployTaskStatus,
   type DeviceDeployResult,
+  type RollbackPreviewResponse,
 } from '@/api/deploy'
 import { getDevice } from '@/api/devices'
 import { cacheOTP } from '@/api/credentials'
@@ -47,10 +50,9 @@ import { formatDateTime } from '@/utils/date'
 import { formatUserDisplayName } from '@/utils/user'
 import ProTable, { type FilterConfig } from '@/components/common/ProTable.vue'
 import RecycleBinModal from '@/components/common/RecycleBinModal.vue'
-import OtpModal from '@/components/common/OtpModal.vue'
 import DeviceSelector from '@/components/common/DeviceSelector.vue'
 import type { DeviceGroupType } from '@/types/enums'
-import { useOtpFlow } from '@/composables'
+import { globalOtpFlow } from '@/composables/useOtpFlow'
 
 /** OTP 所需分组信息 */
 interface OtpRequiredGroup {
@@ -422,8 +424,6 @@ const approveModel = ref({
 
 // ==================== OTP（手动输入） ====================
 
-const otpFlow = useOtpFlow()
-
 const extractOtpRequiredGroups = (task: DeployTask): OtpRequiredGroup[] => {
   const taskResult = task.result as Record<string, unknown> | undefined
   if (!taskResult || typeof taskResult !== 'object') return []
@@ -450,7 +450,7 @@ const openOtpModal = (task: DeployTask) => {
   }
   const first = groups[0]!
 
-  otpFlow.open(
+  globalOtpFlow.open(
     {
       dept_id: first.dept_id,
       device_group: first.device_group,
@@ -531,25 +531,8 @@ const handleExecute = (row: DeployTask) => {
           }
           $alert.success('下发任务已提交执行')
           tableRef.value?.reload()
-        } catch (error) {
-          // 尝试处理 428 OTP (兜底)
-          otpFlow.tryHandleOtpRequired(error, async (otpCode) => {
-            const d = otpFlow.details.value
-            if (!d) return
-
-            // 1. 缓存 OTP
-            const cacheRes = await cacheOTP({
-              dept_id: d.dept_id,
-              device_group: d.device_group as DeviceGroupType,
-              otp_code: otpCode,
-            })
-            if (!cacheRes.data?.success) {
-              throw new Error(cacheRes.data?.message || 'OTP 缓存失败')
-            }
-
-            // 2. 重试执行
-            await doExecute()
-          })
+        } catch {
+          // 全局拦截器会自动处理 428 OTP
         }
       }
 
@@ -565,7 +548,7 @@ const handleExecute = (row: DeployTask) => {
 
           // 如果设备配置为手动 OTP，且具备必要的部门/分组信息
           if (device.auth_type === 'otp_manual' && device.dept_id && device.device_group) {
-            otpFlow.open(
+            globalOtpFlow.open(
               {
                 dept_id: device.dept_id!,
                 device_group: device.device_group!,
@@ -639,36 +622,52 @@ const handleRetry = (row: DeployTask) => {
 
 // ==================== 回滚 ====================
 
-const handleRollback = (row: DeployTask) => {
-  dialog.error({
-    title: '回滚确认',
-    content: `确定要回滚下发任务 "${row.name}" 吗？这将尝试撤销之前的配置变更。`,
-    positiveText: '确认回滚',
-    negativeText: '取消',
-    onPositiveClick: async () => {
-      const doRollback = async () => {
-        await rollbackDeployTask(row.id)
-        $alert.success('回滚任务已提交')
-        tableRef.value?.reload()
-      }
+const showRollbackModal = ref(false)
+const rollbackPreview = ref<RollbackPreviewResponse | null>(null)
+const rollbackLoading = ref(false)
+const rollbackTargetId = ref('')
 
-      try {
-        await doRollback()
-      } catch (error) {
-        otpFlow.tryHandleOtpRequired(error, async (otpCode) => {
-          const d = otpFlow.details.value
-          if (d) {
-            await cacheOTP({
-              dept_id: d.dept_id,
-              device_group: d.device_group as DeviceGroupType,
-              otp_code: otpCode,
-            })
-            await doRollback()
-          }
-        })
-      }
-    },
-  })
+const handleRollback = async (row: DeployTask) => {
+  if (!['success', 'partial', 'rollback'].includes(row.status)) {
+    $alert.warning('只有成功、部分成功或已回滚的任务可以执行回滚')
+    return
+  }
+
+  rollbackTargetId.value = row.id
+  rollbackLoading.value = true
+
+  // 封装预检逻辑以支持递归重试
+  const doPreview = async () => {
+    try {
+      showRollbackModal.value = true // 先打开弹窗
+      const res = await previewRollback(row.id)
+      rollbackPreview.value = res.data
+    } catch {
+      showRollbackModal.value = false // 失败关闭弹窗
+
+    } finally {
+
+      rollbackLoading.value = false
+    }
+  }
+
+  await doPreview()
+}
+
+const submitRollback = async () => {
+  if (!rollbackTargetId.value) return
+
+  rollbackLoading.value = true
+  try {
+    await rollbackDeployTask(rollbackTargetId.value)
+    $alert.success('回滚任务已开始执行')
+    showRollbackModal.value = false
+    tableRef.value?.reload()
+  } catch {
+    // error
+  } finally {
+    rollbackLoading.value = false
+  }
 }
 
 // ==================== 右键菜单 ====================
@@ -851,8 +850,8 @@ const columns: DataTableColumns<DeployTask> = [
         )
       }
 
-      // 回滚 (success, partial)
-      if (['success', 'partial'].includes(s)) {
+      // 回滚 (success, partial, rollback)
+      if (['success', 'partial', 'rollback'].includes(s)) {
         btns.push(
           h(
             NButton,
@@ -900,10 +899,10 @@ const columns: DataTableColumns<DeployTask> = [
           <n-descriptions :column="2" label-placement="left" bordered>
             <n-descriptions-item label="任务名称" :span="2">{{
               viewData.name
-              }}</n-descriptions-item>
+            }}</n-descriptions-item>
             <n-descriptions-item label="模板">{{
               viewData.template_name || '-'
-              }}</n-descriptions-item>
+            }}</n-descriptions-item>
             <n-descriptions-item label="状态">
               <n-tag :type="statusColorMap[viewData.status]" size="small">
                 {{ statusLabelMap[viewData.status] }}
@@ -911,13 +910,13 @@ const columns: DataTableColumns<DeployTask> = [
             </n-descriptions-item>
             <n-descriptions-item label="Celery任务ID" :span="2">{{
               viewData.celery_task_id || '-'
-              }}</n-descriptions-item>
+            }}</n-descriptions-item>
             <n-descriptions-item label="设备数">{{
               getTaskDeviceCount(viewData)
-              }}</n-descriptions-item>
+            }}</n-descriptions-item>
             <n-descriptions-item label="创建人">{{
               viewData.created_by_name || '-'
-              }}</n-descriptions-item>
+            }}</n-descriptions-item>
             <n-descriptions-item label="变更说明" :span="2">
               <div style="white-space: pre-wrap; word-break: break-word">
                 {{ viewData.change_description || '-' }}
@@ -967,10 +966,10 @@ const columns: DataTableColumns<DeployTask> = [
             <h4>审批流程</h4>
             <n-timeline>
               <n-timeline-item v-for="approval in viewData.approvals || []" :key="approval.level" :type="approval.status === 'approved'
-                  ? 'success'
-                  : approval.status === 'rejected'
-                    ? 'error'
-                    : 'default'
+                ? 'success'
+                : approval.status === 'rejected'
+                  ? 'error'
+                  : 'default'
                 " :title="`第 ${approval.level} 级审批`">
                 <p>审批人: {{ approval.approver_name || '待指定' }}</p>
                 <p>
@@ -1066,11 +1065,103 @@ const columns: DataTableColumns<DeployTask> = [
       </template>
     </n-modal>
 
-    <!-- OTP 输入 Modal（通用组件） -->
-    <OtpModal v-model:show="otpFlow.show.value" :loading="otpFlow.loading.value"
-      :title="otpFlow.details.value?.message ? '需要 OTP 验证码' : '需要 OTP 验证码'" :alert-title="'需要 OTP'"
-      :alert-text="otpFlow.details.value?.message || '当前操作需要 OTP 验证'" :info-items="otpFlow.infoItems.value"
-      confirm-text="提交并继续" @confirm="otpFlow.confirm" />
+    <!-- 回滚预检 Modal -->
+    <n-modal v-model:show="showRollbackModal" preset="card" title="回滚预检结果"
+      style="width: 800px; max-height: 80vh; overflow: auto">
+      <div v-if="!rollbackPreview && rollbackLoading" style="text-align: center; padding: 40px">
+        <n-spin size="large" />
+      </div>
+      <div v-else-if="rollbackPreview">
+        <n-alert type="info" style="margin-bottom: 16px">
+          {{ rollbackPreview.summary }}
+        </n-alert>
+
+        <n-collapse :default-expanded-names="['need_rollback']">
+          <n-collapse-item title="需要回滚的设备" name="need_rollback">
+            <template #header-extra>
+              <n-tag type="error" size="small">{{ rollbackPreview.need_rollback.length }}</n-tag>
+            </template>
+            <n-table size="small" :bordered="false" :single-line="false">
+              <thead>
+                <tr>
+                  <th>设备名称</th>
+                  <th>原因</th>
+                  <th>变更前MD5</th>
+                  <th>当前MD5</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="d in rollbackPreview.need_rollback" :key="d.device_id">
+                  <td>{{ d.device_name }}</td>
+                  <td>{{ d.reason }}</td>
+                  <td><n-tag size="small">{{ (d.expected_md5 || '').substring(0, 8) }}</n-tag></td>
+                  <td><n-tag size="small" type="warning">{{ (d.current_md5 || '').substring(0, 8) }}</n-tag></td>
+                </tr>
+                <tr v-if="rollbackPreview.need_rollback.length === 0">
+                  <td colspan="4" style="text-align: center; color: #999">无</td>
+                </tr>
+              </tbody>
+            </n-table>
+          </n-collapse-item>
+
+          <n-collapse-item title="跳过的设备 (配置未变)" name="skip">
+            <template #header-extra>
+              <n-tag type="success" size="small">{{ rollbackPreview.skip.length }}</n-tag>
+            </template>
+            <n-table size="small" :bordered="false">
+              <thead>
+                <tr>
+                  <th>设备名称</th>
+                  <th>原因</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="d in rollbackPreview.skip" :key="d.device_id">
+                  <td>{{ d.device_name }}</td>
+                  <td><n-tag size="small" type="success">配置未变化</n-tag></td>
+                </tr>
+                <tr v-if="rollbackPreview.skip.length === 0">
+                  <td colspan="2" style="text-align: center; color: #999">无</td>
+                </tr>
+              </tbody>
+            </n-table>
+          </n-collapse-item>
+
+          <n-collapse-item title="无法回滚的设备" name="cannot_rollback">
+            <template #header-extra>
+              <n-tag type="warning" size="small">{{ rollbackPreview.cannot_rollback.length }}</n-tag>
+            </template>
+            <n-table size="small" :bordered="false">
+              <thead>
+                <tr>
+                  <th>设备名称</th>
+                  <th>原因</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="d in rollbackPreview.cannot_rollback" :key="d.device_id">
+                  <td>{{ d.device_name }}</td>
+                  <td>{{ d.reason }}</td>
+                </tr>
+                <tr v-if="rollbackPreview.cannot_rollback.length === 0">
+                  <td colspan="2" style="text-align: center; color: #999">无</td>
+                </tr>
+              </tbody>
+            </n-table>
+          </n-collapse-item>
+        </n-collapse>
+
+        <div style="margin-top: 24px; text-align: right">
+          <n-space justify="end">
+            <n-button @click="showRollbackModal = false">取消</n-button>
+            <n-button type="error" :disabled="rollbackPreview.need_rollback.length === 0 || rollbackLoading"
+              :loading="rollbackLoading" @click="submitRollback">
+              确认回滚 ({{ rollbackPreview.need_rollback.length }} 台)
+            </n-button>
+          </n-space>
+        </div>
+      </div>
+    </n-modal>
 
     <!-- 查看结果 Modal -->
     <n-modal v-model:show="showResultModal" preset="card" title="下发执行结果" style="width: 900px; max-height: 80vh">
@@ -1101,10 +1192,10 @@ const columns: DataTableColumns<DeployTask> = [
                 <td>{{ result.device_name || result.device_id }}</td>
                 <td>
                   <n-tag :type="result.status === 'success'
-                      ? 'success'
-                      : result.status === 'failed'
-                        ? 'error'
-                        : 'default'
+                    ? 'success'
+                    : result.status === 'failed'
+                      ? 'error'
+                      : 'default'
                     " size="small">
                     {{
                       result.status === 'success'

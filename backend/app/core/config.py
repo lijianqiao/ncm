@@ -149,6 +149,9 @@ class Settings(BaseSettings):
     SCRAPLI_POOL_MAX_IDLE_TIME: int = 300  # 连接最大空闲时间（秒）
     SCRAPLI_POOL_MAX_AGE: int = 3600  # 连接最大存活时间（秒）
 
+    # Nornir 任务超时配置
+    NORNIR_TASK_TIMEOUT: int = 30  # Nornir 单任务超时时间（秒），用于快速失败
+
     # 告警配置（Phase 3）
     ALERT_OFFLINE_DAYS_THRESHOLD: int = 3  # 离线告警阈值（天）
 

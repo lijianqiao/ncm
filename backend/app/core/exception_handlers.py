@@ -39,18 +39,23 @@ def _format_validation_errors(errors: Sequence[Any]) -> list[dict]:
 async def custom_exception_handler(request: Request, exc: CustomException):
     """
     自定义业务异常处理器。
+
+    返回格式与 ResponseBase 保持一致：
+    {"code": xxx, "message": "...", "data": null/details}
     """
     if isinstance(exc, OTPRequiredException):
         return build_otp_required_response(exc)
     return JSONResponse(
         status_code=exc.code,
-        content=jsonable_encoder({"error_code": exc.code, "message": exc.message, "details": exc.details}),
+        content=jsonable_encoder({"code": exc.code, "message": exc.message, "data": exc.details}),
     )
 
 
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
     """
     请求参数验证异常处理器。
+
+    返回格式与 ResponseBase 保持一致。
     """
     errors = _format_validation_errors(exc.errors())
 
@@ -69,13 +74,15 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
     )
     return JSONResponse(
         status_code=422,
-        content={"error_code": 422, "message": "参数验证错误", "details": errors},
+        content={"code": 422, "message": "参数验证错误", "data": errors},
     )
 
 
 async def pydantic_validation_exception_handler(request: Request, exc: ValidationError):
     """
     Pydantic 模型验证异常处理器 (捕获 Schema 层校验错误)。
+
+    返回格式与 ResponseBase 保持一致。
     """
     errors = _format_validation_errors(exc.errors())
 
@@ -94,7 +101,7 @@ async def pydantic_validation_exception_handler(request: Request, exc: Validatio
     )
     return JSONResponse(
         status_code=422,
-        content={"error_code": 422, "message": "数据验证错误", "details": errors},
+        content={"code": 422, "message": "数据验证错误", "data": errors},
     )
 
 
@@ -103,6 +110,7 @@ async def generic_exception_handler(request: Request, exc: Exception):
     通用异常处理器，捕获所有未处理的异常。
 
     生产环境中不暴露详细错误信息，仅返回统一的 500 错误。
+    返回格式与 ResponseBase 保持一致。
     """
     try:
         client_ip = request.client.host if request.client else None
@@ -120,15 +128,16 @@ async def generic_exception_handler(request: Request, exc: Exception):
     )
     return JSONResponse(
         status_code=500,
-        content={"error_code": 500, "message": "服务器内部错误", "details": None},
+        content={"code": 500, "message": "服务器内部错误", "data": None},
     )
 
 
 async def import_export_exception_handler(request: Request, exc: ImportExportError):
+    """导入导出异常处理器，返回格式与 ResponseBase 保持一致。"""
     return JSONResponse(
         status_code=int(exc.status_code),
         content=jsonable_encoder(
-            {"error_code": int(exc.status_code), "message": exc.message, "details": exc.details}
+            {"code": int(exc.status_code), "message": exc.message, "data": exc.details}
         ),
     )
 

@@ -168,6 +168,48 @@ def _compute_unified_diff(old_text: str, new_text: str, context_lines: int = 3) 
     return "\n".join(diff_iter)
 
 
+def _convert_async_results_to_summary(results) -> dict:
+    """
+    将 AsyncRunner 结果转换为 aggregate_results 兼容的格式。
+
+    Args:
+        results: AsyncRunner 返回的 AggregatedResult
+
+    Returns:
+        dict: 兼容 _save_backup_results 的格式
+            {"results": {name: {"status": ..., "result": ..., "error": ...}}, "success": n, "failed": n}
+    """
+    summary: dict = {"results": {}, "success": 0, "failed": 0}
+
+    for host_name, multi_result in results.items():
+        if multi_result.failed:
+            exc = multi_result[0].exception if multi_result else None
+            summary["results"][host_name] = {
+                "status": "failed",
+                "result": None,
+                "error": str(exc) if exc else "Unknown error",
+            }
+            summary["failed"] += 1
+        else:
+            result_data = multi_result[0].result if multi_result else None
+            if result_data and result_data.get("success"):
+                summary["results"][host_name] = {
+                    "status": "success",
+                    "result": result_data.get("config"),
+                    "error": None,
+                }
+                summary["success"] += 1
+            else:
+                summary["results"][host_name] = {
+                    "status": "failed",
+                    "result": None,
+                    "error": result_data.get("error") if result_data else "Unknown error",
+                }
+                summary["failed"] += 1
+
+    return summary
+
+
 async def _save_backup_results(
     hosts_data: list[dict],
     summary: dict,
@@ -333,22 +375,45 @@ def backup_single_device(
     ]
 
     try:
-        from app.network.nornir_config import init_nornir
-        from app.network.nornir_tasks import aggregate_results, backup_config
+        from app.network.async_runner import run_async_tasks
+        from app.network.async_tasks import async_collect_config
+        from app.network.nornir_config import init_nornir_async
 
-        nr = init_nornir(hosts_data, num_workers=1)
-        results = nr.run(task=backup_config)
-        summary = aggregate_results(results)
+        # 添加必要的 data 字段
+        hosts_data[0]["data"] = {"device_id": name, "device_name": name}
+
+        inventory = init_nornir_async(hosts_data)
+        results = run_async(
+            run_async_tasks(
+                inventory.hosts,
+                async_collect_config,
+                num_workers=1,
+            )
+        )
 
         # 提取单设备结果
-        device_result = summary["results"].get(name, {})
+        multi_result = results.get(name)
+        if multi_result and not multi_result.failed:
+            result_data = multi_result[0].result if multi_result else None
+            if result_data and result_data.get("success"):
+                return {
+                    "device": name,
+                    "hostname": hostname,
+                    "status": "success",
+                    "config": result_data.get("config"),
+                    "error": None,
+                }
+
+        error_msg = None
+        if multi_result and multi_result.failed:
+            error_msg = str(multi_result[0].exception) if multi_result else "Unknown error"
 
         return {
             "device": name,
             "hostname": hostname,
-            "status": device_result.get("status", "unknown"),
-            "config": device_result.get("result") if device_result.get("status") == "success" else None,
-            "error": device_result.get("error"),
+            "status": "failed",
+            "config": None,
+            "error": error_msg,
         }
 
     except Exception as e:
@@ -428,12 +493,21 @@ def scheduled_backup_all(self) -> dict[str, Any]:
             },
         )
 
-        from app.network.nornir_config import init_nornir
-        from app.network.nornir_tasks import aggregate_results, backup_config
+        from app.network.async_runner import run_async_tasks
+        from app.network.async_tasks import async_collect_config
+        from app.network.nornir_config import init_nornir_async
 
-        nr = init_nornir(hosts_data, num_workers=min(50, len(hosts_data)))
-        results = nr.run(task=backup_config)
-        summary = aggregate_results(results)
+        inventory = init_nornir_async(hosts_data)
+        results = run_async(
+            run_async_tasks(
+                inventory.hosts,
+                async_collect_config,
+                num_workers=min(50, len(hosts_data)),
+            )
+        )
+
+        # 转换异步结果格式以兼容 _save_backup_results
+        summary = _convert_async_results_to_summary(results)
 
         run_async(
             _save_backup_results(
@@ -688,12 +762,17 @@ async def _perform_incremental_check(task, celery_task_id: str | None) -> dict[s
             },
         )
 
-        from app.network.nornir_config import init_nornir
-        from app.network.nornir_tasks import aggregate_results, backup_config
+        from app.network.async_runner import run_async_tasks
+        from app.network.async_tasks import async_collect_config
+        from app.network.nornir_config import init_nornir_async
 
-        nr = init_nornir(batch, num_workers=min(10, len(batch)))
-        results = nr.run(task=backup_config)
-        summary = aggregate_results(results)
+        inventory = init_nornir_async(batch)
+        results = await run_async_tasks(
+            inventory.hosts,
+            async_collect_config,
+            num_workers=min(10, len(batch)),
+        )
+        summary = _convert_async_results_to_summary(results)
 
         # 对比 MD5
         for host in batch:

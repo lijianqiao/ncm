@@ -114,3 +114,33 @@ class DeployRollbackResponse(BaseModel):
     task_id: UUID
     celery_task_id: str
     status: TaskStatus
+
+
+# ===== 回滚预检相关 Schema =====
+
+
+class RollbackDevicePreview(BaseModel):
+    """回滚预检 - 单设备信息。"""
+
+    device_id: UUID
+    device_name: str | None = None
+    reason: str = Field(..., description="处理原因（如：配置已变更、配置未变化、无变更前备份）")
+    current_md5: str | None = Field(default=None, description="当前配置 MD5")
+    expected_md5: str | None = Field(default=None, description="变更前配置 MD5")
+
+
+class RollbackPreviewResponse(BaseModel):
+    """回滚预检响应（连接设备，比对 MD5）。"""
+
+    task_id: UUID
+    task_name: str | None = None
+    need_rollback: list[RollbackDevicePreview] = Field(
+        default_factory=list, description="需要回滚的设备（配置已变更）"
+    )
+    skip: list[RollbackDevicePreview] = Field(
+        default_factory=list, description="可跳过的设备（配置未变化）"
+    )
+    cannot_rollback: list[RollbackDevicePreview] = Field(
+        default_factory=list, description="无法回滚的设备（无备份或不支持）"
+    )
+    summary: str = Field(default="", description="预检摘要")

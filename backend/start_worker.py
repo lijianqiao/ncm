@@ -18,10 +18,16 @@
     # 启动 Worker + Beat（内嵌定时任务调度）
     uv run start_worker.py --beat
 
+    # 启动 Worker + Flower（Worker 同时带监控面板）
+    uv run start_worker.py --with-flower
+
+    # 启动 Worker + Beat + Flower（全功能模式）
+    uv run start_worker.py --beat --with-flower
+
     # 单独启动 Beat 调度器（用于分布式部署）
     uv run start_worker.py --beat-only
 
-    # 启动 Flower 监控面板
+    # 单独启动 Flower 监控面板（需要另一终端运行 Worker）
     uv run start_worker.py --flower
 
     # 启动 Flower（带 HTTP Basic Auth）
@@ -31,19 +37,12 @@
 import argparse
 import subprocess
 import sys
+import threading
+import time
 
 
-def start_flower(port: int, basic_auth: str | None = None) -> int:
-    """
-    启动 Flower 监控面板。
-
-    Args:
-        port: Flower Web UI 端口
-        basic_auth: HTTP Basic Auth 认证，格式 "user:password"
-
-    Returns:
-        int: 进程退出码
-    """
+def _build_flower_cmd(port: int, basic_auth: str | None = None) -> list[str]:
+    """构建 Flower 启动命令。"""
     flower_cmd = [
         sys.executable,
         "-m",
@@ -53,12 +52,48 @@ def start_flower(port: int, basic_auth: str | None = None) -> int:
         "flower",
         f"--port={port}",
     ]
-
     if basic_auth:
         flower_cmd.append(f"--basic-auth={basic_auth}")
+    return flower_cmd
 
+
+def start_flower_background(port: int, basic_auth: str | None = None) -> subprocess.Popen:
+    """
+    后台启动 Flower 监控面板（非阻塞）。
+
+    Args:
+        port: Flower Web UI 端口
+        basic_auth: HTTP Basic Auth 认证
+
+    Returns:
+        Popen: Flower 子进程对象
+    """
+    flower_cmd = _build_flower_cmd(port, basic_auth)
+    print(f"后台启动 Flower 监控面板: http://localhost:{port}")
+    # 使用 Popen 非阻塞启动
+    return subprocess.Popen(
+        flower_cmd,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+
+def start_flower(port: int, basic_auth: str | None = None) -> int:
+    """
+    启动 Flower 监控面板（阻塞模式，单独运行）。
+
+    Args:
+        port: Flower Web UI 端口
+        basic_auth: HTTP Basic Auth 认证，格式 "user:password"
+
+    Returns:
+        int: 进程退出码
+    """
+    flower_cmd = _build_flower_cmd(port, basic_auth)
     print(f"启动 Flower 监控面板: http://localhost:{port}")
     print(f"命令: {' '.join(flower_cmd)}")
+    print("\n⚠️  注意：Flower 只是监控面板，需要另一个终端运行 Worker 才能正常工作！")
+    print("    另开终端执行: uv run start_worker.py\n")
     return subprocess.call(flower_cmd)
 
 
@@ -92,6 +127,9 @@ def start_worker(
     loglevel: str,
     pool: str,
     with_beat: bool = False,
+    with_flower: bool = False,
+    flower_port: int = 5555,
+    flower_auth: str | None = None,
 ) -> int:
     """
     启动 Celery Worker。
@@ -100,13 +138,30 @@ def start_worker(
         queues: 要处理的队列列表，逗号分隔
         concurrency: Worker 并发数
         loglevel: 日志级别
+        pool: Worker Pool 类型
         with_beat: 是否同时启动 Beat 调度器
+        with_flower: 是否同时启动 Flower 监控面板
+        flower_port: Flower 端口
+        flower_auth: Flower HTTP Basic Auth
 
     Returns:
         int: 进程退出码
     """
     # 延迟导入，避免在解析参数时就加载配置
     from app.celery.app import celery_app
+
+    flower_proc: subprocess.Popen | None = None
+
+    # 如果需要 Flower，先后台启动（让 Flower 等待 Worker 就绪）
+    if with_flower:
+        # 稍微延迟启动 Flower，让 Worker 先初始化
+        def delayed_flower_start():
+            time.sleep(3)  # 等待 Worker 启动
+            nonlocal flower_proc
+            flower_proc = start_flower_background(flower_port, flower_auth)
+
+        flower_thread = threading.Thread(target=delayed_flower_start, daemon=True)
+        flower_thread.start()
 
     worker_args = [
         "worker",
@@ -117,9 +172,15 @@ def start_worker(
         "--hostname=ncm-worker@%h",
     ]
 
+    mode_desc = []
     if with_beat:
         worker_args.append("--beat")
-        print("启动 Celery Worker（内嵌 Beat 调度器）")
+        mode_desc.append("Beat")
+    if with_flower:
+        mode_desc.append(f"Flower@{flower_port}")
+
+    if mode_desc:
+        print(f"启动 Celery Worker（含 {' + '.join(mode_desc)}）")
     else:
         print("启动 Celery Worker")
 
@@ -128,7 +189,15 @@ def start_worker(
     print(f"日志级别: {loglevel}")
     print(f"Pool: {pool}")
 
-    celery_app.worker_main(argv=worker_args)
+    try:
+        celery_app.worker_main(argv=worker_args)
+    finally:
+        # Worker 退出时，终止 Flower 子进程
+        if flower_proc is not None:
+            print("正在关闭 Flower 监控面板...")
+            flower_proc.terminate()
+            flower_proc.wait(timeout=5)
+
     return 0
 
 
@@ -139,11 +208,13 @@ def main() -> int:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 示例:
-  启动 Worker:           uv run start_worker.py
-  启动 Worker + Beat:    uv run start_worker.py --beat
-  启动 Beat (独立):      uv run start_worker.py --beat-only
-  启动 Flower:           uv run start_worker.py --flower
-  启动 Flower (带认证):  uv run start_worker.py --flower --flower-auth admin:secret
+  启动 Worker:                uv run start_worker.py
+  启动 Worker + Beat:         uv run start_worker.py --beat
+  启动 Worker + Flower:       uv run start_worker.py --with-flower
+  启动 Worker + Beat + Flower: uv run start_worker.py --beat --with-flower
+  启动 Beat (独立):           uv run start_worker.py --beat-only
+  启动 Flower (独立):         uv run start_worker.py --flower
+  启动 Flower (带认证):       uv run start_worker.py --flower --flower-auth admin:secret
         """,
     )
 
@@ -192,7 +263,12 @@ def main() -> int:
     parser.add_argument(
         "--flower",
         action="store_true",
-        help="启动 Flower 监控面板",
+        help="单独启动 Flower 监控面板（需要另一终端运行 Worker）",
+    )
+    parser.add_argument(
+        "--with-flower",
+        action="store_true",
+        help="启动 Worker 时同时启动 Flower 监控面板",
     )
     parser.add_argument(
         "--flower-port",
@@ -233,6 +309,9 @@ def main() -> int:
         loglevel=args.loglevel,
         pool=pool,
         with_beat=args.beat,
+        with_flower=args.with_flower,
+        flower_port=args.flower_port,
+        flower_auth=args.flower_auth,
     )
 
 

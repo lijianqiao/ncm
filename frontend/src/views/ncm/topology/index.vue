@@ -24,15 +24,13 @@ import {
   type TopologyLinkItem,
   type TopologyTaskStatus,
 } from '@/api/topology'
-import { useTaskPolling, useOtpFlow } from '@/composables'
-import OtpModal from '@/components/common/OtpModal.vue'
+import { useTaskPolling } from '@/composables'
 
 defineOptions({
   name: 'TopologyManagement',
 })
 
 const dialog = useDialog()
-const otpFlow = useOtpFlow()
 
 // ==================== 拓扑数据 ====================
 
@@ -344,12 +342,6 @@ const handleFitView = () => {
       <div v-else ref="networkContainer" class="network-container"></div>
     </n-card>
 
-    <!-- OTP 弹窗 -->
-    <OtpModal v-model:show="otpFlow.show.value" :loading="otpFlow.loading.value"
-      :title="otpFlow.details.value?.message ? '需要 OTP 验证码' : '需要 OTP 验证码'" :alert-title="'需要 OTP'"
-      :alert-text="otpFlow.details.value?.message || '当前操作需要 OTP 验证'" :info-items="otpFlow.infoItems.value"
-      confirm-text="提交并继续" @confirm="otpFlow.confirm" />
-
     <!-- 节点详情 Modal -->
     <n-modal v-model:show="showNodeDetail" preset="card" title="节点详情" style="width: 400px">
       <template v-if="selectedNode">
@@ -420,10 +412,10 @@ const handleFitView = () => {
             <p>状态: {{ taskStatus.status }}</p>
           </div>
           <n-progress v-if="taskStatus.progress !== null" type="line" :percentage="taskStatus.progress" :status="taskStatus.status === 'SUCCESS'
-              ? 'success'
-              : taskStatus.status === 'FAILURE'
-                ? 'error'
-                : 'default'
+            ? 'success'
+            : taskStatus.status === 'FAILURE'
+              ? 'error'
+              : 'default'
             " />
           <template v-if="taskStatus.result">
             <div style="text-align: center">

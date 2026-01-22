@@ -3,7 +3,9 @@
 @Email: lijianqiao2906@live.com
 @FileName: deploy.py
 @DateTime: 2026-01-09 23:50:00
-@Docs: 安全批量下发 Celery 任务。
+@Docs: 安全批量下发 Celery 任务（纯异步实现）。
+
+使用 AsyncRunner + AsyncScrapli (asyncssh) 实现高效网络自动化。
 """
 
 import hashlib
@@ -36,8 +38,6 @@ from app.models.backup import Backup
 from app.models.device import Device
 from app.models.task import Task
 from app.models.template import Template
-from app.network.nornir_config import init_nornir
-from app.network.nornir_tasks import aggregate_results, backup_config, deploy_from_host_data
 from app.network.platform_config import get_platform_for_vendor
 from app.services.render_service import RenderService
 
@@ -122,6 +122,23 @@ async def _update_task_status_with_retry(
                 raise
 
 
+def _check_otp_exception_in_results(results) -> OTPRequiredException | None:
+    """检查异步任务结果中是否包含 OTP 认证异常。
+
+    Args:
+        results: AsyncRunner 返回的 AggregatedResult
+
+    Returns:
+        OTPRequiredException | None: 如果存在 OTP 异常则返回，否则返回 None
+    """
+    for _host_name, multi_result in results.items():
+        if multi_result.failed:
+            exc = multi_result[0].exception if multi_result else None
+            if isinstance(exc, OTPRequiredException):
+                return exc
+    return None
+
+
 async def _get_device_credential(db, device: Device, failed_devices: list[str] | None = None):
     auth_type = AuthType(device.auth_type)
 
@@ -176,14 +193,41 @@ async def _save_pre_change_backup(db, device: Device, config_content: str) -> Ba
     bind=True,
     name="app.celery.tasks.deploy.rollback_task",
     queue="deploy",
+    max_retries=0,
+    autoretry_for=(),
 )
 def rollback_task(self, task_id: str) -> dict[str, Any]:
-    """回滚下发任务（best-effort，先限定 H3C）。"""
+    """回滚下发任务（best-effort，先限定 H3C）。
+
+    若遇到 OTP 认证失败，会将任务状态置为 PAUSED 并返回 otp_required 信息。
+    """
     logger.info("开始回滚任务", task_id=self.request.id, deploy_task_id=task_id)
-    return run_async(_rollback_task_async(self, task_id))
+    try:
+        return run_async(_rollback_task_async(self, task_id))
+    except OTPRequiredException as otp_exc:
+        # OTP 认证失败：标记为 PAUSED，让用户重新输入 OTP
+        logger.info("回滚需要 OTP 输入", deploy_task_id=task_id, message=otp_exc.message)
+        try:
+            run_async(_mark_task_paused(task_id, otp_exc.message, otp_exc.details))
+        except Exception:
+            pass
+        return {"status": "paused", "otp_required": otp_exc.details}
+    except Exception as e:
+        error_text = str(e)
+        logger.error("回滚任务执行异常", deploy_task_id=task_id, error=error_text, exc_info=True)
+        try:
+            run_async(_mark_task_failed(task_id, error_text))
+        except Exception:
+            pass
+        raise
 
 
 async def _rollback_task_async(self, task_id: str) -> dict[str, Any]:
+    """回滚任务的核心实现（纯异步）。"""
+    from app.network.async_runner import run_async_tasks
+    from app.network.async_tasks import async_collect_config, async_deploy_from_host_data
+    from app.network.nornir_config import init_nornir_async
+
     async with AsyncSessionLocal() as db:
         task_uuid = UUID(task_id)
         task = await db.get(Task, task_uuid)
@@ -191,10 +235,19 @@ async def _rollback_task_async(self, task_id: str) -> dict[str, Any]:
             raise ValueError("任务不存在")
         if task.task_type != TaskType.DEPLOY.value:
             raise ValueError("非下发任务")
+
+        # 状态检查：只允许 SUCCESS、PARTIAL 或 ROLLBACK 状态回滚
+        allowed_statuses = {TaskStatus.SUCCESS.value, TaskStatus.PARTIAL.value, TaskStatus.ROLLBACK.value}
+        if task.status not in allowed_statuses:
+            return {
+                "status": "failed",
+                "error": f"任务状态为 {task.status}，无法回滚（仅成功、部分成功或已回滚的任务可回滚）",
+            }
+
         # 使用共享函数处理并发冲突
         await _update_task_status_with_retry(db, task, task_id)
 
-        # 仅对 H3C/hp_comware 做 best-effort
+        # 获取变更前备份信息
         pre_change_backup_ids = {}
         if isinstance(task.result, dict):
             pre_change_backup_ids = task.result.get("pre_change_backup_ids", {}) or {}
@@ -205,20 +258,46 @@ async def _rollback_task_async(self, task_id: str) -> dict[str, Any]:
         device_ids = (task.target_devices or {}).get("device_ids", []) if isinstance(task.target_devices, dict) else []
         devices = (await db.execute(select(Device).where(Device.id.in_([UUID(x) for x in device_ids])))).scalars().all()
 
-        hosts_data: list[dict[str, Any]] = []
-        verify_expected_md5: dict[str, str] = {}
+        # 第一步：收集设备信息，检测哪些设备可以回滚
+        check_hosts_data: list[dict[str, Any]] = []
+        backup_info: dict[str, dict[str, Any]] = {}  # device_id -> {backup, expected_md5, cmds}
+        skipped_devices: list[dict[str, Any]] = []
+        cannot_rollback_devices: list[dict[str, Any]] = []
+
         for d in devices:
-            if d.vendor not in SUPPORTED_ROLLBACK_VENDORS:
+            device_id_str = str(d.id)
+
+            # 检查厂商支持
+            if d.vendor and d.vendor.lower() not in SUPPORTED_ROLLBACK_VENDORS:
+                cannot_rollback_devices.append({
+                    "device_id": device_id_str,
+                    "device_name": d.name,
+                    "reason": f"厂商 {d.vendor} 暂不支持回滚",
+                })
                 continue
-            backup_id = pre_change_backup_ids.get(str(d.id))
+
+            # 检查备份存在
+            backup_id = pre_change_backup_ids.get(device_id_str)
             if not backup_id:
+                cannot_rollback_devices.append({
+                    "device_id": device_id_str,
+                    "device_name": d.name,
+                    "reason": "无变更前备份",
+                })
                 continue
+
             backup = await db.get(Backup, UUID(backup_id))
             if not backup or not backup.content:
+                cannot_rollback_devices.append({
+                    "device_id": device_id_str,
+                    "device_name": d.name,
+                    "reason": "变更前备份内容不存在",
+                })
                 continue
-            cmds = normalize_rendered_config(backup.content)
+
+            # 获取凭据
             try:
-                cred = await _get_device_credential(db, d, failed_devices=[str(d.id)])
+                cred = await _get_device_credential(db, d, failed_devices=[device_id_str])
             except OTPRequiredException as e:
                 task.status = TaskStatus.PAUSED.value
                 task.error_message = e.message
@@ -226,46 +305,227 @@ async def _rollback_task_async(self, task_id: str) -> dict[str, Any]:
                 await db.flush()
                 await db.commit()
                 return {"status": "paused", "otp_required": e.details}
-            verify_expected_md5[str(d.id)] = backup.md5_hash or ""
-            hosts_data.append(
-                {
-                    "name": str(d.id),
-                    "hostname": d.ip_address,
-                    "platform": d.platform or get_platform_for_vendor(d.vendor),
-                    "username": cred.username,
-                    "password": cred.password,
-                    "port": d.ssh_port or 22,
-                    "data": {"deploy_configs": cmds, "device_id": str(d.id)},
+            except Exception as e:
+                cannot_rollback_devices.append({
+                    "device_id": device_id_str,
+                    "device_name": d.name,
+                    "reason": f"凭据获取失败: {e}",
+                })
+                continue
+
+            expected_md5 = backup.md5_hash or hashlib.md5(backup.content.encode("utf-8")).hexdigest()
+            cmds = normalize_rendered_config(backup.content)
+
+            backup_info[device_id_str] = {
+                "backup": backup,
+                "expected_md5": expected_md5,
+                "cmds": cmds,
+                "device": d,
+                "cred": cred,
+            }
+
+            check_hosts_data.append({
+                "name": device_id_str,
+                "hostname": d.ip_address,
+                "platform": d.platform or get_platform_for_vendor(d.vendor),
+                "username": cred.username,
+                "password": cred.password,
+                "port": d.ssh_port or 22,
+                "data": {
+                    "device_id": device_id_str,
+                    "auth_type": d.auth_type,
+                    "dept_id": str(d.dept_id) if d.dept_id else None,
+                    "device_group": d.device_group,
+                },
+            })
+
+        if not check_hosts_data:
+            return {
+                "status": "failed",
+                "error": "无可回滚设备",
+                "cannot_rollback": cannot_rollback_devices,
+            }
+
+        # 第二步：获取当前配置，比对 MD5（异步）
+        check_inventory = init_nornir_async(check_hosts_data)
+        current_backup_results = await run_async_tasks(
+            check_inventory.hosts,
+            async_collect_config,
+            num_workers=min(50, len(check_hosts_data)),
+        )
+
+        # 检查是否有 OTP 异常（设备连接时发现 OTP 过期/失效）
+        otp_exc = _check_otp_exception_in_results(current_backup_results)
+        if otp_exc:
+            raise otp_exc
+
+        # 分类：需要回滚 vs 跳过（配置未变化）
+        rollback_hosts_data: list[dict[str, Any]] = []
+        verify_expected_md5: dict[str, str] = {}
+
+        for device_id_str, info in backup_info.items():
+            expected_md5 = info["expected_md5"]
+            device = info["device"]
+
+            # 获取异步结果
+            multi_result = current_backup_results.get(device_id_str)
+            result_data = None
+            if multi_result and not multi_result.failed:
+                result_data = multi_result[0].result if multi_result else None
+
+            if not result_data or not result_data.get("success"):
+                # 无法获取当前配置，尝试回滚
+                logger.warning("无法获取当前配置，仍尝试回滚", device_id=device_id_str)
+            else:
+                current_config = result_data.get("config", "")
+                current_md5 = hashlib.md5(current_config.encode("utf-8")).hexdigest() if current_config else ""
+
+                if current_md5 == expected_md5:
+                    # 配置未变化，跳过
+                    skipped_devices.append({
+                        "device_id": device_id_str,
+                        "device_name": device.name,
+                        "reason": "配置未变化",
+                        "current_md5": current_md5,
+                        "expected_md5": expected_md5,
+                    })
+                    logger.info("配置未变化，跳过回滚", device_id=device_id_str)
+                    continue
+
+            # 需要回滚
+            cred = info["cred"]
+            cmds = info["cmds"]
+            verify_expected_md5[device_id_str] = expected_md5
+            rollback_hosts_data.append({
+                "name": device_id_str,
+                "hostname": device.ip_address,
+                "platform": device.platform or get_platform_for_vendor(device.vendor),
+                "username": cred.username,
+                "password": cred.password,
+                "port": device.ssh_port or 22,
+                "data": {
+                    "deploy_configs": cmds,
+                    "device_id": device_id_str,
+                    "auth_type": device.auth_type,
+                    "dept_id": str(device.dept_id) if device.dept_id else None,
+                    "device_group": device.device_group,
+                },
+            })
+
+        if not rollback_hosts_data:
+            # 所有设备都跳过了
+            task.status = TaskStatus.ROLLBACK.value
+            task.result = {
+                "skipped": skipped_devices,
+                "cannot_rollback": cannot_rollback_devices,
+                "message": "所有设备配置未变化，无需回滚",
+            }
+            await db.flush()
+            await db.commit()
+            return {
+                "status": "success",
+                "message": "所有设备配置未变化，无需回滚",
+                "skipped": skipped_devices,
+                "cannot_rollback": cannot_rollback_devices,
+            }
+
+        # 第三步：执行回滚（异步）
+        rollback_inventory = init_nornir_async(rollback_hosts_data)
+        deploy_results = await run_async_tasks(
+            rollback_inventory.hosts,
+            async_deploy_from_host_data,
+            num_workers=min(50, len(rollback_hosts_data)),
+        )
+
+        # 检查是否有 OTP 异常
+        otp_exc = _check_otp_exception_in_results(deploy_results)
+        if otp_exc:
+            raise otp_exc
+
+        # 处理回滚结果
+        deploy_summary: dict[str, Any] = {"results": {}, "success": 0, "failed": 0}
+        for host_name, multi_result in deploy_results.items():
+            if multi_result.failed:
+                deploy_summary["results"][host_name] = {
+                    "status": "failed",
+                    "error": str(multi_result[0].exception) if multi_result else "Unknown error",
                 }
-            )
+                deploy_summary["failed"] += 1
+            else:
+                result_data = multi_result[0].result if multi_result else None
+                if result_data and result_data.get("success"):
+                    deploy_summary["results"][host_name] = {
+                        "status": "success",
+                        "result": result_data.get("result"),
+                    }
+                    deploy_summary["success"] += 1
+                else:
+                    deploy_summary["results"][host_name] = {
+                        "status": "failed",
+                        "error": result_data.get("error") if result_data else "Unknown error",
+                    }
+                    deploy_summary["failed"] += 1
 
-        if not hosts_data:
-            return {"status": "failed", "error": "无可回滚设备(支持 h3c/huawei/cisco)"}
+        # 第四步：回滚验证 - 再次备份并比较 MD5（异步）
+        verify_results = await run_async_tasks(
+            rollback_inventory.hosts,
+            async_collect_config,
+            num_workers=min(50, len(rollback_hosts_data)),
+        )
 
-        nr = init_nornir(hosts_data, num_workers=min(50, len(hosts_data)))
-        results = nr.run(task=deploy_from_host_data)
-        deploy_summary = aggregate_results(results)
+        # 检查是否有 OTP 异常（验证阶段）
+        otp_exc = _check_otp_exception_in_results(verify_results)
+        if otp_exc:
+            # 验证阶段 OTP 失败不直接抛出，记录警告继续处理
+            logger.warning("回滚验证阶段 OTP 异常，跳过验证", error=otp_exc.message)
 
-        # 回滚验证：回滚后再次备份并比较 md5
-        backup_results = nr.run(task=backup_config)
-        backup_summary = aggregate_results(backup_results)
         verify: dict[str, Any] = {"matched": [], "mismatched": [], "missing": []}
         for host_id, expected_md5 in verify_expected_md5.items():
-            r = backup_summary.get("results", {}).get(host_id, {})
-            if r.get("status") != "success" or not isinstance(r.get("result"), str):
+            multi_result = verify_results.get(host_id)
+            result_data = None
+            if multi_result and not multi_result.failed:
+                result_data = multi_result[0].result if multi_result else None
+
+            if not result_data or not result_data.get("success"):
                 verify["missing"].append(host_id)
                 continue
-            got_md5 = hashlib.md5(r["result"].encode("utf-8")).hexdigest()
+
+            current_config = result_data.get("config", "")
+            got_md5 = hashlib.md5(current_config.encode("utf-8")).hexdigest() if current_config else ""
+
             if expected_md5 and got_md5 == expected_md5:
                 verify["matched"].append(host_id)
             else:
                 verify["mismatched"].append({"device_id": host_id, "expected": expected_md5, "got": got_md5})
 
         task.status = TaskStatus.ROLLBACK.value
-        task.result = {"deploy_summary": deploy_summary, "verify": verify}
+        task.result = {
+            "deploy_summary": deploy_summary,
+            "verify": verify,
+            "skipped": skipped_devices,
+            "cannot_rollback": cannot_rollback_devices,
+            "rolled_back_count": len(rollback_hosts_data),
+            "skipped_count": len(skipped_devices),
+        }
+        task.finished_at = datetime.now(UTC)
         await db.flush()
         await db.commit()
-        return {"status": "success", "deploy_summary": deploy_summary, "verify": verify}
+
+        logger.info(
+            "回滚任务完成",
+            task_id=task_id,
+            rolled_back=len(rollback_hosts_data),
+            skipped=len(skipped_devices),
+            cannot_rollback=len(cannot_rollback_devices),
+        )
+
+        return {
+            "status": "success",
+            "deploy_summary": deploy_summary,
+            "verify": verify,
+            "skipped": skipped_devices,
+            "cannot_rollback": cannot_rollback_devices,
+        }
 
 
 # ===== 异步版本下发任务 (Phase 3 - AsyncRunner) =====
@@ -321,9 +581,10 @@ def async_deploy_task(self, task_id: str) -> dict[str, Any]:
 
 
 async def _async_deploy_task_impl(self, task_id: str, *, celery_task_id: str | None) -> dict[str, Any]:
-    """异步下发任务的核心实现。"""
-    from app.network.nornir_config import init_nornir
-    from app.network.nornir_tasks import backup_config, deploy_from_host_data
+    """异步下发任务的核心实现（纯异步）。"""
+    from app.network.async_runner import run_async_tasks
+    from app.network.async_tasks import async_collect_config, async_deploy_from_host_data
+    from app.network.nornir_config import init_nornir_async
 
     render_service = RenderService()
 
@@ -470,66 +731,110 @@ async def _async_deploy_task_impl(self, task_id: str, *, celery_task_id: str | N
             await db.commit()
             return {"status": "failed", "error": task.error_message}
 
-        nr = init_nornir(hosts_data, num_workers=concurrency)
+        # 初始化异步 Inventory
+        inventory = init_nornir_async(hosts_data)
+        total_hosts = len(inventory.hosts)
 
-        # 变更前备份（异步）- 使用 aggregate_results 检测 OTP 错误
-        _update_progress({"stage": "pre_change_backup", "total": len(nr.inventory.hosts)})
-        backup_results = nr.run(task=backup_config)
-        backup_summary = aggregate_results(backup_results)
+        # 变更前备份（异步）
+        _update_progress({"stage": "pre_change_backup", "total": total_hosts})
 
-        # 检查是否有 OTP 错误
-        if backup_summary.get("otp_required"):
-            task.status = TaskStatus.PAUSED.value
-            task.error_message = "需要重新输入 OTP 验证码"
-            task.result = {
-                "otp_required": True,
-                "otp_dept_id": backup_summary.get("otp_dept_id"),
-                "otp_device_group": backup_summary.get("otp_device_group"),
-                "otp_failed_device_ids": backup_summary.get("otp_failed_device_ids", []),
-            }
-            await db.flush()
-            await db.commit()
-            return {"status": "paused", "otp_required": task.result}
+        backup_results = await run_async_tasks(
+            inventory.hosts,
+            async_collect_config,
+            num_workers=concurrency,
+        )
 
+        # 处理备份结果
         pre_change_backup_ids: dict[str, str] = {}
-        for host_name, result_data in backup_summary.get("results", {}).items():
-            if result_data.get("status") != "success":
+        backup_otp_errors: list[str] = []
+
+        for host_name, multi_result in backup_results.items():
+            if multi_result.failed:
+                exc = multi_result[0].exception if multi_result else None
+                if isinstance(exc, OTPRequiredException):
+                    backup_otp_errors.append(host_name)
                 continue
-            config_content = result_data.get("result")
+
+            result_data = multi_result[0].result if multi_result else None
+            if not result_data or not result_data.get("success"):
+                continue
+
+            config_content = result_data.get("config")
             if config_content and isinstance(config_content, str):
-                # 查找对应设备
                 device = next((d for d in devices if str(d.id) == host_name), None)
                 if device:
                     b = await _save_pre_change_backup(db, device, config_content)
                     pre_change_backup_ids[host_name] = str(b.id)
                     if task.rollback_backup_id is None:
                         task.rollback_backup_id = b.id
-        await db.commit()
 
-        # 异步下发 - 使用 aggregate_results 检测 OTP 错误
-        _update_progress({"stage": "deploying", "total": len(nr.inventory.hosts)})
-        deploy_results = nr.run(task=deploy_from_host_data)
-        deploy_summary = aggregate_results(deploy_results)
-
-        # 检查下发是否有 OTP 错误
-        if deploy_summary.get("otp_required"):
+        # 检查是否有 OTP 错误
+        if backup_otp_errors:
             task.status = TaskStatus.PAUSED.value
             task.error_message = "需要重新输入 OTP 验证码"
             task.result = {
                 "otp_required": True,
-                "otp_dept_id": deploy_summary.get("otp_dept_id"),
-                "otp_device_group": deploy_summary.get("otp_device_group"),
-                "otp_failed_device_ids": deploy_summary.get("otp_failed_device_ids", []),
-                "pre_change_backup_ids": pre_change_backup_ids,
+                "otp_failed_device_ids": backup_otp_errors,
             }
             await db.flush()
             await db.commit()
             return {"status": "paused", "otp_required": task.result}
 
-        # 聚合结果 - 直接使用 aggregate_results 返回的格式化数据
-        all_results: dict[str, Any] = {"results": deploy_summary.get("results", {})}
-        success_count = deploy_summary.get("success", 0)
-        failed_count = deploy_summary.get("failed", 0)
+        await db.commit()
+
+        # 异步下发
+        _update_progress({"stage": "deploying", "total": total_hosts})
+
+        deploy_results = await run_async_tasks(
+            inventory.hosts,
+            async_deploy_from_host_data,
+            num_workers=concurrency,
+        )
+
+        # 处理下发结果
+        deploy_otp_errors: list[str] = []
+        all_results: dict[str, Any] = {"results": {}}
+        success_count = 0
+        failed_count = 0
+
+        for host_name, multi_result in deploy_results.items():
+            if multi_result.failed:
+                exc = multi_result[0].exception if multi_result else None
+                if isinstance(exc, OTPRequiredException):
+                    deploy_otp_errors.append(host_name)
+                all_results["results"][host_name] = {
+                    "status": "failed",
+                    "error": str(exc) if exc else "Unknown error",
+                }
+                failed_count += 1
+                continue
+
+            result_data = multi_result[0].result if multi_result else None
+            if result_data and result_data.get("success"):
+                all_results["results"][host_name] = {
+                    "status": "success",
+                    "result": result_data.get("result"),
+                }
+                success_count += 1
+            else:
+                all_results["results"][host_name] = {
+                    "status": "failed",
+                    "error": result_data.get("error") if result_data else "Unknown error",
+                }
+                failed_count += 1
+
+        # 检查下发是否有 OTP 错误
+        if deploy_otp_errors:
+            task.status = TaskStatus.PAUSED.value
+            task.error_message = "需要重新输入 OTP 验证码"
+            task.result = {
+                "otp_required": True,
+                "otp_failed_device_ids": deploy_otp_errors,
+                "pre_change_backup_ids": pre_change_backup_ids,
+            }
+            await db.flush()
+            await db.commit()
+            return {"status": "paused", "otp_required": task.result}
 
         # 更新任务状态
         task.success_count = success_count

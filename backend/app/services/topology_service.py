@@ -23,8 +23,9 @@ from app.crud.crud_device import CRUDDevice
 from app.crud.crud_topology import CRUDTopology
 from app.models.device import Device
 from app.models.topology import TopologyLink
-from app.network.nornir_config import init_nornir
-from app.network.nornir_tasks import aggregate_results, get_lldp_neighbors
+from app.network.async_runner import run_async_tasks
+from app.network.async_tasks import async_get_lldp_neighbors
+from app.network.nornir_config import init_nornir_async
 from app.schemas.topology import (
     DeviceLLDPResult,
     DeviceNeighborsResponse,
@@ -110,10 +111,16 @@ class TopologyService:
                 hosts_data.append(host_data)
                 device_map[device.ip_address] = device
 
-            # 创建 Nornir 实例并执行采集
-            nr = init_nornir(hosts_data)
-            nornir_results = nr.run(task=get_lldp_neighbors)
-            aggregated = aggregate_results(nornir_results)
+            # 创建异步 Inventory 并执行采集
+            inventory = init_nornir_async(hosts_data)
+            nornir_results = await run_async_tasks(
+                inventory.hosts,
+                async_get_lldp_neighbors,
+                num_workers=min(50, len(hosts_data)),
+            )
+
+            # 转换异步结果为聚合格式
+            aggregated = self._convert_lldp_results(nornir_results)
 
             if aggregated.get("otp_required"):
                 from app.core.exceptions import OTPRequiredException
@@ -195,6 +202,59 @@ class TopologyService:
             "cisco": "cisco_ios",
         }
         return platform_map.get(vendor or "", "cisco_ios")
+
+    def _convert_lldp_results(self, results) -> dict[str, Any]:
+        """
+        将 AsyncRunner 结果转换为兼容格式。
+
+        Args:
+            results: AsyncRunner 返回的 AggregatedResult
+
+        Returns:
+            dict: 兼容原 aggregate_results 格式
+        """
+        from app.core.exceptions import OTPRequiredException
+
+        aggregated: dict[str, Any] = {"results": {}, "success": 0, "failed": 0}
+        otp_required_info: dict[str, Any] | None = None
+
+        for host_name, multi_result in results.items():
+            if multi_result.failed:
+                exc = multi_result[0].exception if multi_result else None
+                if isinstance(exc, OTPRequiredException):
+                    otp_required_info = {
+                        "otp_required": True,
+                        "otp_dept_id": str(exc.dept_id) if exc.dept_id else None,
+                        "otp_device_group": exc.device_group,
+                        "otp_failed_device_ids": [str(d) for d in exc.failed_devices] if exc.failed_devices else [],
+                    }
+                aggregated["results"][host_name] = {
+                    "status": "otp_required" if isinstance(exc, OTPRequiredException) else "failed",
+                    "result": None,
+                    "error": str(exc) if exc else "Unknown error",
+                }
+                aggregated["failed"] += 1
+            else:
+                result_data = multi_result[0].result if multi_result else None
+                if result_data and result_data.get("success"):
+                    aggregated["results"][host_name] = {
+                        "status": "success",
+                        "result": {"raw": result_data.get("raw"), "parsed": result_data.get("parsed")},
+                        "error": None,
+                    }
+                    aggregated["success"] += 1
+                else:
+                    aggregated["results"][host_name] = {
+                        "status": "failed",
+                        "result": None,
+                        "error": result_data.get("error") if result_data else "Unknown error",
+                    }
+                    aggregated["failed"] += 1
+
+        if otp_required_info:
+            aggregated.update(otp_required_info)
+
+        return aggregated
 
     def _parse_lldp_result(self, lldp_data: dict[str, Any]) -> list[dict]:
         """

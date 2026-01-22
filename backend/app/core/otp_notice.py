@@ -61,6 +61,8 @@ def build_otp_required_response(
 ) -> JSONResponse:
     """
     构建 OTP 认证失败的统一响应（HTTP 428）。
+
+    返回格式与 ResponseBase 保持一致。
     """
     if exc is not None and message is None:
         message = exc.message
@@ -69,9 +71,9 @@ def build_otp_required_response(
     resolved_details = details or build_otp_required_details(exc, message=resolved_message)
 
     payload = {
-        "error_code": 428,
+        "code": 428,
         "message": resolved_message,
-        "details": resolved_details,
+        "data": resolved_details,
     }
 
     return JSONResponse(status_code=428, content=jsonable_encoder(payload))

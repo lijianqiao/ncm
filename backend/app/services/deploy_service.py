@@ -23,7 +23,12 @@ from app.crud.crud_task_approval import CRUDTaskApprovalStep
 from app.models.task import Task
 from app.models.task_approval import TaskApprovalStep
 from app.models.template import Template
-from app.schemas.deploy import DeployCreateRequest, DeviceDeployResult
+from app.schemas.deploy import (
+    DeployCreateRequest,
+    DeviceDeployResult,
+    RollbackDevicePreview,
+    RollbackPreviewResponse,
+)
 from app.services.render_service import RenderService
 
 
@@ -490,6 +495,349 @@ class DeployService:
         if not task_with_related:
             raise NotFoundException("任务不存在")
         return task_with_related
+
+    async def validate_rollback(self, task_id: UUID, *, check_otp: bool = True) -> Task:
+        """验证任务是否可以回滚（状态检查 + OTP 预检）。
+
+        只有 SUCCESS、PARTIAL 或 ROLLBACK 状态的任务才能回滚。
+        若存在 otp_manual 设备且 OTP 未缓存，会置为 PAUSED 并返回 otp_required 信息。
+
+        Args:
+            task_id: 任务 ID
+            check_otp: 是否进行 OTP 预检（默认 True）
+
+        Returns:
+            Task: 验证后的任务对象（若 OTP 缺失，result 中包含 otp_required 信息）
+        """
+        from app.core.enums import AuthType
+        from app.core.otp_service import otp_service
+
+        task = await self.get_task(task_id)
+
+        # 状态检查
+        allowed_statuses = {TaskStatus.SUCCESS.value, TaskStatus.PARTIAL.value, TaskStatus.ROLLBACK.value}
+        if task.status not in allowed_statuses:
+            raise BadRequestException(
+                f"任务状态为 {task.status}，无法回滚（仅成功、部分成功或已回滚的任务可回滚）"
+            )
+
+        # 检查是否有变更前备份
+        pre_change_backup_ids: dict = {}
+        if isinstance(task.result, dict):
+            pre_change_backup_ids = task.result.get("pre_change_backup_ids", {}) or {}
+
+        if not pre_change_backup_ids and not task.rollback_backup_id:
+            raise BadRequestException("任务未记录变更前备份，无法回滚")
+
+        # OTP 预检（与 execute_task 相同逻辑）
+        if check_otp:
+            device_ids = self._get_target_device_ids(task)
+            if device_ids:
+                devices = await self.device_crud.get_multi_by_ids(self.db, ids=device_ids)
+
+                otp_required_groups: list[dict] = []
+                for device in devices:
+                    auth_type = AuthType(device.auth_type)
+
+                    if auth_type != AuthType.OTP_MANUAL:
+                        continue
+
+                    if not device.dept_id:
+                        continue
+
+                    credential = await self.credential_crud.get_by_dept_and_group(
+                        self.db, device.dept_id, device.device_group
+                    )
+                    if not credential or not credential.username:
+                        continue
+
+                    cached = await otp_service.get_cached_otp(device.dept_id, device.device_group)
+                    if not cached:
+                        otp_required_groups.append(
+                            {
+                                "dept_id": str(device.dept_id),
+                                "device_group": device.device_group,
+                            }
+                        )
+
+                if otp_required_groups:
+                    # 去重 + 保持顺序
+                    seen: set[tuple[str, str]] = set()
+                    unique_groups: list[dict] = []
+                    for g in otp_required_groups:
+                        key = (g["dept_id"], g["device_group"])
+                        if key in seen:
+                            continue
+                        seen.add(key)
+                        unique_groups.append(g)
+
+                    task.status = TaskStatus.PAUSED.value
+                    task.error_message = f"回滚需要输入 OTP（共 {len(unique_groups)} 个设备分组）"
+                    task.result = {
+                        **(task.result if isinstance(task.result, dict) else {}),
+                        "otp_required": True,
+                        "otp_required_groups": unique_groups,
+                        "expires_in": 60,
+                        "next_action": "cache_otp_and_retry_rollback",
+                    }
+                    await self.db.flush()
+                    await self.db.refresh(task)
+
+        return task
+
+    async def preview_rollback(self, task_id: UUID) -> RollbackPreviewResponse:
+        """回滚预检：连接设备获取当前配置，与变更前备份比对 MD5。
+
+        此方法会：
+        1. 检查 OTP 缓存（otp_manual 设备需要先输入 OTP）
+        2. 连接设备获取当前配置
+        3. 比对 current_md5 与 expected_md5
+        4. 返回准确的回滚预检结果
+
+        若 OTP 未缓存，会将任务状态置为 PAUSED 并返回 otp_required 信息。
+        """
+        import hashlib
+
+        from app.models.backup import Backup
+        from app.network.async_runner import run_async_tasks
+        from app.network.async_tasks import async_collect_config
+        from app.network.nornir_config import init_nornir_async
+        from app.network.platform_config import get_platform_for_vendor
+
+        # 验证任务状态（含 OTP 预检）
+        task = await self.validate_rollback(task_id, check_otp=True)
+
+        # 如果任务被标记为 PAUSED（OTP 需求），直接返回空结果，让 API 层处理
+        if task.result and isinstance(task.result, dict) and task.result.get("otp_required"):
+            return RollbackPreviewResponse(
+                task_id=task_id,
+                task_name=task.name,
+                summary="需要输入 OTP 验证码",
+            )
+
+        # 获取变更前备份信息
+        pre_change_backup_ids: dict = {}
+        if isinstance(task.result, dict):
+            pre_change_backup_ids = task.result.get("pre_change_backup_ids", {}) or {}
+
+        # 获取目标设备列表
+        device_ids = self._get_target_device_ids(task)
+        if not device_ids:
+            return RollbackPreviewResponse(
+                task_id=task_id,
+                task_name=task.name,
+                summary="没有目标设备",
+            )
+
+        devices = await self.device_crud.get_multi_by_ids(self.db, ids=device_ids)
+        device_map = {str(d.id): d for d in devices}
+
+        # 分类设备
+        need_rollback: list[RollbackDevicePreview] = []
+        skip: list[RollbackDevicePreview] = []
+        cannot_rollback: list[RollbackDevicePreview] = []
+
+        # 支持回滚的厂商
+        supported_vendors = {"h3c", "huawei", "cisco"}
+
+        # 第一步：筛选可检测的设备，构建 hosts_data
+        hosts_data: list[dict] = []
+        backup_info: dict[str, dict] = {}  # device_id -> {expected_md5, device}
+
+        for dev_id_str in [str(d) for d in device_ids]:
+            device = device_map.get(dev_id_str)
+            device_name = device.name if device else None
+
+            # 检查是否有变更前备份
+            backup_id = pre_change_backup_ids.get(dev_id_str)
+            if not backup_id:
+                cannot_rollback.append(
+                    RollbackDevicePreview(
+                        device_id=UUID(dev_id_str),
+                        device_name=device_name,
+                        reason="无变更前备份",
+                    )
+                )
+                continue
+
+            # 检查厂商是否支持回滚
+            if device and device.vendor and device.vendor.lower() not in supported_vendors:
+                cannot_rollback.append(
+                    RollbackDevicePreview(
+                        device_id=UUID(dev_id_str),
+                        device_name=device_name,
+                        reason=f"厂商 {device.vendor} 暂不支持回滚",
+                    )
+                )
+                continue
+
+            # 获取变更前备份
+            backup = await self.db.get(Backup, UUID(backup_id))
+            if not backup or not backup.content:
+                cannot_rollback.append(
+                    RollbackDevicePreview(
+                        device_id=UUID(dev_id_str),
+                        device_name=device_name,
+                        reason="变更前备份内容不存在",
+                    )
+                )
+                continue
+
+            # 设备不存在
+            if not device:
+                cannot_rollback.append(
+                    RollbackDevicePreview(
+                        device_id=UUID(dev_id_str),
+                        device_name=device_name,
+                        reason="设备不存在",
+                    )
+                )
+                continue
+
+            expected_md5 = backup.md5_hash or hashlib.md5(backup.content.encode("utf-8")).hexdigest()
+
+            # 获取设备凭据
+            try:
+                cred = await self._get_device_credential_for_preview(device)
+            except Exception as e:
+                cannot_rollback.append(
+                    RollbackDevicePreview(
+                        device_id=UUID(dev_id_str),
+                        device_name=device_name,
+                        reason=f"凭据获取失败: {e}",
+                    )
+                )
+                continue
+
+            backup_info[dev_id_str] = {"expected_md5": expected_md5, "device": device}
+            hosts_data.append({
+                "name": dev_id_str,
+                "hostname": device.ip_address,
+                "platform": device.platform or get_platform_for_vendor(device.vendor),
+                "username": cred.username,
+                "password": cred.password,
+                "port": device.ssh_port or 22,
+                "data": {
+                    "device_id": dev_id_str,
+                    "device_name": device.name,
+                    "auth_type": device.auth_type,
+                    "dept_id": str(device.dept_id) if device.dept_id else None,
+                    "device_group": device.device_group,
+                },
+            })
+
+        # 第二步：连接设备获取当前配置
+        if hosts_data:
+            inventory = init_nornir_async(hosts_data)
+            current_config_results = await run_async_tasks(
+                inventory.hosts,
+                async_collect_config,
+                num_workers=min(20, len(hosts_data)),
+            )
+
+            # 处理结果
+            for dev_id_str, info in backup_info.items():
+                expected_md5 = info["expected_md5"]
+                device = info["device"]
+
+                multi_result = current_config_results.get(dev_id_str)
+                current_md5 = None
+
+                if multi_result and not multi_result.failed:
+                    result_data = multi_result[0].result if multi_result else None
+                    if result_data and result_data.get("success"):
+                        current_config = result_data.get("config", "")
+                        if current_config:
+                            current_md5 = hashlib.md5(current_config.encode("utf-8")).hexdigest()
+
+                # 比对 MD5
+                if current_md5 and current_md5 == expected_md5:
+                    skip.append(
+                        RollbackDevicePreview(
+                            device_id=UUID(dev_id_str),
+                            device_name=device.name,
+                            reason="配置未变化，可跳过",
+                            current_md5=current_md5,
+                            expected_md5=expected_md5,
+                        )
+                    )
+                elif current_md5:
+                    need_rollback.append(
+                        RollbackDevicePreview(
+                            device_id=UUID(dev_id_str),
+                            device_name=device.name,
+                            reason="配置已变更，需要回滚",
+                            current_md5=current_md5,
+                            expected_md5=expected_md5,
+                        )
+                    )
+                else:
+                    # 无法获取当前配置
+                    error_msg = "无法获取当前配置"
+                    if multi_result and multi_result.failed:
+                        exc = multi_result[0].exception if multi_result else None
+                        error_msg = f"获取配置失败: {exc}" if exc else error_msg
+                    cannot_rollback.append(
+                        RollbackDevicePreview(
+                            device_id=UUID(dev_id_str),
+                            device_name=device.name,
+                            reason=error_msg,
+                        )
+                    )
+
+        # 生成摘要
+        summary_parts = []
+        if need_rollback:
+            summary_parts.append(f"{len(need_rollback)} 台需要回滚")
+        if skip:
+            summary_parts.append(f"{len(skip)} 台可跳过")
+        if cannot_rollback:
+            summary_parts.append(f"{len(cannot_rollback)} 台无法回滚")
+        summary = "，".join(summary_parts) if summary_parts else "无设备"
+
+        return RollbackPreviewResponse(
+            task_id=task_id,
+            task_name=task.name,
+            need_rollback=need_rollback,
+            skip=skip,
+            cannot_rollback=cannot_rollback,
+            summary=summary,
+        )
+
+    async def _get_device_credential_for_preview(self, device):
+        """获取设备凭据（用于 preview，使用缓存的 OTP）。"""
+        from app.core.enums import AuthType
+        from app.core.otp_service import otp_service
+
+        auth_type = AuthType(device.auth_type)
+
+        if auth_type == AuthType.STATIC:
+            if not device.username or not device.password_encrypted:
+                raise ValueError("设备缺少用户名或密码配置")
+            return await otp_service.get_credential_for_static_device(device.username, device.password_encrypted)
+
+        if not device.dept_id:
+            raise ValueError("设备缺少部门关联")
+
+        credential = await self.credential_crud.get_by_dept_and_group(self.db, device.dept_id, device.device_group)
+        if not credential:
+            raise ValueError("设备组凭据未配置")
+
+        if auth_type == AuthType.OTP_SEED:
+            if not credential.otp_seed_encrypted:
+                raise ValueError("设备组 OTP 种子未配置")
+            return await otp_service.get_credential_for_otp_seed_device(credential.username, credential.otp_seed_encrypted)
+
+        if auth_type == AuthType.OTP_MANUAL:
+            # detect 时使用已验证过的 OTP（validate_rollback 已检查）
+            return await otp_service.get_credential_for_otp_manual_device(
+                username=credential.username,
+                dept_id=device.dept_id,
+                device_group=device.device_group,
+                failed_devices=[str(device.id)],
+            )
+
+        raise ValueError(f"不支持的认证类型: {auth_type}")
 
     @transactional()
     async def retry_failed_devices(self, task_id: UUID) -> Task:
