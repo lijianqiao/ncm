@@ -171,10 +171,24 @@ class TopologyTaskResponse(BaseModel):
     message: str = Field(default="任务已提交", description="提示信息")
 
 
+class TopologyLinkItem(BaseModel):
+    """拓扑链路列表项（用于分页列表响应）。"""
+
+    id: str = Field(..., description="链路ID")
+    source_device_id: str = Field(..., description="源设备ID")
+    source_interface: str = Field(..., description="源接口")
+    target_device_id: str | None = Field(default=None, description="目标设备ID")
+    target_interface: str | None = Field(default=None, description="目标接口")
+    target_hostname: str | None = Field(default=None, description="目标主机名")
+    target_ip: str | None = Field(default=None, description="目标IP")
+    link_type: str = Field(default="lldp", description="链路类型")
+    collected_at: str | None = Field(default=None, description="采集时间 (ISO 格式)")
+
+
 class TopologyLinksResponse(BaseModel):
     """拓扑链路列表响应。"""
 
-    items: list[dict] = Field(default_factory=list, description="链路列表")
+    items: list[TopologyLinkItem] = Field(default_factory=list, description="链路列表")
     total: int = Field(default=0, description="总数")
     page: int = Field(default=1, description="当前页")
     page_size: int = Field(default=50, description="每页数量")

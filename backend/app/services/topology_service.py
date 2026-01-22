@@ -16,9 +16,9 @@ import redis.asyncio as redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.core.decorator import transactional
 from app.core.enums import DeviceStatus
 from app.core.logger import logger
+from app.crud.crud_credential import CRUDCredential
 from app.crud.crud_device import CRUDDevice
 from app.crud.crud_topology import CRUDTopology
 from app.models.device import Device
@@ -37,23 +37,29 @@ from app.schemas.topology import (
     TopologyResponse,
     TopologyStats,
 )
+from app.services.base import DeviceCredentialMixin
 
 # 拓扑缓存键
 TOPOLOGY_CACHE_KEY = "ncm:topology:data"
 
 
-class TopologyService:
+class TopologyService(DeviceCredentialMixin):
     """网络拓扑服务类。"""
 
     def __init__(
         self,
         topology_crud: CRUDTopology,
         device_crud: CRUDDevice,
+        credential_crud: CRUDCredential,
         redis_client: redis.Redis | None = None,
     ):
         self.topology_crud = topology_crud
         self.device_crud = device_crud
+        self.credential_crud = credential_crud
         self._redis = redis_client
+        # db 会在方法调用时临时设置，用于 DeviceCredentialMixin
+        # 类型声明与 Mixin 保持一致，实际在 collect_lldp_all 中赋值
+        self.db: AsyncSession = None  # type: ignore[assignment]
 
     async def collect_lldp_all(
         self,
@@ -70,6 +76,11 @@ class TopologyService:
         Returns:
             TopologyCollectResult: 采集结果
         """
+        from app.core.exceptions import OTPRequiredException
+
+        # 设置 db 以便 DeviceCredentialMixin 可以使用
+        self.db = db
+
         started_at = datetime.now()
         result = TopologyCollectResult(
             started_at=started_at,
@@ -92,24 +103,51 @@ class TopologyService:
                 result.completed_at = datetime.now()
                 return result
 
-            # 构建 Nornir 主机数据
+            # 构建 Nornir 主机数据，包含凭据获取
             hosts_data = []
             device_map: dict[str, Device] = {}
+            failed_device_ids: list[str] = []
 
             for device in devices:
                 if not device.ip_address:
                     continue
 
-                host_data = {
-                    "name": device.name,
-                    "hostname": device.ip_address,
-                    "port": device.ssh_port or 22,
-                    "username": device.username or "",
-                    "password": "",  # 密码需要通过凭据服务获取
-                    "platform": self._get_platform(device.vendor),
-                }
-                hosts_data.append(host_data)
-                device_map[device.ip_address] = device
+                try:
+                    # 通过 DeviceCredentialMixin 获取凭据
+                    credential = await self._get_device_credential(device, failed_devices=failed_device_ids)
+
+                    host_data = {
+                        "name": device.name,
+                        "hostname": device.ip_address,
+                        "port": device.ssh_port or 22,
+                        "username": credential.username,
+                        "password": credential.password,
+                        "platform": self._get_platform(device.vendor),
+                    }
+                    hosts_data.append(host_data)
+                    device_map[device.ip_address] = device
+
+                except OTPRequiredException:
+                    # OTP 手动认证需要用户输入，直接抛出
+                    raise
+                except Exception as e:
+                    # 其他凭据错误，记录并跳过该设备
+                    logger.warning("获取设备凭据失败", device=device.name, error=str(e))
+                    failed_device_ids.append(str(device.id))
+                    result.failed_count += 1
+                    result.results.append(
+                        DeviceLLDPResult(
+                            device_id=device.id,
+                            device_name=device.name,
+                            success=False,
+                            error=f"凭据获取失败: {e}",
+                        )
+                    )
+
+            if not hosts_data:
+                logger.warning("没有可采集的设备（所有设备凭据获取失败）")
+                result.completed_at = datetime.now()
+                return result
 
             # 创建异步 Inventory 并执行采集
             inventory = init_nornir_async(hosts_data)
@@ -123,8 +161,6 @@ class TopologyService:
             aggregated = self._convert_lldp_results(nornir_results)
 
             if aggregated.get("otp_required"):
-                from app.core.exceptions import OTPRequiredException
-
                 dept_id_str = aggregated.get("otp_dept_id")
                 device_group = aggregated.get("otp_device_group")
 
@@ -171,16 +207,16 @@ class TopologyService:
             result.total_links = total_links
             result.completed_at = datetime.now()
 
+            # 提交数据库更改
+            await db.commit()
+
             # 清除拓扑缓存
             await self._invalidate_cache()
 
+        except OTPRequiredException:
+            # OTP 异常直接抛出，让任务失败并被 API 捕获
+            raise
         except Exception as e:
-            # 如果是 OTP 异常，直接抛出，让任务失败并被 API 捕获
-            from app.core.exceptions import OTPRequiredException
-
-            if isinstance(e, OTPRequiredException):
-                raise
-
             logger.error("LLDP 采集失败", error=str(e))
             result.completed_at = datetime.now()
 
@@ -287,7 +323,6 @@ class TopologyService:
 
         return neighbors
 
-    @transactional()
     async def _save_device_topology(
         self,
         db: AsyncSession,
@@ -296,6 +331,8 @@ class TopologyService:
     ) -> int:
         """
         保存设备拓扑链路。
+
+        注意：不使用 @transactional() 装饰器，由调用方统一管理事务。
 
         Args:
             db: 数据库会话
@@ -501,9 +538,19 @@ class TopologyService:
 
         links = await self.topology_crud.get_device_neighbors(db, device_id=device_id)
 
+        # 批量预加载目标设备信息，避免 N+1 查询
+        target_ids = [link.target_device_id for link in links if link.target_device_id]
+        target_devices = await self.device_crud.get_multi_by_ids(db, ids=target_ids) if target_ids else []
+        target_map: dict[UUID, Device] = {d.id: d for d in target_devices}
+
         # 转换为响应格式
         neighbors: list[TopologyLinkResponse] = []
         for link in links:
+            # 从预加载的映射中获取目标设备名称
+            target_device_name = None
+            if link.target_device_id and link.target_device_id in target_map:
+                target_device_name = target_map[link.target_device_id].name
+
             response = TopologyLinkResponse(
                 id=link.id,
                 source_device_id=link.source_device_id,
@@ -522,14 +569,8 @@ class TopologyService:
                 updated_at=link.updated_at,
                 source_device_name=device.name,
                 source_device_ip=device.ip_address,
+                target_device_name=target_device_name,
             )
-
-            # 获取目标设备名称
-            if link.target_device_id:
-                target_device = await self.device_crud.get(db, id=link.target_device_id)
-                if target_device:
-                    response.target_device_name = target_device.name
-
             neighbors.append(response)
 
         return DeviceNeighborsResponse(
@@ -576,6 +617,52 @@ class TopologyService:
             "edges": [e.model_dump(by_alias=True) for e in topology.edges],
             "stats": topology.stats.model_dump(),
         }
+
+    # ===== OTP 预检查 =====
+
+    async def pre_check_otp_credentials(
+        self,
+        db: AsyncSession,
+        device_ids: list[UUID] | None = None,
+    ) -> None:
+        """
+        预检查设备凭据，确保 OTP 手动认证设备的凭据已就绪。
+
+        此方法在提交 Celery 任务前调用，如果有 OTP 手动认证设备且
+        缓存中没有有效的 OTP，会抛出 OTPRequiredException。
+
+        Args:
+            db: 数据库会话
+            device_ids: 指定设备ID列表 (为空则检查所有活跃设备)
+
+        Raises:
+            OTPRequiredException: 需要用户输入 OTP 验证码
+        """
+        from app.core.enums import AuthType
+
+        self.db = db
+
+        # 获取待采集设备
+        if device_ids:
+            devices = await self.device_crud.get_multi_by_ids(db, ids=device_ids)
+        else:
+            devices, _ = await self.device_crud.get_multi_paginated(
+                db, page=1, page_size=10000, status=DeviceStatus.ACTIVE
+            )
+
+        # 只检查 OTP 手动认证的设备
+        otp_manual_devices = [d for d in devices if d.auth_type == AuthType.OTP_MANUAL.value]
+
+        if not otp_manual_devices:
+            # 没有 OTP 手动认证的设备，无需预检查
+            return
+
+        # 尝试获取第一个 OTP 手动设备的凭据
+        # 如果缓存中没有有效的 OTP，会抛出 OTPRequiredException
+        for device in otp_manual_devices:
+            await self._get_device_credential(device)
+            # 只需要检查一个设备即可，因为同部门同分组的设备共用 OTP
+            break
 
     # ===== 缓存方法 =====
 

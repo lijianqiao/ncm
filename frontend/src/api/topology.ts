@@ -15,28 +15,47 @@ import type { ResponseBase } from '@/types/api'
 export interface TopologyNode {
   id: string
   label: string
-  device_id: string | null
-  device_type: string | null
-  ip_address: string | null
-  vendor: string | null
-  status: string | null
+  title?: string
+  group?: 'core' | 'distribution' | 'access' | 'unknown'
+  shape: string
+  size: number
+  color?: string
+  ip?: string
+  vendor?: string
+  device_group?: string
+  in_cmdb: boolean
+  // 兼容旧字段以防万一
+  device_id?: string | null
+  device_type?: string | null
+  ip_address?: string | null
+  status?: string | null
 }
 
 /** 拓扑边 */
 export interface TopologyEdge {
-  id: string
+  id?: string
   from: string
   to: string
-  local_port: string | null
-  remote_port: string | null
-  link_type: string | null
+  label?: string
+  title?: string
+  arrows: string
+  source_interface?: string
+  target_interface?: string
+  link_type?: string
+  // 兼容旧字段
+  local_port?: string | null
+  remote_port?: string | null
 }
 
 /** 拓扑统计 */
 export interface TopologyStats {
   total_nodes: number
   total_edges: number
-  device_types: Record<string, number>
+  cmdb_devices: number
+  unknown_devices: number
+  collected_at?: string
+  cache_expires_at?: string
+  device_types?: Record<string, number>
 }
 
 /** 拓扑响应 */

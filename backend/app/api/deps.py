@@ -531,10 +531,15 @@ def get_template_service(
     return TemplateService(db, template_crud, template_approval_crud, template_parameter_crud)
 
 
-def get_topology_service(topology_crud: TopologyCRUDDep, device_crud: DeviceCRUDDep) -> TopologyService:
+def get_topology_service(
+    topology_crud: TopologyCRUDDep,
+    device_crud: DeviceCRUDDep,
+    credential_crud: CredentialCRUDDep,
+) -> TopologyService:
     return TopologyService(
         topology_crud=topology_crud,
         device_crud=device_crud,
+        credential_crud=credential_crud,
         redis_client=cache_module.redis_client,
     )
 

@@ -16,9 +16,20 @@ from app.celery.base import BaseTask, run_async
 from app.core import cache as cache_module
 from app.core.db import AsyncSessionLocal
 from app.core.logger import logger
+from app.crud.crud_credential import credential as credential_crud
 from app.crud.crud_device import device as device_crud
 from app.crud.crud_topology import topology_crud
 from app.services.topology_service import TopologyService
+
+
+def _create_topology_service() -> TopologyService:
+    """创建 TopologyService 实例的工厂函数。"""
+    return TopologyService(
+        topology_crud=topology_crud,
+        device_crud=device_crud,
+        credential_crud=credential_crud,
+        redis_client=cache_module.redis_client,
+    )
 
 
 @celery_app.task(
@@ -43,11 +54,7 @@ def collect_topology(
 
     async def _collect():
         async with AsyncSessionLocal() as db:
-            topology_service = TopologyService(
-                topology_crud=topology_crud,
-                device_crud=device_crud,
-                redis_client=cache_module.redis_client,
-            )
+            topology_service = _create_topology_service()
 
             # 转换设备ID
             uuids = [UUID(did) for did in device_ids] if device_ids else None
@@ -89,11 +96,7 @@ def collect_device_topology(self, device_id: str) -> dict[str, Any]:
 
     async def _collect_single():
         async with AsyncSessionLocal() as db:
-            topology_service = TopologyService(
-                topology_crud=topology_crud,
-                device_crud=device_crud,
-                redis_client=cache_module.redis_client,
-            )
+            topology_service = _create_topology_service()
 
             result = await topology_service.collect_lldp_all(db, device_ids=[UUID(device_id)])
             result.task_id = self.request.id
@@ -125,17 +128,15 @@ def scheduled_topology_refresh(self) -> dict[str, Any]:
 
     采集所有活跃设备的 LLDP 信息并更新拓扑数据。
 
+    注意：OTP 手动认证的设备在定时任务中会被跳过。
+
     Returns:
         刷新结果
     """
 
     async def _refresh():
         async with AsyncSessionLocal() as db:
-            topology_service = TopologyService(
-                topology_crud=topology_crud,
-                device_crud=device_crud,
-                redis_client=cache_module.redis_client,
-            )
+            topology_service = _create_topology_service()
 
             # 采集所有设备
             result = await topology_service.collect_lldp_all(db)
@@ -173,11 +174,7 @@ def build_topology_cache(self) -> dict[str, Any]:
 
     async def _build_cache():
         async with AsyncSessionLocal() as db:
-            topology_service = TopologyService(
-                topology_crud=topology_crud,
-                device_crud=device_crud,
-                redis_client=cache_module.redis_client,
-            )
+            topology_service = _create_topology_service()
 
             topology = await topology_service.build_topology(db)
 

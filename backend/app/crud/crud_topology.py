@@ -84,29 +84,6 @@ class CRUDTopology(CRUDBase[TopologyLink, TopologyLinkCreate, TopologyLinkRespon
         result = await db.execute(query)
         return result.scalars().first()
 
-    async def upsert_link(
-        self,
-        db: AsyncSession,
-        *,
-        data: TopologyLinkCreate,
-    ) -> TopologyLink:
-        """
-        创建或更新拓扑链路 (根据源设备+接口去重)。
-
-        Args:
-            db: 数据库会话
-            data: 链路数据
-
-        Returns:
-            TopologyLink 记录
-        """
-        await self.upsert_many(db, links_data=[data])
-        return await self.get_by_source_interface(
-            db,
-            source_device_id=data.source_device_id,
-            source_interface=data.source_interface,
-        )  # type: ignore[return-value]
-
     async def get_device_neighbors(self, db: AsyncSession, *, device_id: UUID) -> list[TopologyLink]:
         """
         获取设备的所有邻居链路。
@@ -196,28 +173,6 @@ class CRUDTopology(CRUDBase[TopologyLink, TopologyLinkCreate, TopologyLinkRespon
             )
             await db.flush()
             return int(getattr(result, "rowcount", 0) or 0)
-
-    async def batch_create_links(
-        self,
-        db: AsyncSession,
-        *,
-        links_data: list[TopologyLinkCreate],
-    ) -> list[TopologyLink]:
-        """
-        批量创建拓扑链路。
-
-        Args:
-            db: 数据库会话
-            links_data: 链路数据列表
-
-        Returns:
-            创建的 TopologyLink 列表
-        """
-        await self.upsert_many(db, links_data=links_data)
-        if not links_data:
-            return []
-        source_device_id = links_data[0].source_device_id
-        return await self.get_device_neighbors(db, device_id=source_device_id)
 
     async def refresh_device_topology(
         self,

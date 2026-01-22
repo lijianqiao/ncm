@@ -32,6 +32,7 @@ from app.schemas.topology import (
     DeviceNeighborsResponse,
     TopologyCollectRequest,
     TopologyCollectResult,
+    TopologyLinkItem,
     TopologyLinksResponse,
     TopologyResponse,
     TopologyTaskResponse,
@@ -93,17 +94,17 @@ async def list_topology_links(
     links, total = await topology_service.get_all_links(db, page=page, page_size=page_size)
 
     items = [
-        {
-            "id": str(link.id),
-            "source_device_id": str(link.source_device_id),
-            "source_interface": link.source_interface,
-            "target_device_id": str(link.target_device_id) if link.target_device_id else None,
-            "target_interface": link.target_interface,
-            "target_hostname": link.target_hostname,
-            "target_ip": link.target_ip,
-            "link_type": link.link_type,
-            "collected_at": link.collected_at.isoformat() if link.collected_at else None,
-        }
+        TopologyLinkItem(
+            id=str(link.id),
+            source_device_id=str(link.source_device_id),
+            source_interface=link.source_interface,
+            target_device_id=str(link.target_device_id) if link.target_device_id else None,
+            target_interface=link.target_interface,
+            target_hostname=link.target_hostname,
+            target_ip=link.target_ip,
+            link_type=link.link_type,
+            collected_at=link.collected_at.isoformat() if link.collected_at else None,
+        )
         for link in links
     ]
 
@@ -182,17 +183,32 @@ async def export_topology(
 async def refresh_topology(
     request: TopologyCollectRequest,
     current_user: CurrentUser,
+    db: SessionDep,
+    topology_service: TopologyServiceDep,
 ) -> ResponseBase[TopologyTaskResponse]:
     """触发全局或指定范围的拓扑发现任务。
+
+    在提交异步任务前，会预检查 OTP 手动认证设备的凭据。
+    如果需要用户输入 OTP，会返回 428 响应。
 
     Args:
         request (TopologyCollectRequest): 采集请求参数，包括指定设备列表和是否异步。
         current_user (User): 当前操作用户。
+        db (Session): 数据库会话。
+        topology_service (TopologyService): 拓扑服务依赖。
 
     Returns:
         ResponseBase[TopologyTaskResponse]: 任务 ID 或同步执行结果。
+
+    Raises:
+        OTPRequiredException: 需要用户输入 OTP 验证码时返回 428。
     """
     device_ids = [str(d) for d in request.device_ids] if request.device_ids else None
+    device_uuids = request.device_ids  # 保留 UUID 格式用于预检查
+
+    # 预检查 OTP 手动认证设备的凭据
+    # 如果缓存中没有有效的 OTP，会抛出 OTPRequiredException (428)
+    await topology_service.pre_check_otp_credentials(db, device_ids=device_uuids)
 
     if request.async_mode:
         task = cast(Any, collect_topology).delay(device_ids=device_ids)
@@ -224,18 +240,31 @@ async def refresh_topology(
 async def collect_single_device_topology(
     device_id: UUID,
     current_user: CurrentUser,
+    db: SessionDep,
+    topology_service: TopologyServiceDep,
     async_mode: bool = Query(True),
 ) -> ResponseBase[TopologyTaskResponse]:
     """针对单个特定设备执行 LLDP 邻居采集。
 
+    在提交异步任务前，会预检查 OTP 手动认证设备的凭据。
+    如果需要用户输入 OTP，会返回 428 响应。
+
     Args:
         device_id (UUID): 设备 ID。
         current_user (User): 当前用户。
+        db (Session): 数据库会话。
+        topology_service (TopologyService): 拓扑服务依赖。
         async_mode (bool): 是否异步模式。
 
     Returns:
         ResponseBase[TopologyTaskResponse]: 任务 ID 或执行信息。
+
+    Raises:
+        OTPRequiredException: 需要用户输入 OTP 验证码时返回 428。
     """
+    # 预检查 OTP 手动认证设备的凭据
+    await topology_service.pre_check_otp_credentials(db, device_ids=[device_id])
+
     if async_mode:
         task = cast(Any, collect_device_topology).delay(device_id=str(device_id))
         return ResponseBase(
@@ -262,7 +291,7 @@ async def collect_single_device_topology(
     response_model=ResponseBase[TopologyTaskStatus],
     dependencies=[Depends(require_permissions([PermissionCode.TOPOLOGY_VIEW.value]))],
 )
-async def get_topology_task_status(task_id: str) -> ResponseBase[TopologyTaskStatus] | JSONResponse:
+async def get_topology_task_status(task_id: str) -> ResponseBase[TopologyTaskStatus]:
     """查询拓扑采集后台任务的执行实时状态。
 
     Args:
@@ -270,7 +299,13 @@ async def get_topology_task_status(task_id: str) -> ResponseBase[TopologyTaskSta
 
     Returns:
         ResponseBase[TopologyTaskStatus]: 任务状态和（如有）结果数据。
+
+    Raises:
+        CustomException: OTP 认证失败时返回 428 状态码。
     """
+    from app.core.exceptions import CustomException
+    from app.core.otp_notice import is_otp_error_text
+
     result = AsyncResult(task_id)
 
     status = TopologyTaskStatus(
@@ -284,10 +319,10 @@ async def get_topology_task_status(task_id: str) -> ResponseBase[TopologyTaskSta
             status.result = TopologyCollectResult.model_validate(task_result)
         else:
             status.error = str(result.result)
-            from app.core.otp_notice import build_otp_required_response, is_otp_error_text
-
+            # OTP 认证失败时抛出异常，由全局异常处理器返回 428 响应
             if is_otp_error_text(status.error):
-                return build_otp_required_response(
+                raise CustomException(
+                    code=428,
                     message=status.error,
                     details={"otp_required": True},
                 )

@@ -12,6 +12,7 @@ import {
   NProgress,
   NAlert,
   useDialog,
+  NButtonGroup,
 } from 'naive-ui'
 import { $alert } from '@/utils/alert'
 import {
@@ -23,8 +24,10 @@ import {
   type TopologyResponse,
   type TopologyLinkItem,
   type TopologyTaskStatus,
+  type TopologyNode,
 } from '@/api/topology'
 import { useTaskPolling } from '@/composables'
+import { formatDateTime } from '@/utils/date'
 
 defineOptions({
   name: 'TopologyManagement',
@@ -55,6 +58,23 @@ const fetchTopology = async () => {
   }
 }
 
+const layoutMode = ref<'force' | 'hierarchical'>('force')
+
+const getNodeGroupOptions = (group?: string) => {
+  switch (group) {
+    case 'core':
+      return { shape: 'diamond', color: '#e74c3c' }
+    case 'distribution':
+      return { shape: 'square', color: '#f39c12' }
+    case 'access':
+      return { shape: 'dot', color: '#3498db' }
+    case 'unknown':
+      return { shape: 'triangle', color: '#999999' }
+    default:
+      return { shape: 'dot', color: '#909399' }
+  }
+}
+
 const renderNetwork = async () => {
   if (!topologyData.value || !networkContainer.value || isUnmounted) return
 
@@ -66,13 +86,17 @@ const renderNetwork = async () => {
     if (isUnmounted || !networkContainer.value) return
 
     const nodes = new DataSet(
-      topologyData.value.nodes.map((node) => ({
-        id: node.id,
-        label: node.label,
-        title: `IP: ${node.ip_address || 'N/A'}\n厂商: ${node.vendor || 'N/A'}\n状态: ${node.status || 'N/A'}`,
-        shape: getNodeShape(node.device_type),
-        color: getNodeColor(node.status),
-      })),
+      topologyData.value.nodes.map((node) => {
+        const style = getNodeGroupOptions(node.group)
+        return {
+          id: node.id,
+          label: node.label,
+          title: node.title || `IP: ${node.ip || node.ip_address || 'N/A'}\n厂商: ${node.vendor || 'N/A'}`,
+          shape: style.shape,
+          color: style.color,
+          size: node.size || 20,
+        }
+      }),
     )
 
     const edges = new DataSet(
@@ -80,16 +104,15 @@ const renderNetwork = async () => {
         id: edge.id,
         from: edge.from,
         to: edge.to,
-        title: `${edge.local_port || ''} <-> ${edge.remote_port || ''}`,
-        arrows: 'to,from',
-        // vis-network 类型要求包含 enabled/roundness，避免 vue-tsc 报错
+        title: edge.title || `${edge.source_interface || edge.local_port || '?'} <-> ${edge.target_interface || edge.remote_port || '?'}`,
+        arrows: edge.arrows || 'to,from',
         smooth: { enabled: true, type: 'continuous', roundness: 0.3 },
       })),
     )
 
     const options = {
       nodes: {
-        font: { size: 14 },
+        font: { size: 14, color: '#333' },
         borderWidth: 2,
       },
       edges: {
@@ -97,7 +120,7 @@ const renderNetwork = async () => {
         color: { color: '#848484', highlight: '#2B7CE9' },
       },
       physics: {
-        enabled: true,
+        enabled: layoutMode.value === 'force',
         solver: 'forceAtlas2Based',
         forceAtlas2Based: {
           gravitationalConstant: -50,
@@ -108,6 +131,18 @@ const renderNetwork = async () => {
         stabilization: {
           iterations: 100,
         },
+      },
+      layout: {
+        hierarchical:
+          layoutMode.value === 'hierarchical'
+            ? {
+              enabled: true,
+              direction: 'UD',
+              sortMethod: 'directed',
+              nodeSpacing: 150,
+              levelSpacing: 150,
+            }
+            : { enabled: false },
       },
       interaction: {
         hover: true,
@@ -139,32 +174,10 @@ const renderNetwork = async () => {
   }
 }
 
-const getNodeShape = (deviceType: string | null): string => {
-  switch (deviceType) {
-    case 'router':
-      return 'diamond'
-    case 'switch':
-      return 'box'
-    case 'firewall':
-      return 'triangle'
-    case 'server':
-      return 'database'
-    default:
-      return 'dot'
-  }
-}
-
-const getNodeColor = (status: string | null): string => {
-  switch (status) {
-    case 'active':
-      return '#18a058'
-    case 'maintenance':
-      return '#f0a020'
-    case 'offline':
-      return '#d03050'
-    default:
-      return '#909399'
-  }
+const toggleLayout = (mode: 'force' | 'hierarchical') => {
+  if (layoutMode.value === mode) return
+  layoutMode.value = mode
+  renderNetwork() // 重新渲染以应用布局变化
 }
 
 onMounted(() => {
@@ -182,8 +195,15 @@ onUnmounted(() => {
 // ==================== 节点详情 ====================
 
 const showNodeDetail = ref(false)
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const selectedNode = ref<any>(null)
+const selectedNode = ref<TopologyNode | null>(null)
+
+// ==================== 图例数据 ====================
+const legendItems = [
+  { label: '核心层', color: '#e74c3c', shape: 'diamond' },
+  { label: '汇聚层', color: '#f39c12', shape: 'square' },
+  { label: '接入层', color: '#3498db', shape: 'dot' },
+  { label: '未知设备', color: '#999999', shape: 'triangle' },
+]
 
 // ==================== 链路列表 ====================
 
@@ -300,28 +320,40 @@ const handleFitView = () => {
   <div class="topology-management">
     <!-- 统计卡片 -->
     <n-card class="stats-card" :bordered="false" size="small">
-      <n-grid :cols="4" :x-gap="16">
+      <n-grid :cols="5" :x-gap="16">
         <n-grid-item>
-          <n-statistic label="节点数" :value="topologyData?.stats?.total_nodes || 0" />
+          <n-statistic label="节点总数" :value="topologyData?.stats?.total_nodes || 0" />
         </n-grid-item>
         <n-grid-item>
-          <n-statistic label="链路数" :value="topologyData?.stats?.total_edges || 0" />
+          <n-statistic label="链路总数" :value="topologyData?.stats?.total_edges || 0" />
         </n-grid-item>
         <n-grid-item>
-          <n-statistic label="设备类型">
-            <template #default>
-              {{ Object.keys(topologyData?.stats?.device_types || {}).length }} 种
+          <n-statistic label="CMDB 已录入" :value="topologyData?.stats?.cmdb_devices || 0">
+            <template #suffix>
+              <span style="font-size: 12px; color: #18a058">已纳管</span>
             </template>
           </n-statistic>
         </n-grid-item>
         <n-grid-item>
-          <n-space>
-            <n-button type="primary" @click="handleRefreshTopology" :loading="loading">
-              刷新拓扑
-            </n-button>
-            <n-button @click="handleShowLinks">链路列表</n-button>
-            <n-button @click="handleExport">导出</n-button>
-            <n-button @click="handleRebuildCache">重建缓存</n-button>
+          <n-statistic label="未知设备" :value="topologyData?.stats?.unknown_devices || 0">
+            <template #suffix>
+              <span style="font-size: 12px; color: #d03050">未纳管</span>
+            </template>
+          </n-statistic>
+        </n-grid-item>
+        <n-grid-item>
+          <n-space vertical align="end">
+            <n-space>
+              <n-button type="primary" @click="handleRefreshTopology" :loading="loading">
+                刷新拓扑
+              </n-button>
+              <n-button @click="handleShowLinks">链路列表</n-button>
+              <n-button @click="handleExport">导出</n-button>
+              <n-button @click="handleRebuildCache">重建缓存</n-button>
+            </n-space>
+            <div v-if="topologyData?.stats?.collected_at" style="font-size: 12px; color: #999">
+              采集时间: {{ formatDateTime(topologyData.stats.collected_at) }}
+            </div>
           </n-space>
         </n-grid-item>
       </n-grid>
@@ -333,13 +365,31 @@ const handleFitView = () => {
         <n-space justify="space-between" align="center">
           <span>网络拓扑图</span>
           <n-space>
+            <n-button-group size="small">
+              <n-button :type="layoutMode === 'force' ? 'primary' : 'default'" @click="toggleLayout('force')">
+                力导向布局
+              </n-button>
+              <n-button :type="layoutMode === 'hierarchical' ? 'primary' : 'default'"
+                @click="toggleLayout('hierarchical')">
+                分层布局
+              </n-button>
+            </n-button-group>
             <n-button size="small" @click="handleFitView">适应视图</n-button>
             <n-button size="small" @click="fetchTopology" :loading="loading">刷新</n-button>
           </n-space>
         </n-space>
       </template>
       <div v-if="loading" class="loading-container">加载中...</div>
-      <div v-else ref="networkContainer" class="network-container"></div>
+      <div v-else ref="networkContainer" class="network-container">
+        <!-- 图例覆盖层 -->
+        <div class="legend-overlay">
+          <div v-for="item in legendItems" :key="item.label" class="legend-item">
+            <span class="legend-icon"
+              :style="{ backgroundColor: item.color, borderRadius: item.shape === 'dot' ? '50%' : '0' }"></span>
+            <span class="legend-label">{{ item.label }}</span>
+          </div>
+        </div>
+      </div>
     </n-card>
 
     <!-- 节点详情 Modal -->
@@ -467,6 +517,34 @@ const handleFitView = () => {
   min-height: 500px;
   border: 1px solid var(--n-border-color);
   border-radius: 4px;
+  position: relative;
+}
+
+.legend-overlay {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  background: rgba(255, 255, 255, 0.9);
+  padding: 10px;
+  border-radius: 4px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.legend-icon {
+  width: 12px;
+  height: 12px;
+  display: inline-block;
 }
 
 .loading-container {
