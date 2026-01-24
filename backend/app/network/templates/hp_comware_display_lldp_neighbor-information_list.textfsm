@@ -1,13 +1,28 @@
+# H3C Comware LLDP Neighbor List Template
+# 命令: display lldp neighbor-information list
+#
+# 实际输出:
+# Chassis ID : * -- -- Nearest nontpmr bridge neighbor
+#              # -- -- Nearest customer bridge neighbor
+#              Default -- -- Nearest bridge neighbor
+# Local Interface Chassis ID      Port ID                    System Name
+# GE1/0/4         1c1b-0d56-e8f4  1c1b-0d56-e8f4             -
+# GE1/0/23        9c06-1ca6-3205  GigabitEthernet1/0/45      ECNCD-Acc-OF2-HC513-01-210.28
+
 Value LOCAL_INTERFACE (\S+)
-Value NEIGHBOR_DEVICE (\S+)
-Value NEIGHBOR_INTERFACE (\S+)
-Value HOLD_TIME (\d+)
+Value CHASSIS_ID (\S+-\S+-\S+)
+Value NEIGHBOR_PORT_ID (\S+)
+Value NEIGHBOR_NAME (.*)
 
 Start
-  # 跳过表头行
-  ^Local\s+Intf -> Continue
+  # 跳过所有注释和表头行
+  ^Chassis\s+ID -> Continue
+  ^\s+[\*#] -> Continue
+  ^\s+Default -> Continue
+  ^Local\s+Interface -> Continue
   ^-+ -> Continue
-  # 匹配数据行: GE1/0/1  H3C-Dist1  GigabitEthernet1/0/24  120
-  ^${LOCAL_INTERFACE}\s+${NEIGHBOR_DEVICE}\s+${NEIGHBOR_INTERFACE}\s+${HOLD_TIME}\s*$$ -> Record
+  ^\s*$$ -> Continue
+  # 匹配数据行: 接口名  MAC(xxxx-xxxx-xxxx)  端口ID  系统名称
+  ^${LOCAL_INTERFACE}\s+${CHASSIS_ID}\s+${NEIGHBOR_PORT_ID}\s+${NEIGHBOR_NAME}\s*$$ -> Record
 
 EOF

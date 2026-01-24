@@ -40,6 +40,8 @@ const dialog = useDialog()
 const topologyData = ref<TopologyResponse | null>(null)
 const loading = ref(false)
 const networkContainer = ref<HTMLDivElement | null>(null)
+const networkContainerHeight = ref('600px')
+const isFullscreen = ref(false)
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let networkInstance: any = null
 let isUnmounted = false // 防止异步导入完成后组件已卸载
@@ -49,13 +51,13 @@ const fetchTopology = async () => {
   try {
     const res = await getTopology()
     topologyData.value = res.data
-    await nextTick()
-    renderNetwork()
   } catch {
     // Error handled
   } finally {
     loading.value = false
   }
+  await nextTick()
+  renderNetwork()
 }
 
 const layoutMode = ref<'force' | 'hierarchical'>('force')
@@ -73,6 +75,24 @@ const getNodeGroupOptions = (group?: string) => {
     default:
       return { shape: 'dot', color: '#909399' }
   }
+}
+
+const updateNetworkContainerHeight = () => {
+  if (!networkContainer.value) return
+  const viewportHeight = window.innerHeight
+  const isElementFullscreen = document.fullscreenElement === networkContainer.value
+  const rect = networkContainer.value.getBoundingClientRect()
+  const next = Math.max(520, isElementFullscreen ? viewportHeight : viewportHeight - rect.top - 24)
+  networkContainerHeight.value = `${Math.floor(next)}px`
+  if (networkInstance?.setSize) {
+    networkInstance.setSize('100%', networkContainerHeight.value)
+  }
+}
+
+const handleFullscreenChange = () => {
+  isFullscreen.value = document.fullscreenElement === networkContainer.value
+  updateNetworkContainerHeight()
+  networkInstance?.fit()
 }
 
 const renderNetwork = async () => {
@@ -157,6 +177,8 @@ const renderNetwork = async () => {
     }
 
     networkInstance = new Network(networkContainer.value, { nodes, edges }, options)
+    updateNetworkContainerHeight()
+    networkInstance.fit()
 
     networkInstance.on('click', (params: { nodes: Array<string | number> }) => {
       if (params.nodes.length > 0) {
@@ -182,6 +204,9 @@ const toggleLayout = (mode: 'force' | 'hierarchical') => {
 
 onMounted(() => {
   fetchTopology()
+  window.addEventListener('resize', updateNetworkContainerHeight)
+  document.addEventListener('fullscreenchange', handleFullscreenChange)
+  nextTick(() => updateNetworkContainerHeight())
 })
 
 onUnmounted(() => {
@@ -190,6 +215,8 @@ onUnmounted(() => {
     networkInstance.destroy()
     networkInstance = null
   }
+  window.removeEventListener('resize', updateNetworkContainerHeight)
+  document.removeEventListener('fullscreenchange', handleFullscreenChange)
 })
 
 // ==================== 节点详情 ====================
@@ -314,6 +341,15 @@ const handleFitView = () => {
     networkInstance.fit()
   }
 }
+
+const handleToggleFullscreen = async () => {
+  if (!networkContainer.value) return
+  if (document.fullscreenElement === networkContainer.value) {
+    await document.exitFullscreen()
+    return
+  }
+  await networkContainer.value.requestFullscreen()
+}
 </script>
 
 <template>
@@ -376,12 +412,15 @@ const handleFitView = () => {
             </n-button-group>
             <n-button size="small" @click="handleFitView">适应视图</n-button>
             <n-button size="small" @click="fetchTopology" :loading="loading">刷新</n-button>
+            <n-button size="small" @click="handleToggleFullscreen">
+              {{ isFullscreen ? '退出全屏' : '全屏' }}
+            </n-button>
           </n-space>
         </n-space>
       </template>
-      <div v-if="loading" class="loading-container">加载中...</div>
-      <div v-else ref="networkContainer" class="network-container">
-        <!-- 图例覆盖层 -->
+      <div ref="networkContainer" class="network-container" :class="{ 'network-container--fullscreen': isFullscreen }"
+        :style="{ height: networkContainerHeight }">
+        <div v-if="loading" class="loading-container">加载中...</div>
         <div class="legend-overlay">
           <div v-for="item in legendItems" :key="item.label" class="legend-item">
             <span class="legend-icon"
@@ -489,6 +528,7 @@ const handleFitView = () => {
 <style scoped>
 .topology-management {
   height: 100%;
+  min-height: 100vh;
   display: flex;
   flex-direction: column;
   gap: 16px;
@@ -501,6 +541,7 @@ const handleFitView = () => {
 
 .topology-card {
   flex: 1;
+  min-height: 600px;
   border-radius: 8px;
   display: flex;
   flex-direction: column;
@@ -508,6 +549,7 @@ const handleFitView = () => {
 
 .topology-card :deep(.n-card__content) {
   flex: 1;
+  height: 100%;
   display: flex;
   flex-direction: column;
 }
@@ -518,6 +560,10 @@ const handleFitView = () => {
   border: 1px solid var(--n-border-color);
   border-radius: 4px;
   position: relative;
+}
+
+.network-container--fullscreen {
+  border-radius: 0;
 }
 
 .legend-overlay {
@@ -548,10 +594,12 @@ const handleFitView = () => {
 }
 
 .loading-container {
-  flex: 1;
+  position: absolute;
+  inset: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  min-height: 500px;
+  background: rgba(255, 255, 255, 0.7);
+  z-index: 5;
 }
 </style>

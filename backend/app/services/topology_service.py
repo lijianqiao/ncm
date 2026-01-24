@@ -125,7 +125,8 @@ class TopologyService(DeviceCredentialMixin):
                         "platform": self._get_platform(device.vendor),
                     }
                     hosts_data.append(host_data)
-                    device_map[device.ip_address] = device
+                    # 使用 device.name 作为 key，与 Nornir host_name 保持一致
+                    device_map[device.name] = device
 
                 except OTPRequiredException:
                     # OTP 手动认证需要用户输入，直接抛出
@@ -176,9 +177,10 @@ class TopologyService(DeviceCredentialMixin):
 
             # 处理采集结果
             total_links = 0
-            for host_ip, host_result in aggregated.get("results", {}).items():
-                device = device_map.get(host_ip)
+            for host_name, host_result in aggregated.get("results", {}).items():
+                device = device_map.get(host_name)
                 if not device:
+                    logger.warning("设备映射未找到", host_name=host_name, device_map_keys=list(device_map.keys())[:5])
                     continue
 
                 device_result = DeviceLLDPResult(
@@ -191,6 +193,23 @@ class TopologyService(DeviceCredentialMixin):
                     result.success_count += 1
                     # 解析 LLDP 邻居
                     lldp_data = host_result.get("result", {})
+
+                    # 调试日志：查看 lldp_data 结构
+                    if lldp_data:
+                        raw_content = lldp_data.get("raw") or ""
+                        raw_sample = raw_content[:500]
+                        parsed_data = lldp_data.get("parsed")
+                        logger.info(
+                            "LLDP 数据调试",
+                            device=device.name,
+                            has_raw=bool(raw_content),
+                            raw_length=len(raw_content),
+                            raw_sample=raw_sample,
+                            parsed_type=type(parsed_data).__name__ if parsed_data else None,
+                            parsed_count=len(parsed_data) if isinstance(parsed_data, list) else 0,
+                            parsed_sample=parsed_data[:2] if isinstance(parsed_data, list) and parsed_data else None,
+                        )
+
                     neighbors = self._parse_lldp_result(lldp_data)
                     device_result.neighbors = neighbors
                     device_result.neighbors_count = len(neighbors)
@@ -311,13 +330,18 @@ class TopologyService(DeviceCredentialMixin):
 
         if isinstance(parsed, list):
             for entry in parsed:
+                # TextFSM 解析后字段名为小写，优先使用小写
                 neighbor = {
-                    "local_interface": entry.get("local_interface", entry.get("LOCAL_INTERFACE", "")),
-                    "neighbor_interface": entry.get("neighbor_interface", entry.get("NEIGHBOR_PORT_ID", "")),
-                    "neighbor_hostname": entry.get("neighbor", entry.get("NEIGHBOR_NAME", "")),
-                    "neighbor_ip": entry.get("management_ip", entry.get("MANAGEMENT_IP", "")),
-                    "neighbor_description": entry.get("neighbor_description", entry.get("SYSTEM_DESCRIPTION", "")),
-                    "chassis_id": entry.get("chassis_id", entry.get("CHASSIS_ID", "")),
+                    "local_interface": entry.get("local_interface") or entry.get("LOCAL_INTERFACE", ""),
+                    "neighbor_interface": entry.get("neighbor_port_id")
+                    or entry.get("neighbor_interface")
+                    or entry.get("NEIGHBOR_PORT_ID", ""),
+                    "neighbor_hostname": entry.get("neighbor_name")
+                    or entry.get("neighbor")
+                    or entry.get("NEIGHBOR_NAME", ""),
+                    "neighbor_ip": entry.get("management_ip") or entry.get("MANAGEMENT_IP", ""),
+                    "neighbor_description": entry.get("neighbor_description") or entry.get("SYSTEM_DESCRIPTION", ""),
+                    "chassis_id": entry.get("chassis_id") or entry.get("CHASSIS_ID", ""),
                 }
                 neighbors.append(neighbor)
 
@@ -342,12 +366,24 @@ class TopologyService(DeviceCredentialMixin):
         Returns:
             保存的链路数量
         """
-        links_data: list[TopologyLinkCreate] = []
+        # 使用字典去重，同一接口只保留第一个邻居（避免 UPSERT 冲突）
+        links_by_interface: dict[str, TopologyLinkCreate] = {}
         now = datetime.now()
 
         for neighbor in neighbors:
             local_interface = neighbor.get("local_interface", "")
             if not local_interface:
+                continue
+
+            # 如果该接口已有邻居记录，跳过（保留第一个）
+            if local_interface in links_by_interface:
+                logger.debug(
+                    "接口已有邻居记录，跳过重复",
+                    device=device.name,
+                    interface=local_interface,
+                    existing_neighbor=links_by_interface[local_interface].target_hostname,
+                    skipped_neighbor=neighbor.get("neighbor_hostname"),
+                )
                 continue
 
             # 尝试匹配目标设备
@@ -370,7 +406,9 @@ class TopologyService(DeviceCredentialMixin):
                 link_type="lldp",
                 collected_at=now,
             )
-            links_data.append(link_data)
+            links_by_interface[local_interface] = link_data
+
+        links_data = list(links_by_interface.values())
 
         # 刷新设备拓扑
         _, created_count = await self.topology_crud.refresh_device_topology(

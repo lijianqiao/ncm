@@ -58,6 +58,7 @@ NTC_PLATFORM_MAP: dict[str, str] = {
 # ===== 统一命令接口 → 平台具体命令映射 =====
 # 注意：cisco_ios 与 cisco_iosxe 命令相同，通过 _expand_cisco_commands 自动复制
 
+
 def _expand_cisco_commands(cmd_map: dict[str, str]) -> dict[str, str]:
     """将 cisco_iosxe 命令自动复制到 cisco_ios（两者命令相同）。"""
     if "cisco_iosxe" in cmd_map and "cisco_ios" not in cmd_map:
@@ -67,68 +68,82 @@ def _expand_cisco_commands(cmd_map: dict[str, str]) -> dict[str, str]:
 
 COMMAND_MAP: dict[str, dict[str, str]] = {
     # 配置备份
-    "backup_config": _expand_cisco_commands({
-        "hp_comware": "display current-configuration",
-        "huawei_vrp": "display current-configuration",
-        "cisco_iosxe": "show running-config",
-        "cisco_nxos": "show running-config",
-        "arista_eos": "show running-config",
-        "juniper_junos": "show configuration | display set",
-    }),
+    "backup_config": _expand_cisco_commands(
+        {
+            "hp_comware": "display current-configuration",
+            "huawei_vrp": "display current-configuration",
+            "cisco_iosxe": "show running-config",
+            "cisco_nxos": "show running-config",
+            "arista_eos": "show running-config",
+            "juniper_junos": "show configuration | display set",
+        }
+    ),
     # 版本信息
-    "version": _expand_cisco_commands({
-        "hp_comware": "display version",
-        "huawei_vrp": "display version",
-        "cisco_iosxe": "show version",
-        "cisco_nxos": "show version",
-        "arista_eos": "show version",
-        "juniper_junos": "show version",
-    }),
+    "version": _expand_cisco_commands(
+        {
+            "hp_comware": "display version",
+            "huawei_vrp": "display version",
+            "cisco_iosxe": "show version",
+            "cisco_nxos": "show version",
+            "arista_eos": "show version",
+            "juniper_junos": "show version",
+        }
+    ),
     # ARP 表
-    "arp_table": _expand_cisco_commands({
-        "hp_comware": "display arp",
-        "huawei_vrp": "display arp",
-        "cisco_iosxe": "show ip arp",
-        "cisco_nxos": "show ip arp",
-        "arista_eos": "show ip arp",
-        "juniper_junos": "show arp",
-    }),
+    "arp_table": _expand_cisco_commands(
+        {
+            "hp_comware": "display arp",
+            "huawei_vrp": "display arp",
+            "cisco_iosxe": "show ip arp",
+            "cisco_nxos": "show ip arp",
+            "arista_eos": "show ip arp",
+            "juniper_junos": "show arp",
+        }
+    ),
     # MAC 地址表
-    "mac_table": _expand_cisco_commands({
-        "hp_comware": "display mac-address",
-        "huawei_vrp": "display mac-address",
-        "cisco_iosxe": "show mac address-table",
-        "cisco_nxos": "show mac address-table",
-        "arista_eos": "show mac address-table",
-        "juniper_junos": "show ethernet-switching table",
-    }),
+    "mac_table": _expand_cisco_commands(
+        {
+            "hp_comware": "display mac-address",
+            "huawei_vrp": "display mac-address",
+            "cisco_iosxe": "show mac address-table",
+            "cisco_nxos": "show mac address-table",
+            "arista_eos": "show mac address-table",
+            "juniper_junos": "show ethernet-switching table",
+        }
+    ),
     # LLDP 邻居
-    "lldp_neighbors": _expand_cisco_commands({
-        "hp_comware": "display lldp neighbor-information list",
-        "huawei_vrp": "display lldp neighbor brief",
-        "cisco_iosxe": "show lldp neighbors detail",
-        "cisco_nxos": "show lldp neighbors detail",
-        "arista_eos": "show lldp neighbors",
-        "juniper_junos": "show lldp neighbors",
-    }),
+    "lldp_neighbors": _expand_cisco_commands(
+        {
+            "hp_comware": "display lldp neighbor-information list",
+            "huawei_vrp": "display lldp neighbor brief",
+            "cisco_iosxe": "show lldp neighbors",
+            "cisco_nxos": "show lldp neighbors",
+            "arista_eos": "show lldp neighbors",
+            "juniper_junos": "show lldp neighbors",
+        }
+    ),
     # 接口状态
-    "interface_brief": _expand_cisco_commands({
-        "hp_comware": "display interface brief",
-        "huawei_vrp": "display interface brief",
-        "cisco_iosxe": "show interfaces status",
-        "cisco_nxos": "show interface status",
-        "arista_eos": "show interfaces status",
-        "juniper_junos": "show interfaces terse",
-    }),
+    "interface_brief": _expand_cisco_commands(
+        {
+            "hp_comware": "display interface brief",
+            "huawei_vrp": "display interface brief",
+            "cisco_iosxe": "show interfaces status",
+            "cisco_nxos": "show interface status",
+            "arista_eos": "show interfaces status",
+            "juniper_junos": "show interfaces terse",
+        }
+    ),
     # VLAN 信息
-    "vlan": _expand_cisco_commands({
-        "hp_comware": "display vlan brief",
-        "huawei_vrp": "display vlan",
-        "cisco_iosxe": "show vlan brief",
-        "cisco_nxos": "show vlan",
-        "arista_eos": "show vlan",
-        "juniper_junos": "show vlans",
-    }),
+    "vlan": _expand_cisco_commands(
+        {
+            "hp_comware": "display vlan brief",
+            "huawei_vrp": "display vlan",
+            "cisco_iosxe": "show vlan brief",
+            "cisco_nxos": "show vlan",
+            "arista_eos": "show vlan",
+            "juniper_junos": "show vlans",
+        }
+    ),
 }
 
 
