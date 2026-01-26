@@ -20,6 +20,7 @@ const props = withDefaults(
     alertTitle?: string
     alertText?: string
     infoItems?: InfoItem[]
+    maxInfoItems?: number
     errorMessage?: string
     confirmText?: string
   }>(),
@@ -30,6 +31,7 @@ const props = withDefaults(
     alertTitle: '需要 OTP',
     alertText: '请输入当前有效的 OTP 验证码以继续操作。',
     infoItems: () => [],
+    maxInfoItems: 3,
     confirmText: '确认',
     errorMessage: '',
   },
@@ -65,6 +67,8 @@ watch(
 )
 
 const otpCode = computed(() => otpChars.value.join('').trim())
+const visibleInfoItems = computed(() => props.infoItems.slice(0, props.maxInfoItems))
+const hiddenInfoCount = computed(() => Math.max(0, props.infoItems.length - props.maxInfoItems))
 
 const close = () => {
   if (props.loading) return
@@ -87,8 +91,11 @@ const submit = () => {
       </n-alert>
 
       <n-descriptions v-if="infoItems.length" :column="1" label-placement="left" bordered>
-        <n-descriptions-item v-for="item in infoItems" :key="item.label" :label="item.label">
+        <n-descriptions-item v-for="item in visibleInfoItems" :key="item.label" :label="item.label">
           {{ item.value }}
+        </n-descriptions-item>
+        <n-descriptions-item v-if="hiddenInfoCount > 0" label="更多">
+          … 还有 {{ hiddenInfoCount }} 项
         </n-descriptions-item>
       </n-descriptions>
 

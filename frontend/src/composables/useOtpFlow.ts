@@ -30,6 +30,7 @@ type InfoItem = { label: string; value: string }
 
 export function useOtpFlow(options?: { length?: number }) {
   const length = options?.length ?? 6
+  const maxFailedDevices = 5
 
   const show = ref(false)
   const loading = ref(false)
@@ -45,7 +46,9 @@ export function useOtpFlow(options?: { length?: number }) {
       { label: '设备组', value: d.device_group },
     ]
     if (d.failed_devices && d.failed_devices.length > 0) {
-      items.push({ label: '失败设备', value: d.failed_devices.join(', ') })
+      const preview = d.failed_devices.slice(0, maxFailedDevices)
+      const suffix = d.failed_devices.length > maxFailedDevices ? ' ...' : ''
+      items.push({ label: '失败设备', value: `${preview.join(', ')}${suffix}` })
     }
     return items
   })

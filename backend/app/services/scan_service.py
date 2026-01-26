@@ -9,6 +9,7 @@
 """
 
 import asyncio
+import re
 import shutil
 import subprocess
 from datetime import datetime
@@ -48,6 +49,49 @@ class ScanService:
     ):
         self.discovery_crud = discovery_crud
         self.device_crud = device_crud
+
+    def _parse_sysdescr_info(self, sys_descr: str) -> tuple[str | None, str | None, str | None]:
+        text = sys_descr.strip()
+        if not text:
+            return None, None, None
+
+        lines = [s.strip() for s in re.split(r"\r?\n", text) if s and s.strip()]
+        if not lines:
+            return None, None, None
+
+        vendor = None
+        if re.search(r"\bhuawei\b|futurematrix", text, re.IGNORECASE):
+            vendor = "huawei"
+        elif re.search(r"\bh3c\b|comware", text, re.IGNORECASE):
+            vendor = "h3c"
+
+        model = None
+        if vendor == "h3c":
+            model = lines[1] if len(lines) >= 2 else lines[0]
+        elif vendor == "huawei":
+            model = lines[0]
+        else:
+            h3c_line = next((line for line in lines if re.match(r"^h3c\b", line, re.IGNORECASE)), None)
+            if h3c_line:
+                model = h3c_line
+            else:
+                huawei_model = next((line for line in lines if re.match(r"^s\d{3,4}-", line, re.IGNORECASE)), None)
+                if huawei_model:
+                    model = huawei_model
+                else:
+                    model = lines[0]
+
+        os_version = None
+        if vendor == "huawei":
+            m = re.search(r"Version\s+([0-9.]+)", text, re.IGNORECASE)
+            if m:
+                os_version = m.group(1)
+        elif vendor == "h3c":
+            m = re.search(r"Software\s+Version\s+([0-9.]+)", text, re.IGNORECASE)
+            if m:
+                os_version = m.group(1)
+
+        return vendor, model, os_version
 
     async def nmap_scan(
         self,
@@ -502,30 +546,10 @@ class ScanService:
                 sys_descr = snmp_results.get(host.ip_address, {}).get("snmp_sysdescr") if snmp_results else None
                 sys_name = snmp_results.get(host.ip_address, {}).get("snmp_sysname") if snmp_results else None
                 inferred_vendor = None
+                inferred_model = None
+                inferred_version = None
                 if isinstance(sys_descr, str) and sys_descr:
-                    s = sys_descr.lower()
-                    if "cisco" in s:
-                        inferred_vendor = "cisco"
-                    elif "huawei" in s:
-                        inferred_vendor = "huawei"
-                    elif "h3c" in s:
-                        inferred_vendor = "h3c"
-                    elif "juniper" in s:
-                        inferred_vendor = "juniper"
-                    elif "arista" in s:
-                        inferred_vendor = "arista"
-                    elif "nokia" in s or "alcatel" in s:
-                        inferred_vendor = "nokia"
-                    elif "ruijie" in s:
-                        inferred_vendor = "ruijie"
-                    elif "mikrotik" in s:
-                        inferred_vendor = "mikrotik"
-                    elif "dell" in s:
-                        inferred_vendor = "dell"
-                    elif "hewlett-packard" in s or "hp " in s:
-                        inferred_vendor = "hp"
-                    elif "aruba" in s:
-                        inferred_vendor = "aruba"
+                    inferred_vendor, inferred_model, inferred_version = self._parse_sysdescr_info(sys_descr)
 
                 data_list.append(
                     DiscoveryCreate(
@@ -537,9 +561,10 @@ class ScanService:
                             if snmp_results
                             else None
                         ),
-                        vendor=host.vendor or inferred_vendor,
+                        vendor=inferred_vendor,
+                        device_type=inferred_model,
                         hostname=(sys_name if isinstance(sys_name, str) and sys_name else None) or host.hostname,
-                        os_info=host.os_info,
+                        os_info=inferred_version,
                         serial_number=snmp_results.get(host.ip_address, {}).get("serial_number")
                         if snmp_results
                         else None,
@@ -777,6 +802,7 @@ class ScanService:
             name=inferred_name,
             ip_address=discovery.ip_address,
             vendor=vendor_enum,
+            model=getattr(discovery, "device_type", None),
             device_group=group_enum,
             dept_id=inferred_dept_id,
             auth_type=auth_type,

@@ -9,7 +9,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.core.enums import AuthType, DeviceGroup
 
@@ -31,12 +31,45 @@ class DeviceCredential(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+def _extract_value(v):
+    if isinstance(v, dict):
+        for key in ("value", "id", "dept_id", "key", "label"):
+            if key in v:
+                return _extract_value(v[key])
+        return v
+    if isinstance(v, list) and len(v) == 1:
+        return _extract_value(v[0])
+    return v
+
+
 class OTPCacheRequest(BaseModel):
     """OTP 缓存请求（用户手动输入 OTP 时）。"""
 
     dept_id: UUID = Field(..., description="部门ID")
     device_group: DeviceGroup = Field(..., description="设备分组")
     otp_code: str = Field(..., min_length=6, max_length=8, description="OTP 验证码")
+
+    @field_validator("dept_id", mode="before")
+    @classmethod
+    def _normalize_dept_id(cls, v):
+        return _extract_value(v)
+
+    @field_validator("device_group", mode="before")
+    @classmethod
+    def _normalize_device_group(cls, v):
+        v = _extract_value(v)
+        if isinstance(v, str):
+            value = v.strip().lower()
+            mapping = {
+                "核心层": "core",
+                "汇聚层": "distribution",
+                "接入层": "access",
+                "核心": "core",
+                "汇聚": "distribution",
+                "接入": "access",
+            }
+            return mapping.get(value, value)
+        return v
 
 
 class OTPCacheResponse(BaseModel):
@@ -53,6 +86,28 @@ class OTPVerifyRequest(BaseModel):
     dept_id: UUID = Field(..., description="部门ID")
     device_group: DeviceGroup = Field(..., description="设备分组")
     otp_code: str = Field(..., min_length=6, max_length=8, description="OTP 验证码")
+
+    @field_validator("dept_id", mode="before")
+    @classmethod
+    def _normalize_dept_id(cls, v):
+        return _extract_value(v)
+
+    @field_validator("device_group", mode="before")
+    @classmethod
+    def _normalize_device_group(cls, v):
+        v = _extract_value(v)
+        if isinstance(v, str):
+            value = v.strip().lower()
+            mapping = {
+                "核心层": "core",
+                "汇聚层": "distribution",
+                "接入层": "access",
+                "核心": "core",
+                "汇聚": "distribution",
+                "接入": "access",
+            }
+            return mapping.get(value, value)
+        return v
 
 
 class OTPVerifyResponse(BaseModel):

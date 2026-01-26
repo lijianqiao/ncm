@@ -166,41 +166,6 @@ const deptNameMap = computed<Record<string, string>>(() => {
   return map
 })
 
-const getDeviceTypeFromSnmpSysdescr = (
-  vendor: string | null | undefined,
-  sysDescr: string | null | undefined,
-) => {
-  if (!sysDescr) return null
-  const lines = sysDescr
-    .split(/\r?\n/)
-    .map((s) => s.trim())
-    .filter(Boolean)
-  if (lines.length === 0) return null
-
-  const v = (vendor || '').toLowerCase()
-
-  if (v === 'h3c') {
-    if (lines.length >= 2) return lines[1]
-    return lines[0]
-  }
-  if (v === 'huawei') {
-    return lines[0]
-  }
-  if (v === 'cisco') {
-    const hit = lines.find((l) => /cisco/i.test(l))
-    return hit || lines[0]
-  }
-
-  const h3cLine = lines.find((l) => /^h3c\b/i.test(l))
-  if (h3cLine) return h3cLine
-  const huaweiModel = lines.find((l) => /^s\d{3,4}-/i.test(l))
-  if (huaweiModel) return huaweiModel
-
-  return lines[0]
-}
-
-// ==================== 表格列定义 ====================
-
 const columns: DataTableColumns<DiscoveryRecord> = [
   { type: 'selection', fixed: 'left' },
   {
@@ -254,8 +219,7 @@ const columns: DataTableColumns<DiscoveryRecord> = [
     width: 200,
     resizable: true,
     ellipsis: { tooltip: true },
-    render: (row) =>
-      getDeviceTypeFromSnmpSysdescr(row.vendor, row.snmp_sysdescr) || row.device_type || '-',
+    render: (row) => row.device_type || '-',
   },
   {
     title: '序列号',
@@ -264,6 +228,13 @@ const columns: DataTableColumns<DiscoveryRecord> = [
     resizable: true,
     ellipsis: { tooltip: true },
     render: (row) => row.serial_number || '-',
+  },
+  {
+    title: 'OS 版本',
+    key: 'os_info',
+    width: 120,
+    ellipsis: { tooltip: true },
+    render: (row) => row.os_info || '-',
   },
   {
     title: 'SNMP',
