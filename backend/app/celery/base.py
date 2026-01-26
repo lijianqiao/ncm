@@ -14,7 +14,7 @@ from typing import Any, TypeVar
 
 from celery import Task
 
-from app.core.logger import logger
+from app.core.logger import celery_task_logger, logger
 
 T = TypeVar("T")
 
@@ -269,7 +269,7 @@ class BaseTask(Task):
 
     def on_success(self, retval, task_id: str, args, kwargs) -> None:
         """任务成功完成时的回调。"""
-        logger.info(
+        celery_task_logger.info(
             "任务执行成功",
             task_id=task_id,
             task_name=self.name,
@@ -278,7 +278,7 @@ class BaseTask(Task):
 
     def on_failure(self, exc, task_id: str, args, kwargs, einfo) -> None:
         """任务失败时的回调。"""
-        logger.error(
+        celery_task_logger.error(
             "任务执行失败",
             task_id=task_id,
             task_name=self.name,
@@ -288,7 +288,7 @@ class BaseTask(Task):
 
     def on_retry(self, exc, task_id: str, args, kwargs, einfo) -> None:
         """任务重试时的回调。"""
-        logger.warning(
+        celery_task_logger.warning(
             "任务重试中",
             task_id=task_id,
             task_name=self.name,
@@ -298,7 +298,7 @@ class BaseTask(Task):
 
     def before_start(self, task_id: str, args, kwargs) -> None:
         """任务开始前的回调。"""
-        logger.info(
+        celery_task_logger.info(
             "任务开始执行",
             task_id=task_id,
             task_name=self.name,
