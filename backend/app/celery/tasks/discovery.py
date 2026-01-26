@@ -17,16 +17,15 @@ from app.core.db import AsyncSessionLocal
 from app.core.logger import logger
 from app.crud.crud_device import device as device_crud
 from app.crud.crud_discovery import discovery_crud
-from app.services.scan_service import ScanService
 from app.schemas.discovery import ScanResult as ScanResultSchema
+from app.services.scan_service import ScanService
 
 
-def _parse_dept_uuid(dept_id: str | None) -> "UUID | None":
-    """将字符串 dept_id 安全转换为 UUID，转换失败返回 None。"""
-    if not dept_id:
+def _parse_snmp_cred_uuid(snmp_cred_id: str | None) -> "UUID | None":
+    if not snmp_cred_id:
         return None
     try:
-        return UUID(str(dept_id))
+        return UUID(str(snmp_cred_id))
     except (ValueError, TypeError):
         return None
 
@@ -81,7 +80,7 @@ def scan_subnet(
     subnet: str,
     scan_type: str = "auto",
     ports: str | None = None,
-    dept_id: str | None = None,
+    snmp_cred_id: str | None = None,
 ) -> dict[str, Any]:
     """
     扫描单个网段 Celery 任务。
@@ -96,7 +95,7 @@ def scan_subnet(
     """
 
     celery_task_id = self.request.id
-    dept_uuid = _parse_dept_uuid(dept_id)
+    snmp_cred_uuid = _parse_snmp_cred_uuid(snmp_cred_id)
 
     async def _scan():
         async with AsyncSessionLocal() as db:
@@ -134,7 +133,10 @@ def scan_subnet(
                     meta={"progress": 80, "stage": "enriching", "subnet": subnet, "hosts_found": result.hosts_found},
                 )
                 processed = await scan_service.process_scan_result(
-                    db, scan_result=result, scan_task_id=celery_task_id, dept_id=dept_uuid
+                    db,
+                    scan_result=result,
+                    scan_task_id=celery_task_id,
+                    snmp_cred_id=snmp_cred_uuid,
                 )
                 logger.info(
                     "扫描结果处理完成",
@@ -168,7 +170,7 @@ def scan_subnets_batch(
     subnets: list[str],
     scan_type: str = "auto",
     ports: str | None = None,
-    dept_id: str | None = None,
+    snmp_cred_id: str | None = None,
 ) -> dict[str, Any]:
     """
     批量扫描多个网段 Celery 任务。
@@ -183,7 +185,7 @@ def scan_subnets_batch(
     """
 
     celery_task_id = self.request.id
-    dept_uuid = _parse_dept_uuid(dept_id)
+    snmp_cred_uuid = _parse_snmp_cred_uuid(snmp_cred_id)
 
     async def _batch_scan():
         results = []
@@ -247,7 +249,10 @@ def scan_subnets_batch(
                             },
                         )
                         await scan_service.process_scan_result(
-                            db, scan_result=result, scan_task_id=celery_task_id, dept_id=dept_uuid
+                            db,
+                            scan_result=result,
+                            scan_task_id=celery_task_id,
+                            snmp_cred_id=snmp_cred_uuid,
                         )
                         total_hosts += result.hosts_found
 

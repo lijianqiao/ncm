@@ -18,10 +18,48 @@ from app.core.enums import AlertSeverity, AlertStatus, AlertType
 from app.core.permissions import PermissionCode
 from app.features.import_export.alerts import export_alerts_df
 from app.import_export import ImportExportService, delete_export_file
-from app.schemas.alert import AlertListQuery, AlertResponse
-from app.schemas.common import PaginatedResponse, ResponseBase
+from app.models.alert import Alert
+from app.schemas.alert import AlertListQuery, AlertResponse, AlertStats, AlertTrend, AlertTrendItem
+from app.schemas.common import BatchOperationResult, PaginatedResponse, ResponseBase
+from app.utils.user_display import format_user_display_name
 
 router = APIRouter()
+
+
+def _build_alert_response(alert: Alert) -> AlertResponse:
+    """
+    将 Alert 模型转换为响应 Schema。
+
+    Args:
+        alert: Alert 模型对象
+
+    Returns:
+        AlertResponse: 告警响应 Schema
+    """
+    resp = AlertResponse.model_validate(alert)
+
+    # 关联设备信息
+    if alert.related_device:
+        resp.related_device_name = alert.related_device.name
+        resp.related_device_ip = alert.related_device.ip_address
+
+    # 确认人信息
+    if alert.acked_by:
+        resp.acked_by_id = alert.acked_by_id
+        resp.acked_by_username = alert.acked_by.username
+        resp.acked_by_nickname = alert.acked_by.nickname
+        resp.acked_by_display = format_user_display_name(alert.acked_by.nickname, alert.acked_by.username)
+        resp.acked_at = alert.acked_at
+
+    # 关闭人信息
+    if alert.closed_by:
+        resp.closed_by_id = alert.closed_by_id
+        resp.closed_by_username = alert.closed_by.username
+        resp.closed_by_nickname = alert.closed_by.nickname
+        resp.closed_by_display = format_user_display_name(alert.closed_by.nickname, alert.closed_by.username)
+        resp.closed_at = alert.closed_at
+
+    return resp
 
 
 @router.get("/", response_model=ResponseBase[PaginatedResponse[AlertResponse]], summary="获取告警列表")
@@ -37,24 +75,7 @@ async def read_alerts(
     status: AlertStatus | None = Query(None, description="状态筛选"),
     related_device_id: UUID | None = Query(None, description="设备筛选"),
 ) -> ResponseBase[PaginatedResponse[AlertResponse]]:
-    """获取分页过滤的告警列表。
-
-    根据提供的关键词、告警类型、严重程度、状态以及关联设备 ID 进行筛选，返回分页后的告警列表。
-
-    Args:
-        alert_service (AlertService): 告警服务依赖。
-        current_user (User): 当前登录用户。
-        page (int): 请求的页码，从 1 开始。默认为 1。
-        page_size (int): 每页显示的记录数。默认为 20。
-        keyword (str | None): 搜索关键词，匹配告警标题或正文。
-        alert_type (AlertType | None): 告警类型筛选。
-        severity (AlertSeverity | None): 告警严重程度筛选。
-        status (AlertStatus | None): 告警状态筛选。
-        related_device_id (UUID | None): 关联的设备 ID 筛选。
-
-    Returns:
-        ResponseBase[PaginatedResponse[AlertResponse]]: 包含分页后的告警数据及其总数的响应。
-    """
+    """获取分页过滤的告警列表。"""
     items, total = await alert_service.list_alerts(
         AlertListQuery(
             page=page,
@@ -67,13 +88,7 @@ async def read_alerts(
         )
     )
 
-    responses: list[AlertResponse] = []
-    for a in items:
-        resp = AlertResponse.model_validate(a)
-        if a.related_device:
-            resp.related_device_name = a.related_device.name
-            resp.related_device_ip = a.related_device.ip_address
-        responses.append(resp)
+    responses = [_build_alert_response(a) for a in items]
 
     return ResponseBase(
         data=PaginatedResponse(
@@ -95,16 +110,7 @@ async def export_alerts(
     _: deps.User = Depends(deps.require_permissions([PermissionCode.ALERT_EXPORT.value])),
     fmt: str = Query("csv", pattern="^(csv|xlsx)$", description="导出格式"),
 ) -> FileResponse:
-    """导出告警列表为 CSV/XLSX 文件。
-
-    Args:
-        db (Session): 数据库会话。
-        current_user (User): 当前登录用户。
-        fmt (str): 导出格式，csv 或 xlsx。
-
-    Returns:
-        FileResponse: 文件下载响应，后台自动清理临时文件。
-    """
+    """导出告警列表为 CSV/XLSX 文件。"""
     svc = ImportExportService(db=db, redis_client=None, base_dir=str(settings.IMPORT_EXPORT_TMP_DIR or "") or None)
     result = await svc.export_table(fmt=fmt, filename_prefix="alerts", df_fn=export_alerts_df)
     return FileResponse(
@@ -122,22 +128,9 @@ async def read_alert(
     current_user: deps.CurrentUser,
     _: deps.User = Depends(deps.require_permissions([PermissionCode.ALERT_LIST.value])),
 ) -> ResponseBase[AlertResponse]:
-    """根据 ID 获取单个告警的详细信息。
-
-    Args:
-        alert_id (UUID): 告警的主键 ID。
-        alert_service (AlertService): 告警服务依赖。
-        current_user (User): 当前登录用户。
-
-    Returns:
-        ResponseBase[AlertResponse]: 包含告警详情数据的响应。
-    """
+    """根据 ID 获取单个告警的详细信息。"""
     alert = await alert_service.get_alert(alert_id)
-    resp = AlertResponse.model_validate(alert)
-    if alert.related_device:
-        resp.related_device_name = alert.related_device.name
-        resp.related_device_ip = alert.related_device.ip_address
-    return ResponseBase(data=resp)
+    return ResponseBase(data=_build_alert_response(alert))
 
 
 @router.post("/{alert_id}/ack", response_model=ResponseBase[AlertResponse], summary="确认告警")
@@ -147,24 +140,9 @@ async def ack_alert(
     current_user: deps.CurrentUser,
     _: deps.User = Depends(deps.require_permissions([PermissionCode.ALERT_ACK.value])),
 ) -> ResponseBase[AlertResponse]:
-    """确认指定的告警。
-
-    将被选中的告警状态更新为“已确认”，并记录处理人信息。
-
-    Args:
-        alert_id (UUID): 告警的主键 ID。
-        alert_service (AlertService): 告警服务依赖。
-        current_user (User): 当前执行确认操作的用户。
-
-    Returns:
-        ResponseBase[AlertResponse]: 更新状态后的告警详情。
-    """
-    alert = await alert_service.ack_alert(alert_id)
-    resp = AlertResponse.model_validate(alert)
-    if alert.related_device:
-        resp.related_device_name = alert.related_device.name
-        resp.related_device_ip = alert.related_device.ip_address
-    return ResponseBase(data=resp)
+    """确认指定的告警，并记录操作人信息。"""
+    alert = await alert_service.ack_alert(alert_id, user_id=current_user.id)
+    return ResponseBase(data=_build_alert_response(alert))
 
 
 @router.post("/{alert_id}/close", response_model=ResponseBase[AlertResponse], summary="关闭告警")
@@ -174,63 +152,57 @@ async def close_alert(
     current_user: deps.CurrentUser,
     _: deps.User = Depends(deps.require_permissions([PermissionCode.ALERT_CLOSE.value])),
 ) -> ResponseBase[AlertResponse]:
-    """关闭指定的告警。
-
-    将被选中的告警状态更新为“已关闭”，表示告警已处理完毕或已恢复。
-
-    Args:
-        alert_id (UUID): 告警的主键 ID。
-        alert_service (AlertService): 告警服务依赖。
-        current_user (User): 当前执行关闭操作的用户。
-
-    Returns:
-        ResponseBase[AlertResponse]: 状态更新后的告警详情。
-    """
-    alert = await alert_service.close_alert(alert_id)
-    resp = AlertResponse.model_validate(alert)
-    if alert.related_device:
-        resp.related_device_name = alert.related_device.name
-        resp.related_device_ip = alert.related_device.ip_address
-    return ResponseBase(data=resp)
+    """关闭指定的告警，并记录操作人信息。"""
+    alert = await alert_service.close_alert(alert_id, user_id=current_user.id)
+    return ResponseBase(data=_build_alert_response(alert))
 
 
-@router.post("/batch/ack", response_model=ResponseBase[dict], summary="批量确认告警")
+@router.post("/batch/ack", response_model=ResponseBase[BatchOperationResult], summary="批量确认告警")
 async def batch_ack_alerts(
     alert_ids: list[UUID],
     alert_service: deps.AlertServiceDep,
     current_user: deps.CurrentUser,
     _: deps.User = Depends(deps.require_permissions([PermissionCode.ALERT_ACK.value])),
-) -> ResponseBase[dict]:
-    """批量确认告警。
-
-    Args:
-        alert_ids: 告警 ID 列表。
-        alert_service: 告警服务依赖。
-        current_user: 当前用户。
-
-    Returns:
-        ResponseBase[dict]: 批量操作结果 {"success": 数量, "failed": 数量}。
-    """
-    result = await alert_service.batch_ack_alerts(alert_ids)
+) -> ResponseBase[BatchOperationResult]:
+    """批量确认告警。"""
+    result = await alert_service.batch_ack_alerts(alert_ids, user_id=current_user.id)
     return ResponseBase(data=result)
 
 
-@router.post("/batch/close", response_model=ResponseBase[dict], summary="批量关闭告警")
+@router.post("/batch/close", response_model=ResponseBase[BatchOperationResult], summary="批量关闭告警")
 async def batch_close_alerts(
     alert_ids: list[UUID],
     alert_service: deps.AlertServiceDep,
     current_user: deps.CurrentUser,
     _: deps.User = Depends(deps.require_permissions([PermissionCode.ALERT_CLOSE.value])),
-) -> ResponseBase[dict]:
-    """批量关闭告警。
-
-    Args:
-        alert_ids: 告警 ID 列表。
-        alert_service: 告警服务依赖。
-        current_user: 当前用户。
-
-    Returns:
-        ResponseBase[dict]: 批量操作结果 {"success": 数量, "failed": 数量}。
-    """
-    result = await alert_service.batch_close_alerts(alert_ids)
+) -> ResponseBase[BatchOperationResult]:
+    """批量关闭告警。"""
+    result = await alert_service.batch_close_alerts(alert_ids, user_id=current_user.id)
     return ResponseBase(data=result)
+
+
+# ===== 统计接口 =====
+
+
+@router.get("/stats", response_model=ResponseBase[AlertStats], summary="获取告警统计")
+async def get_alert_stats(
+    alert_service: deps.AlertServiceDep,
+    current_user: deps.CurrentUser,
+    _: deps.User = Depends(deps.require_permissions([PermissionCode.ALERT_LIST.value])),
+) -> ResponseBase[AlertStats]:
+    """获取告警统计数据（按类型/级别/状态分组）。"""
+    stats = await alert_service.get_stats()
+    return ResponseBase(data=AlertStats(**stats))
+
+
+@router.get("/trend", response_model=ResponseBase[AlertTrend], summary="获取告警趋势")
+async def get_alert_trend(
+    alert_service: deps.AlertServiceDep,
+    current_user: deps.CurrentUser,
+    _: deps.User = Depends(deps.require_permissions([PermissionCode.ALERT_LIST.value])),
+    days: int = Query(7, ge=1, le=90, description="统计天数"),
+) -> ResponseBase[AlertTrend]:
+    """获取告警趋势数据（近 N 天每日新增）。"""
+    trend_data = await alert_service.get_trend(days=days)
+    items = [AlertTrendItem(**item) for item in trend_data]
+    return ResponseBase(data=AlertTrend(days=days, items=items))

@@ -439,7 +439,7 @@ class ScanService:
         db: AsyncSession,
         scan_result: ScanResult,
         scan_task_id: str | None = None,
-        dept_id: UUID | None = None,
+        snmp_cred_id: UUID | None = None,
     ) -> int:
         """
         处理扫描结果，更新 Discovery 表。
@@ -453,44 +453,47 @@ class ScanService:
             处理的主机数量
         """
         snmp_results: dict[str, dict[str, Any]] = {}
-        if dept_id:
-            try:
-                snmp_cred = await dept_snmp_credential_crud.get_by_dept_id(db, dept_id=dept_id)
-                if snmp_cred and snmp_cred.snmp_version == "v2c" and snmp_cred.community_encrypted:
-                    community = decrypt_snmp_secret(snmp_cred.community_encrypted)
-                    snmp_service = SnmpService()
-                    cred = SnmpV2cCredential(community=community, port=snmp_cred.port)
-                    sem = asyncio.Semaphore(settings.SNMP_MAX_CONCURRENCY)
+        try:
+            snmp_cred = None
+            if snmp_cred_id:
+                snmp_cred = await dept_snmp_credential_crud.get(db, id=snmp_cred_id)
+                if snmp_cred and snmp_cred.is_deleted:
+                    snmp_cred = None
 
-                    async def _enrich(ip: str, open_ports: dict[int, str] | None):
-                        if open_ports is not None and 161 not in open_ports:
-                            return ip, None
-                        async with sem:
-                            r = await snmp_service.enrich_basic(ip, cred)
-                            return ip, r
+            if snmp_cred and snmp_cred.snmp_version == "v2c" and snmp_cred.community_encrypted:
+                community = decrypt_snmp_secret(snmp_cred.community_encrypted)
+                snmp_service = SnmpService()
+                cred = SnmpV2cCredential(community=community, port=snmp_cred.port)
+                sem = asyncio.Semaphore(settings.SNMP_MAX_CONCURRENCY)
 
-                    tasks = [_enrich(h.ip_address, h.open_ports) for h in scan_result.hosts]
-                    results = await asyncio.gather(*tasks, return_exceptions=True)
-                    for item in results:
-                        try:
-                            ip, r = item  # type: ignore[misc]
-                        except Exception:
-                            # 跳过异常项
-                            continue
-                        if r is None:
-                            continue
-                        snmp_results[ip] = {
-                            "snmp_sysname": r.sys_name,
-                            "snmp_sysdescr": r.sys_descr,
-                            "serial_number": r.serial_number,
-                            "bridge_mac": r.bridge_mac,
-                            "interface_mac": r.interface_mac,
-                            "interface_name": r.interface_name,
-                            "snmp_ok": r.ok,
-                            "snmp_error": r.error,
-                        }
-            except Exception as e:
-                logger.warning("SNMP 补全失败（已忽略，不影响扫描入库）", error=str(e))
+                async def _enrich(ip: str, open_ports: dict[int, str] | None):
+                    async with sem:
+                        r = await snmp_service.enrich_basic(ip, cred)
+                        return ip, r
+
+                tasks = [_enrich(h.ip_address, h.open_ports) for h in scan_result.hosts]
+                results = await asyncio.gather(*tasks, return_exceptions=True)
+                for item in results:
+                    try:
+                        ip, r = item  # type: ignore[misc]
+                    except Exception:
+                        continue
+                    if r is None:
+                        continue
+                    snmp_results[ip] = {
+                        "snmp_sysname": r.sys_name,
+                        "snmp_sysdescr": r.sys_descr,
+                        "serial_number": r.serial_number,
+                        "bridge_mac": r.bridge_mac,
+                        "interface_mac": r.interface_mac,
+                        "interface_name": r.interface_name,
+                        "snmp_ok": r.ok,
+                        "snmp_error": r.error,
+                    }
+            elif snmp_cred_id:
+                logger.warning("SNMP 凭据不可用或不支持 v2c", snmp_cred_id=str(snmp_cred_id))
+        except Exception as e:
+            logger.warning("SNMP 补全失败（已忽略，不影响扫描入库）", error=str(e))
 
         data_list: list[DiscoveryCreate] = []
 
@@ -544,7 +547,6 @@ class ScanService:
                         ssh_banner=getattr(host, "ssh_banner", None),
                         scan_source=scan_result.scan_type,
                         scan_task_id=scan_task_id,
-                        dept_id=dept_id,
                         snmp_sysname=snmp_results.get(host.ip_address, {}).get("snmp_sysname")
                         if snmp_results
                         else None,
@@ -586,9 +588,7 @@ class ScanService:
         result = CMDBCompareResult(compared_at=datetime.now())
 
         # 获取所有发现记录
-        discoveries, total_discovered = await self.discovery_crud.get_multi_paginated(
-            db, page=1, page_size=10000
-        )
+        discoveries, total_discovered = await self.discovery_crud.get_multi_paginated(db, page=1, page_size=10000)
         result.total_discovered = total_discovered
 
         # 获取所有设备
@@ -643,9 +643,7 @@ class ScanService:
         offline_devices: list[OfflineDevice] = []
 
         # 获取所有活跃设备
-        devices, _ = await self.device_crud.get_multi_paginated(
-            db, page=1, page_size=10000, status=DeviceStatus.ACTIVE
-        )
+        devices, _ = await self.device_crud.get_multi_paginated(db, page=1, page_size=10000, status=DeviceStatus.ACTIVE)
 
         for device in devices:
             # 查找对应的发现记录

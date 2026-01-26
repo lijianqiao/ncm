@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, h, computed } from 'vue'
+import { ref, h, computed, onMounted, onUnmounted, watch } from 'vue'
 import {
   NButton,
   NModal,
@@ -10,6 +10,7 @@ import {
   NSelect,
   NSpace,
   NProgress,
+  NSwitch,
   type DropdownOption,
 } from 'naive-ui'
 import hljs from 'highlight.js/lib/core'
@@ -54,6 +55,8 @@ hljs.registerLanguage('plaintext', plaintext)
 const dialog = useDialog()
 const tableRef = ref()
 const recycleBinTableRef = ref()
+const autoRefresh = ref(false)
+let autoRefreshTimer: number | null = null
 
 const checkedRowKeys = ref<Array<string | number>>([])
 const checkedRecycleBinRowKeys = ref<Array<string | number>>([])
@@ -290,6 +293,21 @@ const loadData = async (params: BackupSearchParams) => {
     data: res.data.items,
     total: res.data.total,
   }
+}
+
+const handleRefresh = () => {
+  tableRef.value?.reload()
+}
+
+const setupAutoRefresh = () => {
+  if (autoRefreshTimer) {
+    window.clearInterval(autoRefreshTimer)
+    autoRefreshTimer = null
+  }
+  if (!autoRefresh.value) return
+  autoRefreshTimer = window.setInterval(() => {
+    tableRef.value?.reload()
+  }, 30000)
 }
 
 const recycleBinRequest = async (params: BackupSearchParams) => {
@@ -793,6 +811,21 @@ const closeBatchBackupModal = () => {
   resetBatchTask()
 }
 
+onMounted(() => {
+  setupAutoRefresh()
+})
+
+onUnmounted(() => {
+  if (autoRefreshTimer) {
+    window.clearInterval(autoRefreshTimer)
+    autoRefreshTimer = null
+  }
+})
+
+watch(autoRefresh, () => {
+  setupAutoRefresh()
+})
+
 </script>
 
 <template>
@@ -809,6 +842,11 @@ const closeBatchBackupModal = () => {
           <n-button type="primary" @click="handleManualBackup">手动备份</n-button>
           <n-button type="info" @click="handleBatchBackup">批量备份</n-button>
           <DataImportExport title="备份" show-export export-name="backups_export.csv" :export-api="exportBackups" />
+          <n-button @click="handleRefresh">刷新</n-button>
+          <n-space align="center" size="small">
+            <span style="font-size: 12px; color: #666">自动刷新</span>
+            <n-switch v-model:value="autoRefresh" />
+          </n-space>
         </n-space>
       </template>
     </ProTable>

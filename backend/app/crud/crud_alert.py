@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from sqlalchemy.sql.elements import ColumnElement
 
+from app.core.enums import AlertStatus
 from app.crud.base import CRUDBase
 from app.models.alert import Alert
 from app.schemas.alert import AlertCreate, AlertUpdate
@@ -95,7 +96,7 @@ class CRUDAlert(CRUDBase[Alert, AlertCreate, AlertUpdate]):
             self.model.is_deleted.is_(False),
             self.model.alert_type == alert_type,
             self.model.created_at >= since,
-            self.model.status != "closed",
+            self.model.status != AlertStatus.CLOSED.value,
         ]
         if related_device_id:
             conditions.append(self.model.related_device_id == related_device_id)
@@ -118,7 +119,7 @@ class CRUDAlert(CRUDBase[Alert, AlertCreate, AlertUpdate]):
         conditions = [
             self.model.is_deleted.is_(False),
             self.model.alert_type == alert_type,
-            self.model.status != "closed",
+            self.model.status != AlertStatus.CLOSED.value,
         ]
         if related_device_id:
             conditions.append(self.model.related_device_id == related_device_id)
@@ -134,6 +135,86 @@ class CRUDAlert(CRUDBase[Alert, AlertCreate, AlertUpdate]):
         )
         result = await db.execute(query)
         return result.scalars().first()
+
+    # ===== 统计方法 =====
+
+    async def get_stats(self, db: AsyncSession) -> dict:
+        """
+        获取告警统计数据（按类型/级别/状态分组）。
+
+        Returns:
+            dict: {
+                "total": 总数,
+                "by_type": {"config_change": n, ...},
+                "by_severity": {"low": n, "medium": n, "high": n},
+                "by_status": {"open": n, "ack": n, "closed": n}
+            }
+        """
+        base_condition = self.model.is_deleted.is_(False)
+
+        # 总数
+        total_query = select(func.count(self.model.id)).where(base_condition)
+        total_result = await db.execute(total_query)
+        total = total_result.scalar() or 0
+
+        # 按类型分组
+        type_query = (
+            select(self.model.alert_type, func.count(self.model.id))
+            .where(base_condition)
+            .group_by(self.model.alert_type)
+        )
+        type_result = await db.execute(type_query)
+        by_type = {row[0]: row[1] for row in type_result.all()}
+
+        # 按级别分组
+        severity_query = (
+            select(self.model.severity, func.count(self.model.id)).where(base_condition).group_by(self.model.severity)
+        )
+        severity_result = await db.execute(severity_query)
+        by_severity = {row[0]: row[1] for row in severity_result.all()}
+
+        # 按状态分组
+        status_query = (
+            select(self.model.status, func.count(self.model.id)).where(base_condition).group_by(self.model.status)
+        )
+        status_result = await db.execute(status_query)
+        by_status = {row[0]: row[1] for row in status_result.all()}
+
+        return {
+            "total": total,
+            "by_type": by_type,
+            "by_severity": by_severity,
+            "by_status": by_status,
+        }
+
+    async def get_trend(self, db: AsyncSession, days: int = 7) -> list[dict]:
+        """
+        获取告警趋势数据（近 N 天每日新增）。
+
+        Args:
+            db: 数据库会话
+            days: 天数，默认 7 天
+
+        Returns:
+            list[dict]: [{"date": "2026-01-20", "count": 5}, ...]
+        """
+        since = datetime.now() - timedelta(days=days)
+
+        # 按日期分组统计
+        query = (
+            select(
+                func.date(self.model.created_at).label("date"),
+                func.count(self.model.id).label("count"),
+            )
+            .where(self.model.is_deleted.is_(False))
+            .where(self.model.created_at >= since)
+            .group_by(func.date(self.model.created_at))
+            .order_by(func.date(self.model.created_at))
+        )
+        result = await db.execute(query)
+        rows = result.all()
+
+        return [{"date": str(row.date), "count": row.count} for row in rows]
 
 
 alert_crud = CRUDAlert(Alert)

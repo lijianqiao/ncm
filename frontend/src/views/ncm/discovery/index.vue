@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, h, computed, onMounted } from 'vue'
+import { ref, h, computed, onMounted, watch } from 'vue'
 import {
   NButton,
   NDescriptions,
@@ -43,6 +43,7 @@ import {
   type ScanTaskStatus,
   type OfflineDevice,
 } from '@/api/discovery'
+import { getSnmpCredentials, type DeptSnmpCredential } from '@/api/snmp_credentials'
 import { type DeviceGroup } from '@/api/devices'
 import { getDeptTree, type Dept } from '@/api/depts'
 import { formatDateTime } from '@/utils/date'
@@ -97,6 +98,31 @@ const scanTypeOptions = [
   { label: 'Nmap', value: 'nmap' },
   { label: 'Masscan', value: 'masscan' },
 ]
+
+const snmpCredentialOptions = ref<DropdownOption[]>([])
+const snmpCredentialLoading = ref(false)
+
+const buildSnmpCredentialOption = (item: DeptSnmpCredential): DropdownOption => {
+  const deptName = item.dept_name || '未绑定部门'
+  const description = item.description ? ` · ${item.description}` : ''
+  return {
+    label: `${deptName} · ${item.snmp_version.toUpperCase()} · ${item.port}${description}`,
+    value: item.id,
+  }
+}
+
+const fetchSnmpCredentials = async () => {
+  snmpCredentialLoading.value = true
+  try {
+    const res = await getSnmpCredentials({ page: 1, page_size: 500 })
+    const items = res.data.items || []
+    snmpCredentialOptions.value = items.map(buildSnmpCredentialOption)
+  } catch {
+    snmpCredentialOptions.value = []
+  } finally {
+    snmpCredentialLoading.value = false
+  }
+}
 
 // ==================== 部门树 ====================
 
@@ -261,7 +287,8 @@ const columns: DataTableColumns<DiscoveryRecord> = [
     width: 240,
     resizable: true,
     ellipsis: { tooltip: true },
-    render: (row) => (row.snmp_ok === false ? row.snmp_error || '-' : '-'),
+    render: (row) =>
+      row.snmp_ok === false ? row.snmp_error || 'SNMP 失败：凭据或网络不可达' : '-',
   },
   {
     title: '开放端口',
@@ -311,7 +338,7 @@ const columns: DataTableColumns<DiscoveryRecord> = [
   {
     title: '扫描方式',
     key: 'scan_source',
-    width: 90,
+    width: 110,
     sorter: 'default',
     resizable: true,
     render: (row) => row.scan_source || '-',
@@ -332,7 +359,7 @@ const columns: DataTableColumns<DiscoveryRecord> = [
     resizable: true,
     render: (row) => formatDateTime(row.last_seen_at),
   },
-  { title: '离线天数', key: 'offline_days', width: 90, sorter: 'default', resizable: true },
+  { title: '离线天数', key: 'offline_days', width: 110, sorter: 'default', resizable: true },
 ]
 
 // ==================== 搜索筛选 ====================
@@ -478,7 +505,9 @@ const handleShowSnmp = (row: DiscoveryRecord) => {
                   h(
                     'div',
                     { style: { whiteSpace: 'pre-wrap', wordBreak: 'break-word' } },
-                    row.snmp_ok === false ? row.snmp_error || '-' : '-',
+                    row.snmp_ok === false
+                      ? row.snmp_error || 'SNMP 失败：凭据或网络不可达'
+                      : '-',
                   ),
               },
             ),
@@ -570,9 +599,9 @@ const showScanModal = ref(false)
 const scanModel = ref({
   subnets: '',
   scan_type: 'auto' as 'auto' | 'nmap' | 'masscan',
-  ports: '22,23,80,443',
+  ports: '22,161',
   async_mode: true,
-  dept_id: '',
+  snmp_cred_id: '',
 })
 
 const DISCOVERY_SCAN_TASK_ID_KEY = 'ncm.discovery.scan_task_id'
@@ -632,11 +661,11 @@ const handleTriggerScan = () => {
   scanModel.value = {
     subnets: '',
     scan_type: 'auto',
-    ports: '22,23,80,443',
+    ports: '22,161',
     async_mode: true,
-    dept_id: '',
+    snmp_cred_id: '',
   }
-  fetchDeptTree()
+  fetchSnmpCredentials()
   // 只重置表单，不打断已有扫描轮询
   showScanModal.value = true
 }
@@ -644,6 +673,10 @@ const handleTriggerScan = () => {
 const submitScan = async () => {
   if (!scanModel.value.subnets) {
     $alert.warning('请输入扫描网段')
+    return
+  }
+  if (!scanModel.value.snmp_cred_id) {
+    $alert.warning('未选择 SNMP 凭据，将无法进行 SNMP 补全')
     return
   }
   const subnets = scanModel.value.subnets
@@ -654,13 +687,20 @@ const submitScan = async () => {
     $alert.warning('请输入有效的网段')
     return
   }
+  const ports = (scanModel.value.ports || '')
+    .split(/[\,\n]/)
+    .map((p) => p.trim())
+    .filter(Boolean)
+  if (!ports.includes('161')) {
+    $alert.warning('未包含 161 端口，SNMP 补全将被跳过')
+  }
   try {
     const res = await triggerScan({
       subnets,
       scan_type: scanModel.value.scan_type,
       ports: scanModel.value.ports || undefined,
       async_mode: scanModel.value.async_mode,
-      dept_id: scanModel.value.dept_id || undefined,
+      snmp_cred_id: scanModel.value.snmp_cred_id,
     })
     if (res.data.task_id) {
       $alert.success('扫描任务已提交')
@@ -682,41 +722,49 @@ const closeScanModal = () => {
 
 // ==================== 影子资产 & 离线设备 ====================
 
-const showExtraModal = ref(false)
-const activeTab = ref('shadow')
+const activeTab = ref('records')
 const shadowAssets = ref<DiscoveryRecord[]>([])
 const offlineDevices = ref<OfflineDevice[]>([])
-const extraLoading = ref(false)
+const shadowLoading = ref(false)
+const offlineLoading = ref(false)
 const offlineDaysThreshold = ref(7)
 
-const handleShowExtra = async () => {
-  showExtraModal.value = true
-  extraLoading.value = true
+const loadShadowAssets = async () => {
+  shadowLoading.value = true
   try {
-    const [shadowRes, offlineRes] = await Promise.all([
-      getShadowAssets({ page_size: 100 }),
-      getOfflineDevices(offlineDaysThreshold.value),
-    ])
-    shadowAssets.value = shadowRes.data.items || []
-    offlineDevices.value = offlineRes.data || []
+    const res = await getShadowAssets({ page_size: 100 })
+    shadowAssets.value = res.data.items || []
   } catch {
     // Error handled
   } finally {
-    extraLoading.value = false
+    shadowLoading.value = false
   }
 }
 
-const refreshOfflineDevices = async () => {
-  extraLoading.value = true
+const loadOfflineDevices = async () => {
+  offlineLoading.value = true
   try {
     const res = await getOfflineDevices(offlineDaysThreshold.value)
     offlineDevices.value = res.data || []
   } catch {
     // Error handled
   } finally {
-    extraLoading.value = false
+    offlineLoading.value = false
   }
 }
+
+const refreshOfflineDevices = async () => {
+  await loadOfflineDevices()
+}
+
+watch(activeTab, (val) => {
+  if (val === 'shadow') {
+    loadShadowAssets()
+  }
+  if (val === 'offline') {
+    loadOfflineDevices()
+  }
+})
 
 // ==================== CMDB 比对 ====================
 
@@ -745,28 +793,98 @@ const handleCompareCMDB = () => {
 
 <template>
   <div class="discovery-management p-4">
-    <ProTable ref="tableRef" title="资产发现记录" :columns="columns" :request="loadData"
-      :row-key="(row: DiscoveryRecord) => row.id" :context-menu-options="contextMenuOptions"
-      search-placeholder="搜索IP/MAC/主机名" :search-filters="searchFilters" @context-menu-select="handleContextMenuSelect"
-      @recycle-bin="handleRecycleBin" @batch-delete="handleBatchDelete" show-recycle-bin show-batch-delete>
-      <template #toolbar-left>
-        <n-space>
-          <n-button :type="scanButtonType as any" :loading="scanIsPolling"
-            @click="scanTaskStatus ? showScanStatusDetail() : handleTriggerScan()">
-            {{ scanButtonText }}
-          </n-button>
-          <n-button type="info" @click="handleShowExtra">影子资产/离线设备</n-button>
-          <n-button @click="handleCompareCMDB">CMDB 比对</n-button>
-          <DataImportExport title="发现记录" show-export export-name="discovery_export.csv"
-            :export-api="exportDiscoveryRecords" />
-        </n-space>
-      </template>
-    </ProTable>
+    <n-tabs v-model:value="activeTab">
+      <n-tab-pane name="records" tab="发现记录">
+        <ProTable ref="tableRef" title="资产发现记录" :columns="columns" :request="loadData"
+          :row-key="(row: DiscoveryRecord) => row.id" :context-menu-options="contextMenuOptions"
+          search-placeholder="搜索IP/MAC/主机名" :search-filters="searchFilters"
+          @context-menu-select="handleContextMenuSelect" @recycle-bin="handleRecycleBin"
+          @batch-delete="handleBatchDelete" show-recycle-bin show-batch-delete>
+          <template #toolbar-left>
+            <n-space>
+              <n-button :type="scanButtonType as any" :loading="scanIsPolling"
+                @click="scanTaskStatus ? showScanStatusDetail() : handleTriggerScan()">
+                {{ scanButtonText }}
+              </n-button>
+              <n-button @click="handleCompareCMDB">CMDB 比对</n-button>
+              <DataImportExport title="发现记录" show-export export-name="discovery_export.csv"
+                :export-api="exportDiscoveryRecords" />
+            </n-space>
+          </template>
+        </ProTable>
 
-    <RecycleBinModal ref="recycleBinRef" v-model:show="showRecycleBin" title="回收站 (已删除发现记录)" :columns="columns"
-      :request="recycleBinRequest" :row-key="(row: DiscoveryRecord) => row.id" search-placeholder="搜索已删除记录..."
-      @restore="handleRecycleBinRestore" @batch-restore="handleRecycleBinBatchRestore"
-      @hard-delete="handleRecycleBinHardDelete" @batch-hard-delete="handleRecycleBinBatchHardDelete" />
+        <RecycleBinModal ref="recycleBinRef" v-model:show="showRecycleBin" title="回收站 (已删除发现记录)" :columns="columns"
+          :request="recycleBinRequest" :row-key="(row: DiscoveryRecord) => row.id" search-placeholder="搜索已删除记录..."
+          @restore="handleRecycleBinRestore" @batch-restore="handleRecycleBinBatchRestore"
+          @hard-delete="handleRecycleBinHardDelete" @batch-hard-delete="handleRecycleBinBatchHardDelete" />
+      </n-tab-pane>
+      <n-tab-pane name="shadow" tab="影子资产">
+        <div v-if="shadowLoading" style="text-align: center; padding: 40px">加载中...</div>
+        <template v-else>
+          <n-alert type="info" style="margin-bottom: 16px">
+            影子资产是在网络中发现但未在 CMDB 中注册的设备
+          </n-alert>
+          <n-table :bordered="false" :single-line="false">
+            <thead>
+              <tr>
+                <th>IP 地址</th>
+                <th>MAC 地址</th>
+                <th>厂商</th>
+                <th>主机名</th>
+                <th>首次发现</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="item in shadowAssets" :key="item.id">
+                <td>{{ item.ip_address }}</td>
+                <td>{{ item.mac_address || '-' }}</td>
+                <td>{{ item.vendor || '-' }}</td>
+                <td>{{ item.hostname || '-' }}</td>
+                <td>{{ formatDateTime(item.first_seen_at) }}</td>
+              </tr>
+              <tr v-if="shadowAssets.length === 0">
+                <td colspan="5" style="text-align: center">暂无影子资产</td>
+              </tr>
+            </tbody>
+          </n-table>
+        </template>
+      </n-tab-pane>
+      <n-tab-pane name="offline" tab="离线设备">
+        <div v-if="offlineLoading" style="text-align: center; padding: 40px">加载中...</div>
+        <template v-else>
+          <n-space style="margin-bottom: 16px">
+            <span>离线天数阈值:</span>
+            <n-input-number v-model:value="offlineDaysThreshold" :min="1" :max="365" />
+            <n-button @click="refreshOfflineDevices">刷新</n-button>
+          </n-space>
+          <n-table :bordered="false" :single-line="false">
+            <thead>
+              <tr>
+                <th>设备名称</th>
+                <th>IP 地址</th>
+                <th>最后发现时间</th>
+                <th>离线天数</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="item in offlineDevices" :key="item.device_id">
+                <td>{{ item.device_name }}</td>
+                <td>{{ item.ip_address }}</td>
+                <td>{{ formatDateTime(item.last_seen_at) }}</td>
+                <td>
+                  <n-tag :type="item.offline_days > 30 ? 'error' : 'warning'" size="small">
+                    {{ item.offline_days }} 天
+                  </n-tag>
+                </td>
+              </tr>
+              <tr v-if="offlineDevices.length === 0">
+                <td colspan="4" style="text-align: center">暂无离线设备</td>
+              </tr>
+            </tbody>
+          </n-table>
+        </template>
+      </n-tab-pane>
+    </n-tabs>
 
     <!-- 触发扫描 Modal -->
     <n-modal v-model:show="showScanModal" preset="card" title="触发网络扫描" style="width: 600px" @close="closeScanModal">
@@ -775,15 +893,15 @@ const handleCompareCMDB = () => {
           <n-input v-model:value="scanModel.subnets" type="textarea" placeholder="例如: 192.168.1.0/24, 10.0.0.0/24"
             :rows="3" />
         </n-form-item>
-        <n-form-item label="所属部门（用于 SNMP 凭据匹配）">
-          <n-tree-select v-model:value="scanModel.dept_id" :options="deptTreeOptions" placeholder="可选" clearable
-            key-field="key" label-field="label" />
+        <n-form-item label="SNMP 凭据">
+          <n-select v-model:value="scanModel.snmp_cred_id" :options="snmpCredentialOptions"
+            :loading="snmpCredentialLoading" placeholder="请选择 SNMP 凭据" clearable />
         </n-form-item>
         <n-form-item label="扫描类型">
           <n-select v-model:value="scanModel.scan_type" :options="scanTypeOptions" />
         </n-form-item>
         <n-form-item label="扫描端口">
-          <n-input v-model:value="scanModel.ports" placeholder="22,23,80,443" />
+          <n-input v-model:value="scanModel.ports" placeholder="22,161" />
         </n-form-item>
       </n-space>
       <div style="margin-top: 20px; text-align: right">
@@ -828,79 +946,6 @@ const handleCompareCMDB = () => {
       </template>
     </n-modal>
 
-    <!-- 影子资产 & 离线设备 Modal -->
-    <n-modal v-model:show="showExtraModal" preset="card" title="影子资产 & 离线设备" style="width: 900px">
-      <div class="extra-modal-body">
-        <n-tabs v-model:value="activeTab">
-          <n-tab-pane name="shadow" tab="影子资产">
-            <div v-if="extraLoading" style="text-align: center; padding: 40px">加载中...</div>
-            <template v-else>
-              <n-alert type="info" style="margin-bottom: 16px">
-                影子资产是在网络中发现但未在 CMDB 中注册的设备
-              </n-alert>
-              <n-table :bordered="false" :single-line="false">
-                <thead>
-                  <tr>
-                    <th>IP 地址</th>
-                    <th>MAC 地址</th>
-                    <th>厂商</th>
-                    <th>主机名</th>
-                    <th>首次发现</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr v-for="item in shadowAssets" :key="item.id">
-                    <td>{{ item.ip_address }}</td>
-                    <td>{{ item.mac_address || '-' }}</td>
-                    <td>{{ item.vendor || '-' }}</td>
-                    <td>{{ item.hostname || '-' }}</td>
-                    <td>{{ formatDateTime(item.first_seen_at) }}</td>
-                  </tr>
-                  <tr v-if="shadowAssets.length === 0">
-                    <td colspan="5" style="text-align: center">暂无影子资产</td>
-                  </tr>
-                </tbody>
-              </n-table>
-            </template>
-          </n-tab-pane>
-          <n-tab-pane name="offline" tab="离线设备">
-            <div v-if="extraLoading" style="text-align: center; padding: 40px">加载中...</div>
-            <template v-else>
-              <n-space style="margin-bottom: 16px">
-                <span>离线天数阈值:</span>
-                <n-input-number v-model:value="offlineDaysThreshold" :min="1" :max="365" />
-                <n-button @click="refreshOfflineDevices">刷新</n-button>
-              </n-space>
-              <n-table :bordered="false" :single-line="false">
-                <thead>
-                  <tr>
-                    <th>设备名称</th>
-                    <th>IP 地址</th>
-                    <th>最后发现时间</th>
-                    <th>离线天数</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr v-for="item in offlineDevices" :key="item.device_id">
-                    <td>{{ item.device_name }}</td>
-                    <td>{{ item.ip_address }}</td>
-                    <td>{{ formatDateTime(item.last_seen_at) }}</td>
-                    <td>
-                      <n-tag :type="item.offline_days > 30 ? 'error' : 'warning'" size="small">
-                        {{ item.offline_days }} 天
-                      </n-tag>
-                    </td>
-                  </tr>
-                  <tr v-if="offlineDevices.length === 0">
-                    <td colspan="4" style="text-align: center">暂无离线设备</td>
-                  </tr>
-                </tbody>
-              </n-table>
-            </template>
-          </n-tab-pane>
-        </n-tabs>
-      </div>
-    </n-modal>
   </div>
 </template>
 
@@ -911,10 +956,5 @@ const handleCompareCMDB = () => {
 
 .p-4 {
   padding: 16px;
-}
-
-.extra-modal-body {
-  max-height: 70vh;
-  overflow: auto;
 }
 </style>

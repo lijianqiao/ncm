@@ -22,9 +22,10 @@ def _do_init_redis(context: str) -> None:
     Args:
         context: 调用上下文描述（用于日志区分）
     """
-    from app.core.logger import logger
+    from app.core.logger import logger, setup_logging
 
     try:
+        setup_logging()
         from app.celery.base import init_celery_async_runtime, run_async
         from app.core.cache import init_redis
 

@@ -35,6 +35,11 @@ class AlertUpdate(BaseModel):
     title: str | None = Field(default=None, max_length=200, description="告警标题")
     message: str | None = Field(default=None, description="告警正文")
     details: dict | None = Field(default=None, description="告警详情(JSON)")
+    # 操作人信息
+    acked_by_id: UUID | None = Field(default=None, description="确认人ID")
+    acked_at: datetime | None = Field(default=None, description="确认时间")
+    closed_by_id: UUID | None = Field(default=None, description="关闭人ID")
+    closed_at: datetime | None = Field(default=None, description="关闭时间")
 
 
 class AlertResponse(BaseModel):
@@ -57,6 +62,20 @@ class AlertResponse(BaseModel):
     related_device_name: str | None = None
     related_device_ip: str | None = None
 
+    # 确认人信息
+    acked_by_id: UUID | None = None
+    acked_by_username: str | None = None
+    acked_by_nickname: str | None = None
+    acked_by_display: str | None = None
+    acked_at: datetime | None = None
+
+    # 关闭人信息
+    closed_by_id: UUID | None = None
+    closed_by_username: str | None = None
+    closed_by_nickname: str | None = None
+    closed_by_display: str | None = None
+    closed_at: datetime | None = None
+
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -72,3 +91,26 @@ class AlertListQuery(BaseModel):
     related_device_id: UUID | None = Field(default=None, description="设备筛选")
     start_time: datetime | None = Field(default=None, description="开始时间")
     end_time: datetime | None = Field(default=None, description="结束时间")
+
+
+class AlertStats(BaseModel):
+    """告警统计数据。"""
+
+    total: int = Field(..., description="告警总数")
+    by_type: dict[str, int] = Field(default_factory=dict, description="按类型分组")
+    by_severity: dict[str, int] = Field(default_factory=dict, description="按级别分组")
+    by_status: dict[str, int] = Field(default_factory=dict, description="按状态分组")
+
+
+class AlertTrendItem(BaseModel):
+    """告警趋势单项。"""
+
+    date: str = Field(..., description="日期 (YYYY-MM-DD)")
+    count: int = Field(..., description="当日新增数量")
+
+
+class AlertTrend(BaseModel):
+    """告警趋势数据。"""
+
+    days: int = Field(..., description="统计天数")
+    items: list[AlertTrendItem] = Field(default_factory=list, description="趋势列表")

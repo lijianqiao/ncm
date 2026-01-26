@@ -1,8 +1,16 @@
 <script setup lang="ts">
-import { ref, h } from 'vue'
+import { ref, h, computed, onMounted, onUnmounted, watch } from 'vue'
 import {
   NButton,
-  NModal,
+  NCard,
+  NGrid,
+  NGridItem,
+  NStatistic,
+  NDrawer,
+  NDrawerContent,
+  NCode,
+  NInput,
+  NSwitch,
   useDialog,
   type DataTableColumns,
   NTag,
@@ -35,6 +43,11 @@ defineOptions({
 
 const dialog = useDialog()
 const tableRef = ref()
+const autoRefresh = ref(false)
+const relatedDeviceId = ref('')
+const lastItems = ref<Alert[]>([])
+const lastTotal = ref(0)
+let autoRefreshTimer: number | null = null
 
 // ==================== 常量定义 ====================
 
@@ -159,12 +172,38 @@ const searchFilters: FilterConfig[] = [
 // ==================== 数据加载 ====================
 
 const loadData = async (params: AlertSearchParams) => {
-  const res = await getAlerts(params)
+  const nextParams = {
+    ...params,
+    related_device_id: relatedDeviceId.value || undefined,
+  }
+  const res = await getAlerts(nextParams)
+  lastItems.value = res.data.items
+  lastTotal.value = res.data.total
   return {
     data: res.data.items,
     total: res.data.total,
   }
 }
+
+const stats = computed(() => {
+  const items = lastItems.value
+  const counts = {
+    open: 0,
+    ack: 0,
+    closed: 0,
+  }
+  items.forEach((item) => {
+    if (item.status === 'open') counts.open += 1
+    if (item.status === 'ack') counts.ack += 1
+    if (item.status === 'closed') counts.closed += 1
+  })
+  return {
+    total: lastTotal.value,
+    open: counts.open,
+    ack: counts.ack,
+    closed: counts.closed,
+  }
+})
 
 // ==================== 右键菜单 ====================
 
@@ -182,22 +221,56 @@ const handleContextMenuSelect = (key: string | number, row: Alert) => {
 
 // ==================== 查看详情 ====================
 
-const showDetailModal = ref(false)
+const showDetailDrawer = ref(false)
 const detailData = ref<Alert | null>(null)
 const detailLoading = ref(false)
+const detailJson = computed(() => {
+  if (!detailData.value) return ''
+  return JSON.stringify(detailData.value, null, 2)
+})
 
 const handleViewDetail = async (row: Alert) => {
   detailLoading.value = true
-  showDetailModal.value = true
+  showDetailDrawer.value = true
   try {
     const res = await getAlert(row.id)
     detailData.value = res.data
   } catch {
-    showDetailModal.value = false
+    showDetailDrawer.value = false
   } finally {
     detailLoading.value = false
   }
 }
+
+const handleRefresh = () => {
+  tableRef.value?.reload()
+}
+
+const setupAutoRefresh = () => {
+  if (autoRefreshTimer) {
+    window.clearInterval(autoRefreshTimer)
+    autoRefreshTimer = null
+  }
+  if (!autoRefresh.value) return
+  autoRefreshTimer = window.setInterval(() => {
+    tableRef.value?.reload()
+  }, 30000)
+}
+
+onMounted(() => {
+  setupAutoRefresh()
+})
+
+onUnmounted(() => {
+  if (autoRefreshTimer) {
+    window.clearInterval(autoRefreshTimer)
+    autoRefreshTimer = null
+  }
+})
+
+watch(autoRefresh, () => {
+  setupAutoRefresh()
+})
 
 // ==================== 确认告警 ====================
 
@@ -308,6 +381,23 @@ const handleBatchClose = () => {
 
 <template>
   <div class="alert-management p-4">
+    <n-card class="alert-stats" :bordered="false" size="small">
+      <n-grid :cols="4" :x-gap="16">
+        <n-grid-item>
+          <n-statistic label="告警总数" :value="stats.total" />
+        </n-grid-item>
+        <n-grid-item>
+          <n-statistic label="未处理" :value="stats.open" />
+        </n-grid-item>
+        <n-grid-item>
+          <n-statistic label="已确认" :value="stats.ack" />
+        </n-grid-item>
+        <n-grid-item>
+          <n-statistic label="已关闭" :value="stats.closed" />
+        </n-grid-item>
+      </n-grid>
+    </n-card>
+
     <ProTable ref="tableRef" title="告警列表" :columns="columns" :request="loadData" :row-key="(row: Alert) => row.id"
       :context-menu-options="contextMenuOptions" search-placeholder="搜索告警标题/内容" :search-filters="searchFilters"
       @context-menu-select="handleContextMenuSelect" :scroll-x="1200">
@@ -315,65 +405,80 @@ const handleBatchClose = () => {
         <DataImportExport title="告警" show-export export-name="alerts_export.csv" :export-api="exportAlerts" />
       </template>
       <template #search-right>
+        <n-input v-model:value="relatedDeviceId" placeholder="关联设备ID" style="width: 160px" clearable />
         <n-button type="info" @click="handleBatchAcknowledge">批量确认</n-button>
         <n-button type="warning" @click="handleBatchClose">批量关闭</n-button>
+        <n-button @click="handleRefresh">刷新</n-button>
+        <n-space align="center" size="small">
+          <span style="font-size: 12px; color: #666">自动刷新</span>
+          <n-switch v-model:value="autoRefresh" />
+        </n-space>
       </template>
     </ProTable>
 
-    <!-- 告警详情 Modal -->
-    <n-modal v-model:show="showDetailModal" preset="card" title="告警详情" style="width: 700px">
-      <div v-if="detailLoading" style="text-align: center; padding: 40px">加载中...</div>
-      <template v-else-if="detailData">
-        <n-descriptions :column="2" label-placement="left" bordered>
-          <n-descriptions-item label="告警标题" :span="2">
-            {{ detailData.title }}
-          </n-descriptions-item>
-          <n-descriptions-item label="告警类型">
-            {{ alertTypeLabelMap[detailData.alert_type] }}
-          </n-descriptions-item>
-          <n-descriptions-item label="告警级别">
-            <n-tag :type="severityColorMap[detailData.severity]" size="small">
-              {{ severityLabelMap[detailData.severity] }}
-            </n-tag>
-          </n-descriptions-item>
-          <n-descriptions-item label="状态">
-            <n-tag :type="statusColorMap[detailData.status]" size="small">
-              {{ statusLabelMap[detailData.status] }}
-            </n-tag>
-          </n-descriptions-item>
-          <n-descriptions-item label="关联设备">
-            {{ detailData.related_device_name || '-' }}
-          </n-descriptions-item>
-          <n-descriptions-item label="告警内容" :span="2">
-            {{ detailData.content || '-' }}
-          </n-descriptions-item>
-          <n-descriptions-item label="创建时间">
-            {{ formatDateTime(detailData.created_at) }}
-          </n-descriptions-item>
-          <n-descriptions-item label="更新时间">
-            {{ formatDateTime(detailData.updated_at) }}
-          </n-descriptions-item>
-          <n-descriptions-item label="确认人">
-            {{ detailData.acknowledged_by || '-' }}
-          </n-descriptions-item>
-          <n-descriptions-item label="确认时间">
-            {{ formatDateTime(detailData.acknowledged_at) }}
-          </n-descriptions-item>
-          <n-descriptions-item label="关闭人">
-            {{ detailData.closed_by || '-' }}
-          </n-descriptions-item>
-          <n-descriptions-item label="关闭时间">
-            {{ formatDateTime(detailData.closed_at) }}
-          </n-descriptions-item>
-        </n-descriptions>
-      </template>
-    </n-modal>
+    <n-drawer v-model:show="showDetailDrawer" :width="720" placement="right">
+      <n-drawer-content title="告警详情">
+        <div v-if="detailLoading" style="text-align: center; padding: 40px">加载中...</div>
+        <template v-else-if="detailData">
+          <n-descriptions :column="2" label-placement="left" bordered>
+            <n-descriptions-item label="告警标题" :span="2">
+              {{ detailData.title }}
+            </n-descriptions-item>
+            <n-descriptions-item label="告警类型">
+              {{ alertTypeLabelMap[detailData.alert_type] }}
+            </n-descriptions-item>
+            <n-descriptions-item label="告警级别">
+              <n-tag :type="severityColorMap[detailData.severity]" size="small">
+                {{ severityLabelMap[detailData.severity] }}
+              </n-tag>
+            </n-descriptions-item>
+            <n-descriptions-item label="状态">
+              <n-tag :type="statusColorMap[detailData.status]" size="small">
+                {{ statusLabelMap[detailData.status] }}
+              </n-tag>
+            </n-descriptions-item>
+            <n-descriptions-item label="关联设备">
+              {{ detailData.related_device_name || '-' }}
+            </n-descriptions-item>
+            <n-descriptions-item label="告警内容" :span="2">
+              {{ detailData.content || '-' }}
+            </n-descriptions-item>
+            <n-descriptions-item label="创建时间">
+              {{ formatDateTime(detailData.created_at) }}
+            </n-descriptions-item>
+            <n-descriptions-item label="更新时间">
+              {{ formatDateTime(detailData.updated_at) }}
+            </n-descriptions-item>
+            <n-descriptions-item label="确认人">
+              {{ detailData.acknowledged_by || '-' }}
+            </n-descriptions-item>
+            <n-descriptions-item label="确认时间">
+              {{ formatDateTime(detailData.acknowledged_at) }}
+            </n-descriptions-item>
+            <n-descriptions-item label="关闭人">
+              {{ detailData.closed_by || '-' }}
+            </n-descriptions-item>
+            <n-descriptions-item label="关闭时间">
+              {{ formatDateTime(detailData.closed_at) }}
+            </n-descriptions-item>
+          </n-descriptions>
+          <n-card size="small" style="margin-top: 16px">
+            <template #header>详情 JSON</template>
+            <n-code :code="detailJson" language="json" />
+          </n-card>
+        </template>
+      </n-drawer-content>
+    </n-drawer>
   </div>
 </template>
 
 <style scoped>
 .alert-management {
   height: 100%;
+}
+
+.alert-stats {
+  margin-bottom: 16px;
 }
 
 .p-4 {

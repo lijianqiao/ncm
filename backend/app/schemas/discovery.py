@@ -24,7 +24,7 @@ class ScanRequest(BaseModel):
     scan_type: str = Field(default="auto", description="扫描类型 (auto/nmap/masscan)")
     ports: str | None = Field(default=None, description="扫描端口 (如 22,23,80,443)")
     async_mode: bool = Field(default=True, description="是否异步执行")
-    dept_id: UUID | None = Field(default=None, description="所属部门ID（用于 SNMP 凭据匹配）")
+    snmp_cred_id: UUID | None = Field(default=None, description="SNMP 凭据ID")
 
     @field_validator("scan_type")
     @classmethod

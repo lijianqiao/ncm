@@ -62,7 +62,7 @@ export interface ScanRequest {
   scan_type?: 'auto' | 'nmap' | 'masscan'
   ports?: string
   async_mode?: boolean
-  dept_id?: string
+  snmp_cred_id: string
 }
 
 /** 扫描结果 */

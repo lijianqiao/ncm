@@ -9,9 +9,10 @@
 """
 
 import uuid
+from datetime import datetime
 from typing import TYPE_CHECKING, Optional
 
-from sqlalchemy import JSON, ForeignKey, String, Text
+from sqlalchemy import JSON, DateTime, ForeignKey, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.enums import AlertSeverity, AlertStatus, AlertType
@@ -20,6 +21,7 @@ from app.models.base import AuditableModel
 if TYPE_CHECKING:
     from app.models.device import Device
     from app.models.discovery import Discovery
+    from app.models.user import User
 
 
 class Alert(AuditableModel):
@@ -72,10 +74,35 @@ class Alert(AuditableModel):
         comment="关联发现记录ID",
     )
 
+    # 确认人信息
+    acked_by_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("sys_user.id", ondelete="SET NULL"),
+        nullable=True,
+        comment="确认人ID",
+    )
+    acked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+        comment="确认时间",
+    )
+
+    # 关闭人信息
+    closed_by_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("sys_user.id", ondelete="SET NULL"),
+        nullable=True,
+        comment="关闭人ID",
+    )
+    closed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+        comment="关闭时间",
+    )
+
     # 关联关系
     related_device: Mapped[Optional["Device"]] = relationship("Device", lazy="selectin")
     related_discovery: Mapped[Optional["Discovery"]] = relationship("Discovery", lazy="selectin")
+    acked_by: Mapped[Optional["User"]] = relationship("User", foreign_keys=[acked_by_id], lazy="selectin")
+    closed_by: Mapped[Optional["User"]] = relationship("User", foreign_keys=[closed_by_id], lazy="selectin")
 
     def __repr__(self) -> str:
         return f"<Alert(type={self.alert_type}, severity={self.severity}, status={self.status})>"
-

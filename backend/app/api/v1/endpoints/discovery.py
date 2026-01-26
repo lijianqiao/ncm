@@ -86,14 +86,14 @@ async def trigger_scan(
                 subnet=request.subnets[0],
                 scan_type=request.scan_type,
                 ports=request.ports,
-                dept_id=request.dept_id,
+                snmp_cred_id=str(request.snmp_cred_id) if request.snmp_cred_id else None,
             )
         else:
             task = cast(Any, scan_subnets_batch).delay(
                 subnets=request.subnets,
                 scan_type=request.scan_type,
                 ports=request.ports,
-                dept_id=request.dept_id,
+                snmp_cred_id=str(request.snmp_cred_id) if request.snmp_cred_id else None,
             )
         return ResponseBase(
             data=ScanTaskResponse(

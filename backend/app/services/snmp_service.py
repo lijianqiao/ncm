@@ -9,7 +9,7 @@
 from collections.abc import Iterable
 from dataclasses import dataclass
 
-from pysnmp.hlapi.asyncio import (
+from pysnmp.hlapi.v3arch.asyncio import (
     CommunityData,
     ContextData,
     ObjectIdentity,
@@ -87,71 +87,89 @@ class SnmpService:
         self.timeout_seconds = timeout_seconds if timeout_seconds is not None else settings.SNMP_TIMEOUT_SECONDS
         self.retries = retries if retries is not None else settings.SNMP_RETRIES
 
-    async def get_many(self, host: str, cred: SnmpV2cCredential, oids: Iterable[str]) -> dict[str, object]:
-        oid_list = list(oids)
-        engine = SnmpEngine()
-        target = await UdpTransportTarget.create(
+    async def _create_target(self, host: str, cred: SnmpV2cCredential) -> UdpTransportTarget:
+        return await UdpTransportTarget.create(
             (host, cred.port),
             timeout=self.timeout_seconds,
             retries=self.retries,
         )
-        community = CommunityData(cred.community, mpModel=1)
-        obj_types = [ObjectType(ObjectIdentity(oid)) for oid in oid_list]
-        error_indication, error_status, error_index, var_binds = await get_cmd(
-            engine,
-            community,
-            target,
-            ContextData(),
-            *obj_types,
-        )
-        if error_indication:
-            raise RuntimeError(str(error_indication))
-        if error_status:
-            idx = int(error_index) - 1 if error_index else -1
-            bad_oid = oid_list[idx] if 0 <= idx < len(oid_list) else ""
-            raise RuntimeError(f"{str(error_status)} {bad_oid}".strip())
 
-        result: dict[str, object] = {}
-        for var_bind in var_binds:
-            oid_obj = var_bind[0]
-            value = var_bind[1]
-            result[str(oid_obj)] = value
-        return result
+    def _close_engine(self, engine: SnmpEngine) -> None:
+        try:
+            engine.close_dispatcher()
+        except Exception:
+            pass
+
+    async def get_many(self, host: str, cred: SnmpV2cCredential, oids: Iterable[str]) -> dict[str, object]:
+        engine = SnmpEngine()
+        try:
+            oid_list = list(oids)
+            target = await self._create_target(host, cred)
+            community = CommunityData(cred.community, mpModel=1)
+            obj_types = [ObjectType(ObjectIdentity(oid)) for oid in oid_list]
+            iterator = get_cmd(
+                engine,
+                community,
+                target,
+                ContextData(),
+                *obj_types,
+            )
+            error_indication, error_status, error_index, var_binds = await iterator
+            if error_indication:
+                raise RuntimeError(str(error_indication))
+            if error_status:
+                idx = int(error_index) - 1 if error_index else -1
+                bad_oid = oid_list[idx] if 0 <= idx < len(oid_list) else ""
+                raise RuntimeError(f"{str(error_status)} {bad_oid}".strip())
+
+            result: dict[str, object] = {}
+            for var_bind in var_binds:
+                oid_obj = var_bind[0]
+                value = var_bind[1]
+                result[str(oid_obj)] = value
+            return result
+        finally:
+            self._close_engine(engine)
 
     async def walk(
         self, host: str, cred: SnmpV2cCredential, root_oid: str, *, max_rows: int = 2000
     ) -> list[tuple[str, object]]:
         engine = SnmpEngine()
-        target = await UdpTransportTarget.create(
-            (host, cred.port),
-            timeout=self.timeout_seconds,
-            retries=self.retries,
-        )
-        community = CommunityData(cred.community, mpModel=1)
-        rows: list[tuple[str, object]] = []
-        async for error_indication, error_status, _, var_binds in walk_cmd(
-            engine,
-            community,
-            target,
-            ContextData(),
-            ObjectType(ObjectIdentity(root_oid)),
-            lexicographicMode=False,
-        ):
-            if error_indication:
-                raise RuntimeError(str(error_indication))
-            if error_status:
-                raise RuntimeError(str(error_status))
-            for var_bind in var_binds:
-                oid_obj = var_bind[0]
-                value = var_bind[1]
-                rows.append((str(oid_obj), value))
-                if len(rows) >= max_rows:
-                    return rows
-        return rows
+        try:
+            target = await self._create_target(host, cred)
+            community = CommunityData(cred.community, mpModel=1)
+            rows: list[tuple[str, object]] = []
+            async for error_indication, error_status, _, var_binds in walk_cmd(
+                engine,
+                community,
+                target,
+                ContextData(),
+                ObjectType(ObjectIdentity(root_oid)),
+                lexicographicMode=False,
+            ):
+                if error_indication:
+                    raise RuntimeError(str(error_indication))
+                if error_status:
+                    raise RuntimeError(str(error_status))
+                for var_bind in var_binds:
+                    oid_obj = var_bind[0]
+                    value = var_bind[1]
+                    rows.append((str(oid_obj), value))
+                    if len(rows) >= max_rows:
+                        return rows
+            return rows
+        finally:
+            self._close_engine(engine)
 
     async def enrich_basic(self, host: str, cred: SnmpV2cCredential) -> SnmpEnrichResult:
         try:
-            values = await self.get_many(host, cred, [SYS_NAME_OID, SYS_DESCR_OID, DOT1D_BASE_BRIDGE_ADDRESS_OID])
+            values = await self.get_many(host, cred, [SYS_NAME_OID, SYS_DESCR_OID])
+            bridge_mac_value = None
+            try:
+                bridge_values = await self.get_many(host, cred, [DOT1D_BASE_BRIDGE_ADDRESS_OID])
+                bridge_mac_value = bridge_values.get(DOT1D_BASE_BRIDGE_ADDRESS_OID)
+            except Exception:
+                bridge_mac_value = None
 
             def pick(oid: str):
                 if oid in values:
@@ -163,7 +181,8 @@ class SnmpService:
 
             sys_name_value = pick(SYS_NAME_OID)
             sys_descr_value = pick(SYS_DESCR_OID)
-            bridge_mac_value = pick(DOT1D_BASE_BRIDGE_ADDRESS_OID)
+            if bridge_mac_value is None:
+                bridge_mac_value = pick(DOT1D_BASE_BRIDGE_ADDRESS_OID)
 
             sys_name = _to_text(sys_name_value) if sys_name_value is not None else None
             sys_descr = _to_text(sys_descr_value) if sys_descr_value is not None else None
