@@ -97,8 +97,10 @@ async def list_topology_links(
         TopologyLinkItem(
             id=str(link.id),
             source_device_id=str(link.source_device_id),
+            source_device_name=link.source_device.name if link.source_device else None,
             source_interface=link.source_interface,
             target_device_id=str(link.target_device_id) if link.target_device_id else None,
+            target_device_name=link.target_device.name if link.target_device else None,
             target_interface=link.target_interface,
             target_hostname=link.target_hostname,
             target_ip=link.target_ip,
@@ -299,13 +301,12 @@ async def get_topology_task_status(task_id: str) -> ResponseBase[TopologyTaskSta
 
     Returns:
         ResponseBase[TopologyTaskStatus]: 任务状态和（如有）结果数据。
+        如果任务需要 OTP，返回状态中包含 otp_required 信息，前端应重新发起任务。
 
-    Raises:
-        CustomException: OTP 认证失败时返回 428 状态码。
+    注意:
+        GET 请求不返回 428，只返回任务状态。前端收到 otp_required 状态后，
+        应该让用户输入 OTP，然后**重新发起 POST /topology/refresh** 创建新任务。
     """
-    from app.core.exceptions import CustomException
-    from app.core.otp_notice import is_otp_error_text
-
     result = AsyncResult(task_id)
 
     status = TopologyTaskStatus(
@@ -316,16 +317,29 @@ async def get_topology_task_status(task_id: str) -> ResponseBase[TopologyTaskSta
     if result.ready():
         if result.successful():
             task_result = result.get()
-            status.result = TopologyCollectResult.model_validate(task_result)
+
+            # 检查任务结果是否包含 OTP 需求
+            # 注意：这里不返回 428，而是将 otp_required 信息包含在正常响应中
+            # 前端收到后应该重新发起任务，而不是重试 GET 请求
+            if isinstance(task_result, dict) and task_result.get("otp_required"):
+                status.status = "otp_required"
+                status.error = task_result.get("message", "需要输入 OTP 验证码")
+                # 将 OTP 信息放入 result 中，供前端使用
+                status.result = TopologyCollectResult(
+                    total_devices=0,
+                    success_count=0,
+                    failed_count=len(task_result.get("failed_devices", [])),
+                    total_links=0,
+                    results=[],
+                    otp_required=True,
+                    otp_dept_id=task_result.get("dept_id"),
+                    otp_device_group=task_result.get("device_group"),
+                    otp_failed_devices=task_result.get("failed_devices", []),
+                )
+            else:
+                status.result = TopologyCollectResult.model_validate(task_result)
         else:
             status.error = str(result.result)
-            # OTP 认证失败时抛出异常，由全局异常处理器返回 428 响应
-            if is_otp_error_text(status.error):
-                raise CustomException(
-                    code=428,
-                    message=status.error,
-                    details={"otp_required": True},
-                )
 
     return ResponseBase(data=status)
 
@@ -355,3 +369,39 @@ async def rebuild_topology_cache(
             message="拓扑缓存重建任务已提交",
         )
     )
+
+
+@router.delete(
+    "/reset",
+    summary="重置拓扑数据",
+    response_model=ResponseBase[dict],
+    dependencies=[Depends(require_permissions([PermissionCode.TOPOLOGY_REFRESH.value]))],
+)
+async def reset_topology(
+    hard_delete: bool = Query(default=False, description="是否硬删除（物理删除，不可恢复）"),
+    current_user: CurrentUser = None,
+    db: SessionDep = None,
+    topology_service: TopologyServiceDep = None,
+) -> ResponseBase[dict]:
+    """重置拓扑数据（清除所有链路）。
+
+    此操作会删除所有拓扑链路数据，通常在以下情况使用：
+    - 设备大规模变更后需要重建拓扑
+    - 拓扑数据累积过多需要清理
+    - 切换网络环境后需要重新采集
+
+    操作步骤：
+    1. 调用此接口清除所有链路
+    2. 调用 POST /topology/refresh 重新采集拓扑
+
+    Args:
+        hard_delete: 是否硬删除（物理删除）。默认为软删除。
+        current_user: 当前用户。
+        db: 数据库会话。
+        topology_service: 拓扑服务依赖。
+
+    Returns:
+        删除统计信息。
+    """
+    result = await topology_service.reset_topology(db, hard_delete=hard_delete)
+    return ResponseBase(data=result)

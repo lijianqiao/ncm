@@ -65,6 +65,7 @@ class TopologyService(DeviceCredentialMixin):
         self,
         db: AsyncSession,
         device_ids: list[UUID] | None = None,
+        skip_otp_manual: bool = False,
     ) -> TopologyCollectResult:
         """
         采集所有设备的 LLDP 邻居信息。
@@ -72,10 +73,12 @@ class TopologyService(DeviceCredentialMixin):
         Args:
             db: 数据库会话
             device_ids: 指定设备ID列表 (为空则采集所有活跃设备)
+            skip_otp_manual: 是否跳过需要手动 OTP 的设备（用于定时任务）
 
         Returns:
             TopologyCollectResult: 采集结果
         """
+        from app.core.enums import AuthType
         from app.core.exceptions import OTPRequiredException
 
         # 设置 db 以便 DeviceCredentialMixin 可以使用
@@ -108,8 +111,25 @@ class TopologyService(DeviceCredentialMixin):
             device_map: dict[str, Device] = {}
             failed_device_ids: list[str] = []
 
+            # 收集所有需要 OTP 的设备组（避免多次触发 428）
+            otp_required_groups: list[tuple[str, str]] = []  # [(dept_id, device_group), ...]
+
             for device in devices:
                 if not device.ip_address:
+                    continue
+
+                # 跳过 OTP 手动认证的设备（用于定时任务）
+                if skip_otp_manual and device.auth_type == AuthType.OTP_MANUAL.value:
+                    logger.debug("跳过 OTP 手动认证设备", device=device.name)
+                    result.failed_count += 1
+                    result.results.append(
+                        DeviceLLDPResult(
+                            device_id=device.id,
+                            device_name=device.name,
+                            success=False,
+                            error="跳过：需要手动 OTP 认证",
+                        )
+                    )
                     continue
 
                 try:
@@ -128,9 +148,21 @@ class TopologyService(DeviceCredentialMixin):
                     # 使用 device.name 作为 key，与 Nornir host_name 保持一致
                     device_map[device.name] = device
 
-                except OTPRequiredException:
-                    # OTP 手动认证需要用户输入，直接抛出
-                    raise
+                except OTPRequiredException as e:
+                    # 收集所有需要 OTP 的设备组，最后统一抛出
+                    group_key = (e.dept_id_str, e.device_group)
+                    if group_key not in otp_required_groups:
+                        otp_required_groups.append(group_key)
+                    failed_device_ids.append(str(device.id))
+                    result.failed_count += 1
+                    result.results.append(
+                        DeviceLLDPResult(
+                            device_id=device.id,
+                            device_name=device.name,
+                            success=False,
+                            error=f"需要 OTP: {e.device_group}",
+                        )
+                    )
                 except Exception as e:
                     # 其他凭据错误，记录并跳过该设备
                     logger.warning("获取设备凭据失败", device=device.name, error=str(e))
@@ -144,6 +176,16 @@ class TopologyService(DeviceCredentialMixin):
                             error=f"凭据获取失败: {e}",
                         )
                     )
+
+            # 如果有需要 OTP 的设备组，抛出异常（只返回第一个）
+            if otp_required_groups:
+                first_group = otp_required_groups[0]
+                raise OTPRequiredException(
+                    dept_id=first_group[0],
+                    device_group=first_group[1],
+                    failed_devices=failed_device_ids,
+                    message=f"需要输入 OTP 验证码（共 {len(otp_required_groups)} 个设备组需要验证）",
+                )
 
             if not hosts_data:
                 logger.warning("没有可采集的设备（所有设备凭据获取失败）")
@@ -347,6 +389,54 @@ class TopologyService(DeviceCredentialMixin):
 
         return neighbors
 
+    async def _match_target_device(
+        self,
+        db: AsyncSession,
+        *,
+        hostname: str | None = None,
+        ip: str | None = None,
+        mac: str | None = None,
+    ) -> Device | None:
+        """
+        多维度匹配目标设备。
+
+        匹配优先级：
+        1. IP 精确匹配（最可靠）
+        2. hostname 精确匹配
+        3. hostname 模糊匹配（前缀/包含）
+
+        Args:
+            db: 数据库会话
+            hostname: 邻居主机名（LLDP 上报）
+            ip: 邻居管理 IP（LLDP 上报）
+            mac: 邻居 MAC/Chassis ID（LLDP 上报，暂不用于匹配）
+
+        Returns:
+            Device | None: 匹配到的设备或 None
+        """
+        # 1. IP 精确匹配（最可靠）
+        if ip:
+            device = await self.device_crud.get_by_ip(db, ip_address=ip)
+            if device:
+                logger.debug("设备匹配成功（IP）", ip=ip, device_name=device.name)
+                return device
+
+        # 2. hostname 精确匹配
+        if hostname:
+            device = await self.device_crud.get_by_name(db, name=hostname)
+            if device:
+                logger.debug("设备匹配成功（hostname精确）", hostname=hostname, device_name=device.name)
+                return device
+
+            # 3. hostname 模糊匹配
+            device = await self.device_crud.get_by_name_like(db, name=hostname)
+            if device:
+                logger.debug("设备匹配成功（hostname模糊）", hostname=hostname, device_name=device.name)
+                return device
+
+        # 未匹配到设备
+        return None
+
     async def _save_device_topology(
         self,
         db: AsyncSession,
@@ -386,22 +476,27 @@ class TopologyService(DeviceCredentialMixin):
                 )
                 continue
 
-            # 尝试匹配目标设备
-            target_device_id = None
+            # 尝试匹配目标设备（多维度匹配）
             target_ip = neighbor.get("neighbor_ip")
-            if target_ip:
-                target_device = await self.device_crud.get_by_ip(db, ip_address=target_ip)
-                if target_device:
-                    target_device_id = target_device.id
+            target_hostname = neighbor.get("neighbor_hostname")
+            target_mac = neighbor.get("chassis_id")
+
+            target_device = await self._match_target_device(
+                db,
+                hostname=target_hostname,
+                ip=target_ip,
+                mac=target_mac,
+            )
+            target_device_id = target_device.id if target_device else None
 
             link_data = TopologyLinkCreate(
                 source_device_id=device.id,
                 source_interface=local_interface,
                 target_device_id=target_device_id,
                 target_interface=neighbor.get("neighbor_interface"),
-                target_hostname=neighbor.get("neighbor_hostname"),
+                target_hostname=target_hostname,
                 target_ip=target_ip,
-                target_mac=neighbor.get("chassis_id"),
+                target_mac=target_mac,
                 target_description=neighbor.get("neighbor_description"),
                 link_type="lldp",
                 collected_at=now,
@@ -550,8 +645,9 @@ class TopologyService(DeviceCredentialMixin):
             color=color_map.get(group),
             ip=device.ip_address,
             vendor=device.vendor,
-            device_type=None,  # Device 模型无 device_type 字段
+            device_type=device.model,  # 设备型号
             device_group=group,
+            status=device.status,  # 设备状态
             in_cmdb=True,
         )
 
@@ -654,6 +750,29 @@ class TopologyService(DeviceCredentialMixin):
             "nodes": [n.model_dump() for n in topology.nodes],
             "edges": [e.model_dump(by_alias=True) for e in topology.edges],
             "stats": topology.stats.model_dump(),
+        }
+
+    async def reset_topology(self, db: AsyncSession, *, hard_delete: bool = False) -> dict:
+        """
+        重置拓扑数据（清除所有链路）。
+
+        Args:
+            db: 数据库会话
+            hard_delete: 是否硬删除
+
+        Returns:
+            删除统计信息
+        """
+        deleted_count = await self.topology_crud.clear_all_links(db, hard_delete=hard_delete)
+
+        # 清除缓存
+        await self._invalidate_cache()
+
+        logger.info("拓扑数据已重置", deleted_links=deleted_count, hard_delete=hard_delete)
+
+        return {
+            "deleted_links": deleted_count,
+            "hard_delete": hard_delete,
         }
 
     # ===== OTP 预检查 =====

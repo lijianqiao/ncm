@@ -85,23 +85,49 @@ class OTPRequiredException(CustomException):
 
     def __init__(
         self,
-        dept_id: UUID,
+        dept_id: UUID | str,
         device_group: str,
         failed_devices: list[str] | None = None,
         message: str = "需要输入 OTP 验证码",
     ):
-        self.dept_id = dept_id
+        # 存储为字符串，确保可序列化
+        self.dept_id_str = str(dept_id)
         self.device_group = device_group
         self.failed_devices = failed_devices or []
+
+        # 同时保留 UUID 类型的属性（用于类型兼容）
+        self._dept_id = dept_id if isinstance(dept_id, UUID) else UUID(dept_id)
+
         super().__init__(
             code=428,  # Precondition Required
             message=message,
             details={
-                "dept_id": str(dept_id),
+                "dept_id": self.dept_id_str,
                 "device_group": device_group,
                 "failed_devices": self.failed_devices,
             },
         )
+
+    @property
+    def dept_id(self) -> UUID:
+        """返回 UUID 类型的 dept_id（向后兼容）。"""
+        return self._dept_id
+
+    def __reduce__(self):
+        """支持 pickle 序列化（Celery 需要）。"""
+        return (
+            self.__class__,
+            (self.dept_id_str, self.device_group, self.failed_devices, self.message),
+        )
+
+    def to_dict(self) -> dict:
+        """转换为字典格式（用于 API 返回）。"""
+        return {
+            "dept_id": self.dept_id_str,
+            "device_group": self.device_group,
+            "failed_devices": self.failed_devices,
+            "message": self.message,
+        }
 
 
 class DeviceCredentialNotFoundException(NotFoundException):

@@ -40,6 +40,7 @@ const props = withDefaults(
 const emit = defineEmits<{
   (e: 'update:show', v: boolean): void
   (e: 'confirm', otpCode: string): void
+  (e: 'timeout'): void
 }>()
 
 const otpChars = ref<string[]>([])
@@ -62,6 +63,7 @@ const startInactivityTimer = () => {
   clearInactivityTimer()
   inactivityTimer.value = setTimeout(() => {
     if (!props.loading && props.show) {
+      emit('timeout')
       emit('update:show', false)
     }
   }, idleTimeoutMs)

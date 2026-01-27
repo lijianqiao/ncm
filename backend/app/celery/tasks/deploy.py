@@ -19,6 +19,7 @@ from sqlalchemy.orm.exc import StaleDataError
 from app.celery.app import celery_app
 from app.celery.base import BaseTask, run_async
 from app.core.command_policy import normalize_rendered_config, validate_commands
+from app.core.config import settings
 from app.core.db import AsyncSessionLocal
 from app.core.enums import (
     ApprovalStatus,
@@ -346,12 +347,13 @@ async def _rollback_task_async(self, task_id: str) -> dict[str, Any]:
                 "cannot_rollback": cannot_rollback_devices,
             }
 
-        # 第二步：获取当前配置，比对 MD5（异步）
+        # 第二步：获取当前配置，比对 MD5（异步，支持 OTP 断点续传）
         check_inventory = init_nornir_async(check_hosts_data)
         current_backup_results = await run_async_tasks(
             check_inventory.hosts,
             async_collect_config,
             num_workers=min(50, len(check_hosts_data)),
+            otp_wait_timeout=settings.OTP_WAIT_TIMEOUT_SECONDS,
         )
 
         # 检查是否有 OTP 异常（设备连接时发现 OTP 过期/失效）
@@ -429,12 +431,13 @@ async def _rollback_task_async(self, task_id: str) -> dict[str, Any]:
                 "cannot_rollback": cannot_rollback_devices,
             }
 
-        # 第三步：执行回滚（异步）
+        # 第三步：执行回滚（异步，支持 OTP 断点续传）
         rollback_inventory = init_nornir_async(rollback_hosts_data)
         deploy_results = await run_async_tasks(
             rollback_inventory.hosts,
             async_deploy_from_host_data,
             num_workers=min(50, len(rollback_hosts_data)),
+            otp_wait_timeout=settings.OTP_WAIT_TIMEOUT_SECONDS,
         )
 
         # 检查是否有 OTP 异常
@@ -466,11 +469,12 @@ async def _rollback_task_async(self, task_id: str) -> dict[str, Any]:
                     }
                     deploy_summary["failed"] += 1
 
-        # 第四步：回滚验证 - 再次备份并比较 MD5（异步）
+        # 第四步：回滚验证 - 再次备份并比较 MD5（异步，支持 OTP 断点续传）
         verify_results = await run_async_tasks(
             rollback_inventory.hosts,
             async_collect_config,
             num_workers=min(50, len(rollback_hosts_data)),
+            otp_wait_timeout=settings.OTP_WAIT_TIMEOUT_SECONDS,
         )
 
         # 检查是否有 OTP 异常（验证阶段）
@@ -735,22 +739,32 @@ async def _async_deploy_task_impl(self, task_id: str, *, celery_task_id: str | N
         inventory = init_nornir_async(hosts_data)
         total_hosts = len(inventory.hosts)
 
-        # 变更前备份（异步）
+        # 变更前备份（异步，支持 OTP 断点续传）
         _update_progress({"stage": "pre_change_backup", "total": total_hosts})
 
         backup_results = await run_async_tasks(
             inventory.hosts,
             async_collect_config,
             num_workers=concurrency,
+            otp_wait_timeout=settings.OTP_WAIT_TIMEOUT_SECONDS,
         )
 
         # 处理备份结果
         pre_change_backup_ids: dict[str, str] = {}
         backup_otp_errors: list[str] = []
+        backup_otp_timeout: list[str] = []
+        backup_completed: list[str] = []
 
         for host_name, multi_result in backup_results.items():
             if multi_result.failed:
                 exc = multi_result[0].exception if multi_result else None
+                result_data = multi_result[0].result if multi_result else {}
+
+                # 检查是否为 OTP 超时
+                if result_data and result_data.get("otp_timeout"):
+                    backup_otp_timeout.append(host_name)
+                    continue
+
                 if isinstance(exc, OTPRequiredException):
                     backup_otp_errors.append(host_name)
                 continue
@@ -765,10 +779,33 @@ async def _async_deploy_task_impl(self, task_id: str, *, celery_task_id: str | N
                 if device:
                     b = await _save_pre_change_backup(db, device, config_content)
                     pre_change_backup_ids[host_name] = str(b.id)
+                    backup_completed.append(host_name)
                     if task.rollback_backup_id is None:
                         task.rollback_backup_id = b.id
 
-        # 检查是否有 OTP 错误
+        # 检查是否有 OTP 超时（优先处理超时，返回部分结果）
+        if backup_otp_timeout:
+            task.status = TaskStatus.TIMEOUT.value
+            task.error_message = "OTP 等待超时"
+            task.result = {
+                "otp_timeout": True,
+                "otp_timeout_device_ids": backup_otp_timeout,
+                "completed_device_ids": backup_completed,
+                "pre_change_backup_ids": pre_change_backup_ids,
+                "stage": "pre_change_backup",
+            }
+            task.finished_at = datetime.now(UTC)
+            await db.flush()
+            await db.commit()
+            logger.warning(
+                "变更前备份阶段 OTP 超时，返回部分结果",
+                task_id=task_id,
+                timeout_count=len(backup_otp_timeout),
+                completed_count=len(backup_completed),
+            )
+            return {"status": "timeout", "partial_results": task.result}
+
+        # 检查是否有 OTP 错误（需要重新输入）
         if backup_otp_errors:
             task.status = TaskStatus.PAUSED.value
             task.error_message = "需要重新输入 OTP 验证码"
@@ -782,17 +819,21 @@ async def _async_deploy_task_impl(self, task_id: str, *, celery_task_id: str | N
 
         await db.commit()
 
-        # 异步下发
+        # 异步下发（支持 OTP 断点续传）
         _update_progress({"stage": "deploying", "total": total_hosts})
 
         deploy_results = await run_async_tasks(
             inventory.hosts,
             async_deploy_from_host_data,
             num_workers=concurrency,
+            otp_wait_timeout=settings.OTP_WAIT_TIMEOUT_SECONDS,
         )
 
         # 处理下发结果
         deploy_otp_errors: list[str] = []
+        deploy_otp_timeout: list[str] = []
+        deploy_completed: list[str] = []
+        deploy_skipped: list[str] = []
         all_results: dict[str, Any] = {"results": {}}
         success_count = 0
         failed_count = 0
@@ -800,6 +841,20 @@ async def _async_deploy_task_impl(self, task_id: str, *, celery_task_id: str | N
         for host_name, multi_result in deploy_results.items():
             if multi_result.failed:
                 exc = multi_result[0].exception if multi_result else None
+                result_data = multi_result[0].result if multi_result else {}
+
+                # 检查是否为 OTP 超时
+                if result_data and result_data.get("otp_timeout"):
+                    deploy_otp_timeout.append(host_name)
+                    if result_data.get("skipped"):
+                        deploy_skipped.append(host_name)
+                    all_results["results"][host_name] = {
+                        "status": "otp_timeout",
+                        "error": result_data.get("error", "等待 OTP 超时"),
+                    }
+                    failed_count += 1
+                    continue
+
                 if isinstance(exc, OTPRequiredException):
                     deploy_otp_errors.append(host_name)
                 all_results["results"][host_name] = {
@@ -816,6 +871,7 @@ async def _async_deploy_task_impl(self, task_id: str, *, celery_task_id: str | N
                     "result": result_data.get("result"),
                 }
                 success_count += 1
+                deploy_completed.append(host_name)
             else:
                 all_results["results"][host_name] = {
                     "status": "failed",
@@ -823,7 +879,34 @@ async def _async_deploy_task_impl(self, task_id: str, *, celery_task_id: str | N
                 }
                 failed_count += 1
 
-        # 检查下发是否有 OTP 错误
+        # 检查下发是否有 OTP 超时（返回部分结果）
+        if deploy_otp_timeout:
+            task.status = TaskStatus.TIMEOUT.value
+            task.error_message = "OTP 等待超时"
+            task.success_count = success_count
+            task.failed_count = failed_count
+            task.result = {
+                "otp_timeout": True,
+                "otp_timeout_device_ids": deploy_otp_timeout,
+                "completed_device_ids": deploy_completed,
+                "skipped_device_ids": deploy_skipped,
+                "pre_change_backup_ids": pre_change_backup_ids,
+                "render_hash": rendered_hash,
+                "stage": "deploying",
+                **all_results,
+            }
+            task.finished_at = datetime.now(UTC)
+            await db.flush()
+            await db.commit()
+            logger.warning(
+                "下发阶段 OTP 超时，返回部分结果",
+                task_id=task_id,
+                timeout_count=len(deploy_otp_timeout),
+                completed_count=success_count,
+            )
+            return {"status": "timeout", "partial_results": task.result}
+
+        # 检查下发是否有 OTP 错误（需要重新输入）
         if deploy_otp_errors:
             task.status = TaskStatus.PAUSED.value
             task.error_message = "需要重新输入 OTP 验证码"

@@ -49,6 +49,73 @@ class CRUDDevice(CRUDBase[Device, DeviceCreate, DeviceUpdate]):
         result = await db.execute(query)
         return result.scalars().first()
 
+    async def get_by_name(self, db: AsyncSession, name: str) -> Device | None:
+        """
+        通过设备名称精确匹配获取设备。
+
+        Args:
+            db: 数据库会话
+            name: 设备名称
+
+        Returns:
+            Device | None: 设备对象或 None
+        """
+        query = select(self.model).where(self.model.name == name).where(self.model.is_deleted.is_(False))
+        result = await db.execute(query)
+        return result.scalars().first()
+
+    async def get_by_name_like(self, db: AsyncSession, name: str) -> Device | None:
+        """
+        通过设备名称模糊匹配获取设备（前缀匹配或包含匹配）。
+
+        匹配逻辑：
+        1. 如果 CMDB 设备名称以 LLDP 上报的 hostname 开头，则匹配成功
+        2. 如果 LLDP 上报的 hostname 以 CMDB 设备名称开头，则匹配成功
+
+        例如：
+        - LLDP: "SW-Core-01" 可匹配 CMDB: "SW-Core-01-BJ"
+        - LLDP: "SW-Core-01.domain.local" 可匹配 CMDB: "SW-Core-01"
+
+        Args:
+            db: 数据库会话
+            name: 设备名称（通常是 LLDP 上报的 hostname）
+
+        Returns:
+            Device | None: 设备对象或 None（返回第一个匹配项）
+        """
+        if not name:
+            return None
+
+        # 1. 尝试 CMDB 名称以 LLDP hostname 开头
+        query = (
+            select(self.model)
+            .where(self.model.name.ilike(f"{name}%"))
+            .where(self.model.is_deleted.is_(False))
+            .limit(1)
+        )
+        result = await db.execute(query)
+        device = result.scalars().first()
+        if device:
+            return device
+
+        # 2. 尝试 LLDP hostname 以 CMDB 名称开头（反向匹配）
+        # 通过获取可能匹配的设备列表，然后在应用层筛选
+        # 由于 SQL 难以表达 "LLDP hostname 以 CMDB name 开头"，这里简化处理
+        # 取 hostname 的主要部分（去掉域名后缀）进行匹配
+        name_parts = name.split(".")
+        if len(name_parts) > 1:
+            short_name = name_parts[0]
+            query = (
+                select(self.model)
+                .where(self.model.name == short_name)
+                .where(self.model.is_deleted.is_(False))
+                .limit(1)
+            )
+            result = await db.execute(query)
+            return result.scalars().first()
+
+        return None
+
     async def exists_ip(self, db: AsyncSession, ip_address: str, exclude_id: UUID | None = None) -> bool:
         """
         检查 IP 地址是否已存在。

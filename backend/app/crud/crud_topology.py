@@ -174,6 +174,36 @@ class CRUDTopology(CRUDBase[TopologyLink, TopologyLinkCreate, TopologyLinkRespon
             await db.flush()
             return int(getattr(result, "rowcount", 0) or 0)
 
+    async def clear_all_links(self, db: AsyncSession, *, hard_delete: bool = False) -> int:
+        """
+        清除所有拓扑链路数据。
+
+        Args:
+            db: 数据库会话
+            hard_delete: 是否硬删除（物理删除）
+
+        Returns:
+            删除的链路数量
+        """
+        if hard_delete:
+            # 硬删除所有链路
+            result = await db.execute(delete(self.model))
+            await db.flush()
+            return result.rowcount  # type: ignore
+        else:
+            # 软删除所有未删除的链路
+            result = await db.execute(
+                update(self.model)
+                .where(self.model.is_deleted.is_(False))
+                .values(
+                    is_deleted=True,
+                    updated_at=func.now(),
+                    version_id=text("md5(random()::text)"),
+                )
+            )
+            await db.flush()
+            return int(getattr(result, "rowcount", 0) or 0)
+
     async def refresh_device_topology(
         self,
         db: AsyncSession,

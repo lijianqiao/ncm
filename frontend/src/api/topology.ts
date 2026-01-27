@@ -98,6 +98,11 @@ export interface TopologyCollectResult {
   success_count: number
   failed_count: number
   new_links: number
+  // OTP 相关字段（当任务需要 OTP 时返回）
+  otp_required?: boolean
+  otp_dept_id?: string
+  otp_device_group?: string
+  otp_failed_devices?: string[]
 }
 
 /** 拓扑任务状态 */
@@ -128,8 +133,10 @@ export interface TopologyLinksResponse {
 export interface TopologyLinkItem {
   id: string
   source_device_id: string
+  source_device_name: string | null
   source_interface: string
   target_device_id: string | null
+  target_device_name: string | null
   target_interface: string | null
   target_hostname: string | null
   target_ip: string | null
@@ -204,5 +211,14 @@ export function rebuildTopologyCache() {
   return request<ResponseBase<TopologyTaskResponse>>({
     url: '/topology/cache/rebuild',
     method: 'post',
+  })
+}
+
+/** 重置拓扑数据（清除所有链路） */
+export function resetTopology(hardDelete: boolean = false) {
+  return request<ResponseBase<{ deleted_links: number; hard_delete: boolean }>>({
+    url: '/topology/reset',
+    method: 'delete',
+    params: { hard_delete: hardDelete },
   })
 }

@@ -1035,6 +1035,7 @@ def async_backup_devices(
                 async_collect_config,
                 num_workers=num_workers,
                 progress_callback=_progress_callback,
+                otp_wait_timeout=settings.OTP_WAIT_TIMEOUT_SECONDS,
             )
         )
 
@@ -1087,6 +1088,9 @@ def _aggregate_async_results(
     """
     聚合 AsyncRunner 结果为与同步版本兼容的格式。
 
+    支持 OTP 超时检测：当有设备因 OTP 等待超时而失败时，
+    在返回结果中标记 otp_timeout 状态。
+
     Args:
         results: AsyncRunner 返回的 AggregatedResult
         hosts_data: 原始主机数据
@@ -1099,6 +1103,9 @@ def _aggregate_async_results(
     results_dict: dict[str, dict[str, Any]] = {}
     otp_required_info: dict[str, Any] | None = None
     otp_failed_device_ids: list[str] = []
+    otp_timeout_device_ids: list[str] = []
+    completed_device_ids: list[str] = []
+    skipped_device_ids: list[str] = []
 
     # 构建 device_id -> name 映射
     id_to_name = {h.get("name"): h.get("name") for h in hosts_data}
@@ -1115,21 +1122,44 @@ def _aggregate_async_results(
     )
 
     for host_name, multi_result in results.items():
+        # 尝试映射回设备名
+        name = id_to_name.get(host_name) or host_name
+        device_id = name_to_id.get(name)
+
         # multi_result 是 MultiResult，取第一个 Result
         if not multi_result or multi_result.failed:
             failed_count += 1
             error_msg = "执行失败"
             otp_required: OTPRequiredException | None = None
+            is_otp_timeout = False
+
             if multi_result and len(multi_result) > 0:
                 r = multi_result[0]
+                result_data = r.result or {}
+
+                # 检查是否为 OTP 超时
+                if result_data.get("otp_timeout"):
+                    is_otp_timeout = True
+                    error_msg = result_data.get("error", "等待 OTP 超时")
+                    if device_id:
+                        otp_timeout_device_ids.append(str(device_id))
+                    # 检查是否为跳过的设备（超时后未执行）
+                    if result_data.get("skipped"):
+                        if device_id:
+                            skipped_device_ids.append(str(device_id))
+
                 if r.exception:
                     error_msg = str(r.exception)
                     if isinstance(r.exception, OTPRequiredException):
                         otp_required = r.exception
 
-            # 尝试映射回设备名
-            name = id_to_name.get(host_name) or host_name
-            if otp_required is not None:
+            if is_otp_timeout:
+                results_dict[name] = {
+                    "status": "otp_timeout",
+                    "error": error_msg,
+                    "result": None,
+                }
+            elif otp_required is not None:
                 results_dict[name] = {
                     "status": "otp_required",
                     "error": error_msg,
@@ -1137,7 +1167,6 @@ def _aggregate_async_results(
                     "otp_dept_id": str(otp_required.dept_id),
                     "otp_device_group": otp_required.device_group,
                 }
-                device_id = name_to_id.get(name)
                 if device_id:
                     otp_failed_device_ids.append(str(device_id))
                 if otp_required_info is None:
@@ -1160,30 +1189,43 @@ def _aggregate_async_results(
             task_success = result_data.get("success", True)  # 默认为 True（无异常即成功）
             if task_success:
                 success_count += 1
+                if device_id:
+                    completed_device_ids.append(str(device_id))
             else:
                 failed_count += 1
 
-            name = id_to_name.get(host_name) or host_name
             results_dict[name] = {
                 "status": "success" if task_success else "failed",
                 "result": result_data.get("config"),
                 "error": result_data.get("error") if not task_success else None,
             }
 
-    summary = {
+    # 构建汇总结果
+    summary: dict[str, Any] = {
         "success": success_count,
         "failed": failed_count,
         "total": success_count + failed_count,
         "results": results_dict,
         "otp_failed_device_ids": otp_failed_device_ids,
-        **(otp_required_info or {}),
+        "completed_device_ids": completed_device_ids,
     }
+
+    # 添加 OTP 超时信息（如果有）
+    if otp_timeout_device_ids:
+        summary["otp_timeout"] = True
+        summary["otp_timeout_device_ids"] = otp_timeout_device_ids
+        summary["skipped_device_ids"] = skipped_device_ids
+
+    # 添加 OTP 认证信息（如果有）
+    if otp_required_info:
+        summary.update(otp_required_info)
 
     logger.info(
         "异步结果聚合完成",
         success=success_count,
         failed=failed_count,
         total=success_count + failed_count,
+        otp_timeout_count=len(otp_timeout_device_ids),
     )
 
     return summary

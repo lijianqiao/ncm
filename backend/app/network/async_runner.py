@@ -94,38 +94,90 @@ class AsyncRunner:
         task: AsyncTaskFn,
         hosts: HostsDict,
         progress_callback: ProgressCallback | None = None,
+        otp_wait_timeout: int | None = None,
         **kwargs: Any,
     ) -> AggregatedResult:
         """
         异步执行主体。
 
-        使用 Semaphore 控制并发，支持可配置的重试机制。
+        使用 Semaphore 控制并发，支持可配置的重试机制和 OTP 断点续传。
 
         Args:
             task: 异步任务函数
             hosts: 主机字典
             progress_callback: 可选的进度回调
+            otp_wait_timeout: OTP 等待超时时间（秒），设置后支持断点续传
             **kwargs: 额外参数
 
         Returns:
             AggregatedResult: 聚合结果
         """
+        from uuid import UUID
+
+        from app.network.otp_utils import wait_and_retry_otp
+
         task_name = getattr(task, "__name__", "async_task")
         results = AggregatedResult(task_name)
         semaphore = asyncio.Semaphore(self.semaphore_limit)
 
+        # OTP 超时标记：一旦某个设备等待 OTP 超时，取消剩余任务
+        otp_timeout_event = asyncio.Event()
+
         async def _execute_host(host: "Host") -> tuple[str, Result]:
-            """单设备执行（带信号量控制和可选重试）。"""
+            """单设备执行（带信号量控制、OTP 等待和可选重试）。"""
             last_exception: Exception | None = None
 
             for attempt in range(self.max_retries + 1):
+                # 检查是否已有 OTP 超时，跳过执行
+                if otp_timeout_event.is_set():
+                    return host.name, Result(
+                        host=host,
+                        result={"success": False, "otp_timeout": True, "skipped": True},
+                        failed=True,
+                    )
+
                 try:
                     async with semaphore:
                         logger.debug("开始执行异步任务", host=host.name, task=task_name, attempt=attempt + 1)
                         result_data = await task(host, **kwargs)
                         return host.name, Result(host=host, result=result_data)
                 except OTPRequiredException as e:
-                    # OTP 异常不重试，直接返回
+                    # OTP 异常：尝试等待新 OTP
+                    if otp_wait_timeout and otp_wait_timeout > 0:
+                        dept_id_raw = host.data.get("dept_id")
+                        device_group = host.data.get("device_group")
+
+                        if dept_id_raw and device_group:
+                            logger.info(
+                                "OTP 异常，开始等待新 OTP",
+                                host=host.name,
+                                dept_id=str(dept_id_raw),
+                                device_group=device_group,
+                                timeout=otp_wait_timeout,
+                            )
+
+                            new_otp = await wait_and_retry_otp(
+                                UUID(str(dept_id_raw)),
+                                str(device_group),
+                                timeout=otp_wait_timeout,
+                            )
+
+                            if new_otp:
+                                # 收到新 OTP，更新 host 密码并重试
+                                host.password = new_otp
+                                logger.info("收到新 OTP，准备重试", host=host.name)
+                                continue  # 重新进入循环执行任务
+                            else:
+                                # 等待超时，设置超时标记
+                                otp_timeout_event.set()
+                                logger.warning("等待新 OTP 超时，终止剩余任务", host=host.name)
+                                return host.name, Result(
+                                    host=host,
+                                    result={"success": False, "otp_timeout": True, "error": "等待 OTP 超时"},
+                                    failed=True,
+                                )
+
+                    # 不等待或无法等待，直接返回 OTP 异常
                     return host.name, Result(host=host, exception=e, failed=True)
                 except asyncio.CancelledError:
                     raise
@@ -188,17 +240,21 @@ async def run_async_tasks(
     task_fn: AsyncTaskFn,
     num_workers: int | None = None,
     progress_callback: ProgressCallback | None = None,
+    otp_wait_timeout: int | None = None,
     **kwargs: Any,
 ) -> AggregatedResult:
     """
     独立的异步任务执行入口（不依赖 Nornir.run()）。
 
     这是推荐的异步执行方式，绕过 Nornir 的同步 Runner 协议限制。
+    支持 OTP 断点续传：当 OTP 失效时等待新 OTP，超时后终止剩余任务。
 
     Args:
         hosts: Nornir Inventory 或主机字典
         task_fn: 异步任务函数，签名为 async def task(host: Host, **kwargs) -> Any
         num_workers: 最大并发数，默认从配置读取
+        progress_callback: 可选的进度回调
+        otp_wait_timeout: OTP 等待超时时间（秒），设置后支持断点续传
         **kwargs: 传递给任务函数的额外参数
 
     Returns:
@@ -214,6 +270,7 @@ async def run_async_tasks(
             nr.inventory.hosts,
             async_send_command,
             command="display version",
+            otp_wait_timeout=60,  # OTP 等待超时 60 秒
         )
         ```
     """
@@ -224,7 +281,13 @@ async def run_async_tasks(
         hosts_dict = hosts  # type: ignore[assignment]
 
     runner = AsyncRunner(num_workers=num_workers)
-    return await runner._run_async(task_fn, hosts_dict, progress_callback=progress_callback, **kwargs)
+    return await runner._run_async(
+        task_fn,
+        hosts_dict,
+        progress_callback=progress_callback,
+        otp_wait_timeout=otp_wait_timeout,
+        **kwargs,
+    )
 
 
 def run_async_tasks_sync(
@@ -232,6 +295,7 @@ def run_async_tasks_sync(
     task_fn: AsyncTaskFn,
     num_workers: int | None = None,
     progress_callback: ProgressCallback | None = None,
+    otp_wait_timeout: int | None = None,
     **kwargs: Any,
 ) -> AggregatedResult:
     """
@@ -243,6 +307,8 @@ def run_async_tasks_sync(
         hosts: Nornir Inventory 或主机字典
         task_fn: 异步任务函数
         num_workers: 最大并发数
+        progress_callback: 可选的进度回调
+        otp_wait_timeout: OTP 等待超时时间（秒）
         **kwargs: 额外参数
 
     Returns:
@@ -254,7 +320,16 @@ def run_async_tasks_sync(
         pass
     else:
         raise RuntimeError("当前存在运行中的事件循环，请使用 await run_async_tasks(...) 调用异步执行入口。")
-    return asyncio.run(run_async_tasks(hosts, task_fn, num_workers, progress_callback=progress_callback, **kwargs))
+    return asyncio.run(
+        run_async_tasks(
+            hosts,
+            task_fn,
+            num_workers,
+            progress_callback=progress_callback,
+            otp_wait_timeout=otp_wait_timeout,
+            **kwargs,
+        )
+    )
 
 
 class AsyncRunnerWithRetry(AsyncRunner):

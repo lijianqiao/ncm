@@ -15,6 +15,7 @@ from app.celery.app import celery_app
 from app.celery.base import BaseTask, run_async
 from app.core import cache as cache_module
 from app.core.db import AsyncSessionLocal
+from app.core.exceptions import OTPRequiredException
 from app.core.logger import logger
 from app.crud.crud_credential import credential as credential_crud
 from app.crud.crud_device import device as device_crud
@@ -49,7 +50,7 @@ def collect_topology(
         device_ids: 指定设备ID列表 (为空则采集所有设备)
 
     Returns:
-        采集结果
+        采集结果，如果需要 OTP 则返回 otp_required 状态
     """
 
     async def _collect():
@@ -59,20 +60,39 @@ def collect_topology(
             # 转换设备ID
             uuids = [UUID(did) for did in device_ids] if device_ids else None
 
-            # 执行采集
-            result = await topology_service.collect_lldp_all(db, device_ids=uuids)
-            result.task_id = self.request.id
+            try:
+                # 执行采集
+                result = await topology_service.collect_lldp_all(db, device_ids=uuids)
+                result.task_id = self.request.id
 
-            logger.info(
-                "拓扑采集完成",
-                total_devices=result.total_devices,
-                success=result.success_count,
-                failed=result.failed_count,
-                total_links=result.total_links,
-            )
+                logger.info(
+                    "拓扑采集完成",
+                    total_devices=result.total_devices,
+                    success=result.success_count,
+                    failed=result.failed_count,
+                    total_links=result.total_links,
+                )
 
-            # 使用 mode="json" 确保 datetime 等类型被序列化为 JSON 兼容格式
-            return result.model_dump(mode="json")
+                # 使用 mode="json" 确保 datetime 等类型被序列化为 JSON 兼容格式
+                return result.model_dump(mode="json")
+
+            except OTPRequiredException as e:
+                # 返回 OTP 所需信息，不抛出异常
+                logger.info(
+                    "拓扑采集需要 OTP",
+                    dept_id=e.dept_id_str,
+                    device_group=e.device_group,
+                    failed_devices=e.failed_devices,
+                )
+                return {
+                    "task_id": self.request.id,
+                    "status": "otp_required",
+                    "otp_required": True,
+                    "dept_id": e.dept_id_str,
+                    "device_group": e.device_group,
+                    "failed_devices": e.failed_devices,
+                    "message": e.message,
+                }
 
     return run_async(_collect())
 
@@ -91,27 +111,46 @@ def collect_device_topology(self, device_id: str) -> dict[str, Any]:
         device_id: 设备ID
 
     Returns:
-        采集结果
+        采集结果，如果需要 OTP 则返回 otp_required 状态
     """
 
     async def _collect_single():
         async with AsyncSessionLocal() as db:
             topology_service = _create_topology_service()
 
-            result = await topology_service.collect_lldp_all(db, device_ids=[UUID(device_id)])
-            result.task_id = self.request.id
+            try:
+                result = await topology_service.collect_lldp_all(db, device_ids=[UUID(device_id)])
+                result.task_id = self.request.id
 
-            # 返回单设备结果
-            device_result = result.results[0] if result.results else None
+                # 返回单设备结果
+                device_result = result.results[0] if result.results else None
 
-            return {
-                "task_id": self.request.id,
-                "device_id": device_id,
-                "success": device_result.success if device_result else False,
-                "neighbors_count": device_result.neighbors_count if device_result else 0,
-                "neighbors": device_result.neighbors if device_result else [],
-                "error": device_result.error if device_result else "Device not found",
-            }
+                return {
+                    "task_id": self.request.id,
+                    "device_id": device_id,
+                    "success": device_result.success if device_result else False,
+                    "neighbors_count": device_result.neighbors_count if device_result else 0,
+                    "neighbors": device_result.neighbors if device_result else [],
+                    "error": device_result.error if device_result else "Device not found",
+                }
+
+            except OTPRequiredException as e:
+                logger.info(
+                    "单设备拓扑采集需要 OTP",
+                    device_id=device_id,
+                    dept_id=e.dept_id_str,
+                    device_group=e.device_group,
+                )
+                return {
+                    "task_id": self.request.id,
+                    "device_id": device_id,
+                    "status": "otp_required",
+                    "otp_required": True,
+                    "dept_id": e.dept_id_str,
+                    "device_group": e.device_group,
+                    "failed_devices": e.failed_devices,
+                    "message": e.message,
+                }
 
     return run_async(_collect_single())
 
@@ -128,7 +167,7 @@ def scheduled_topology_refresh(self) -> dict[str, Any]:
 
     采集所有活跃设备的 LLDP 信息并更新拓扑数据。
 
-    注意：OTP 手动认证的设备在定时任务中会被跳过。
+    注意：OTP 手动认证的设备在定时任务中会被跳过（定时任务无法等待用户输入）。
 
     Returns:
         刷新结果
@@ -138,20 +177,37 @@ def scheduled_topology_refresh(self) -> dict[str, Any]:
         async with AsyncSessionLocal() as db:
             topology_service = _create_topology_service()
 
-            # 采集所有设备
-            result = await topology_service.collect_lldp_all(db)
-            result.task_id = self.request.id
+            try:
+                # 采集所有设备
+                result = await topology_service.collect_lldp_all(db, skip_otp_manual=True)
+                result.task_id = self.request.id
 
-            logger.info(
-                "定时拓扑刷新完成",
-                total_devices=result.total_devices,
-                success=result.success_count,
-                failed=result.failed_count,
-                total_links=result.total_links,
-            )
+                logger.info(
+                    "定时拓扑刷新完成",
+                    total_devices=result.total_devices,
+                    success=result.success_count,
+                    failed=result.failed_count,
+                    total_links=result.total_links,
+                )
 
-            # 使用 mode="json" 确保 datetime 等类型被序列化为 JSON 兼容格式
-            return result.model_dump(mode="json")
+                # 使用 mode="json" 确保 datetime 等类型被序列化为 JSON 兼容格式
+                return result.model_dump(mode="json")
+
+            except OTPRequiredException as e:
+                # 定时任务不应该触发 OTP，记录警告并跳过
+                logger.warning(
+                    "定时拓扑刷新遇到 OTP 需求（已跳过）",
+                    dept_id=e.dept_id_str,
+                    device_group=e.device_group,
+                )
+                return {
+                    "task_id": self.request.id,
+                    "status": "partial",
+                    "message": "部分设备因需要 OTP 而跳过",
+                    "skipped_otp_groups": [
+                        {"dept_id": e.dept_id_str, "device_group": e.device_group}
+                    ],
+                }
 
     return run_async(_refresh())
 

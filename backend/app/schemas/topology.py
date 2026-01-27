@@ -74,8 +74,9 @@ class TopologyNode(BaseModel):
     # 附加信息
     ip: str | None = Field(default=None, description="管理IP")
     vendor: str | None = Field(default=None, description="厂商")
-    device_type: str | None = Field(default=None, description="设备类型")
+    device_type: str | None = Field(default=None, description="设备型号")
     device_group: str | None = Field(default=None, description="设备分组")
+    status: str | None = Field(default=None, description="设备状态")
     in_cmdb: bool = Field(default=True, description="是否在CMDB中")
 
 
@@ -152,6 +153,12 @@ class TopologyCollectResult(BaseModel):
     started_at: datetime | None = Field(default=None, description="开始时间")
     completed_at: datetime | None = Field(default=None, description="完成时间")
 
+    # OTP 相关字段（当任务需要 OTP 时返回）
+    otp_required: bool = Field(default=False, description="是否需要 OTP 验证")
+    otp_dept_id: str | None = Field(default=None, description="需要 OTP 的部门 ID")
+    otp_device_group: str | None = Field(default=None, description="需要 OTP 的设备组")
+    otp_failed_devices: list[str] = Field(default_factory=list, description="OTP 验证失败的设备 ID 列表")
+
 
 class TopologyTaskStatus(BaseModel):
     """拓扑采集任务状态。"""
@@ -176,8 +183,10 @@ class TopologyLinkItem(BaseModel):
 
     id: str = Field(..., description="链路ID")
     source_device_id: str = Field(..., description="源设备ID")
+    source_device_name: str | None = Field(default=None, description="源设备名称")
     source_interface: str = Field(..., description="源接口")
     target_device_id: str | None = Field(default=None, description="目标设备ID")
+    target_device_name: str | None = Field(default=None, description="目标设备名称")
     target_interface: str | None = Field(default=None, description="目标接口")
     target_hostname: str | None = Field(default=None, description="目标主机名")
     target_ip: str | None = Field(default=None, description="目标IP")

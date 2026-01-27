@@ -111,6 +111,72 @@ async def invalidate_manual_otp(dept_id: UUID, device_group: str) -> None:
     await otp_service.invalidate_otp(dept_id, str(device_group))
 
 
+async def wait_and_retry_otp(
+    dept_id: UUID,
+    device_group: str,
+    timeout: int | None = None,
+) -> str | None:
+    """
+    等待新 OTP 输入（用于断点续传）。
+
+    先失效旧 OTP 缓存，然后轮询等待前端输入新 OTP。
+    适用于任务执行中 OTP 过期/失效的场景。
+
+    Args:
+        dept_id: 部门 ID
+        device_group: 设备分组
+        timeout: 超时时间（秒），默认使用 OTP_WAIT_TIMEOUT_SECONDS (60s)
+
+    Returns:
+        新的 OTP 验证码，超时返回 None
+    """
+    from app.core.logger import logger
+
+    # 1. 先失效旧 OTP 缓存
+    await invalidate_manual_otp(dept_id, str(device_group))
+
+    logger.info(
+        "OTP 已失效，开始等待新 OTP 输入",
+        dept_id=str(dept_id),
+        device_group=device_group,
+        timeout=timeout,
+    )
+
+    # 2. 轮询等待新 OTP
+    new_otp = await otp_service.wait_for_otp(dept_id, str(device_group), timeout=timeout)
+
+    if new_otp:
+        logger.info(
+            "收到新 OTP，准备重试",
+            dept_id=str(dept_id),
+            device_group=device_group,
+        )
+    else:
+        logger.warning(
+            "等待新 OTP 超时",
+            dept_id=str(dept_id),
+            device_group=device_group,
+            timeout=timeout,
+        )
+
+    return new_otp
+
+
+def wait_and_retry_otp_sync(
+    dept_id: UUID,
+    device_group: str,
+    timeout: int | None = None,
+) -> str | None:
+    """
+    同步版等待新 OTP 输入（使用 run_async 包装）。
+
+    用于 Nornir 同步任务中。
+    """
+    from app.celery.base import run_async
+
+    return run_async(wait_and_retry_otp(dept_id, device_group, timeout=timeout))
+
+
 async def handle_otp_auth_failure(
     host_data: dict,
     original_error: Exception,

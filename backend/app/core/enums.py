@@ -152,6 +152,7 @@ class TaskStatus(str, Enum):
     PARTIAL = "partial"  # 部分成功
     CANCELLED = "cancelled"  # 已取消
     ROLLBACK = "rollback"  # 已回滚
+    TIMEOUT = "timeout"  # OTP 等待超时
 
 
 # ===== Phase 5 盘点相关枚举 =====

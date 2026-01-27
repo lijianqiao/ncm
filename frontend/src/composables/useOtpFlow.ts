@@ -85,6 +85,15 @@ export function useOtpFlow(options?: { length?: number }) {
     errorMessage.value = ''
   }
 
+  const handleTimeout = () => {
+    // 超时关闭时，清理状态并提示用户
+    show.value = false
+    details.value = null
+    pendingAction.value = null
+    errorMessage.value = ''
+    $alert.warning('OTP 输入超时，请重新操作')
+  }
+
   const extractOtpRequiredDetails = (error: unknown): OtpRequiredDetails | null => {
     const err = error as AxiosLikeError
     const status = err?.response?.status
@@ -93,7 +102,24 @@ export function useOtpFlow(options?: { length?: number }) {
     // 支持 HTTP 428 或 业务码 428
     if (status !== 428 && code !== 428) return null
 
-    // 1. 尝试从 data.otp_required_groups 获取 (新结构 - 列表)
+    // 1. 优先从 details 获取（最新结构）
+    const details = err?.response?.data?.details as {
+      otp_required?: boolean
+      dept_id?: string
+      device_group?: string
+      failed_devices?: string[]
+    } | undefined
+
+    if (details && details.dept_id && details.device_group) {
+      return {
+        dept_id: details.dept_id,
+        device_group: details.device_group,
+        failed_devices: details.failed_devices || [],
+        message: err?.response?.data?.message || '需要 OTP 验证',
+      }
+    }
+
+    // 2. 尝试从 data.otp_required_groups 获取 (列表结构)
     const data = err?.response?.data?.data as {
       otp_required_groups?: Array<{ dept_id: string; device_group: string }>
       dept_id?: string
@@ -114,7 +140,7 @@ export function useOtpFlow(options?: { length?: number }) {
        }
     }
 
-    // 2. 尝试从 data 直接获取 (新结构 - 单个)
+    // 3. 尝试从 data 直接获取
     if (data && data.dept_id && data.device_group) {
       return {
         dept_id: data.dept_id,
@@ -124,7 +150,7 @@ export function useOtpFlow(options?: { length?: number }) {
       }
     }
 
-    // 3. 优先尝试从 data.otp_notice 获取 (旧结构)
+    // 4. 优先尝试从 data.otp_notice 获取 (旧结构)
     const otpNotice = err?.response?.data?.data?.otp_notice as OtpRequiredDetails | undefined
     if (otpNotice && otpNotice.dept_id && otpNotice.device_group) {
       return {
@@ -137,14 +163,7 @@ export function useOtpFlow(options?: { length?: number }) {
       }
     }
 
-    // 兼容旧结构 details
-    const d = err?.response?.data?.details as OtpRequiredDetails | undefined
-    if (!d || !d.dept_id || !d.device_group) return null
-    return {
-      dept_id: d.dept_id,
-      device_group: d.device_group,
-      failed_devices: d.failed_devices || [],
-    }
+    return null
   }
 
   const confirm = async (otpCode: string) => {
@@ -244,6 +263,7 @@ export function useOtpFlow(options?: { length?: number }) {
     open,
     close,
     confirm,
+    handleTimeout,
     tryHandleOtpRequired,
   }
 }

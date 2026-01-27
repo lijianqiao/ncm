@@ -54,7 +54,7 @@ class TopologyLink(AuditableModel):
     target_interface: Mapped[str | None] = mapped_column(String(100), nullable=True, comment="目标接口名称")
     target_hostname: Mapped[str | None] = mapped_column(String(200), nullable=True, comment="目标主机名（LLDP 上报）")
     target_ip: Mapped[str | None] = mapped_column(String(45), nullable=True, comment="目标管理 IP（LLDP 上报）")
-    target_mac: Mapped[str | None] = mapped_column(String(17), nullable=True, comment="目标 MAC 地址")
+    target_mac: Mapped[str | None] = mapped_column(String(100), nullable=True, comment="目标 MAC 地址或 Chassis ID")
     target_description: Mapped[str | None] = mapped_column(Text, nullable=True, comment="目标设备描述")
 
     # 链路属性

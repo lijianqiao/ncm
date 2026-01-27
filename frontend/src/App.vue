@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import {
   NConfigProvider,
   NMessageProvider,
@@ -17,6 +18,13 @@ import OtpModal from '@/components/common/OtpModal.vue'
 
 hljs.registerLanguage('javascript', javascript)
 hljs.registerLanguage('json', json)
+
+// 使用 computed 确保正确的响应式追踪
+const otpShow = computed(() => globalOtpFlow.show.value)
+const otpLoading = computed(() => globalOtpFlow.loading.value)
+const otpInfoItems = computed(() => globalOtpFlow.infoItems.value)
+const otpAlertText = computed(() => globalOtpFlow.details.value?.message)
+const otpErrorMessage = computed(() => globalOtpFlow.errorMessage.value)
 </script>
 
 <template>
@@ -48,10 +56,11 @@ hljs.registerLanguage('json', json)
         <n-notification-provider>
           <GlobalAlerts />
           <router-view />
-          <OtpModal :show="globalOtpFlow.show.value" :loading="globalOtpFlow.loading.value"
-            :info-items="globalOtpFlow.infoItems.value" :alert-text="globalOtpFlow.details.value?.message"
-            :error-message="globalOtpFlow.errorMessage.value" @update:show="(v) => !v && globalOtpFlow.close()"
-            @confirm="globalOtpFlow.confirm" />
+          <!-- v-if 控制渲染，:show 始终为 true 避免动画竞态 -->
+          <OtpModal v-if="otpShow" :show="true" :loading="otpLoading"
+            :info-items="otpInfoItems" :alert-text="otpAlertText"
+            :error-message="otpErrorMessage" @update:show="(v) => !v && globalOtpFlow.close()"
+            @confirm="globalOtpFlow.confirm" @timeout="globalOtpFlow.handleTimeout" />
         </n-notification-provider>
       </n-dialog-provider>
     </n-message-provider>

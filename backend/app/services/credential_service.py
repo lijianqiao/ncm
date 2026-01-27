@@ -429,7 +429,8 @@ class CredentialService:
                 except Exception:
                     pass
 
-            # 5. 验证成功，缓存 OTP
+            # 5. 验证成功，先失效旧 OTP 再缓存新 OTP（避免缓存不一致）
+            await otp_service.invalidate_otp(request.dept_id, request.device_group)
             ttl = await otp_service.cache_otp(request.dept_id, request.device_group, request.otp_code)
 
             return OTPVerifyResponse(

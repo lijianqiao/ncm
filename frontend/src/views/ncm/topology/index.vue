@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, onMounted, onUnmounted, nextTick, h } from 'vue'
 import {
   NButton,
   NModal,
@@ -21,6 +21,7 @@ import {
   refreshTopology,
   getTopologyTaskStatus,
   rebuildTopologyCache,
+  resetTopology,
   type TopologyResponse,
   type TopologyLinkItem,
   type TopologyTaskStatus,
@@ -28,6 +29,7 @@ import {
 } from '@/api/topology'
 import { useTaskPolling } from '@/composables'
 import { formatDateTime } from '@/utils/date'
+import { globalOtpFlow } from '@/composables/useOtpFlow'
 
 defineOptions({
   name: 'TopologyManagement',
@@ -263,10 +265,54 @@ const {
   reset: resetTask,
   isPolling,
 } = useTaskPolling<TopologyTaskStatus>((taskId) => getTopologyTaskStatus(taskId), {
-  onComplete: () => fetchTopology(),
+  // 自定义完成判断：otp_required 也算完成（需要用户介入）
+  isComplete: (status) => {
+    const completedStatuses = ['SUCCESS', 'FAILURE', 'success', 'failed', 'REVOKED', 'otp_required']
+    return completedStatuses.includes(status.status)
+  },
+  onComplete: (status) => {
+    // 检查是否需要 OTP
+    if (status.status === 'otp_required' && status.result?.otp_required) {
+      const result = status.result
+      // 打开 OTP 弹窗，输入成功后重新发起任务
+      globalOtpFlow.open(
+        {
+          dept_id: result.otp_dept_id || '未知',
+          device_group: result.otp_device_group || '未知',
+          failed_devices: result.otp_failed_devices || [],
+          message: status.error || '需要输入 OTP 验证码',
+        },
+        async () => {
+          // OTP 验证成功后，重新发起拓扑刷新任务
+          closeRefreshModal()
+          await doRefreshTopology()
+        },
+      )
+      return
+    }
+    // 正常完成，刷新拓扑数据
+    fetchTopology()
+  },
 })
 
 const taskPolling = isPolling
+
+// 实际执行刷新拓扑的逻辑（可被 OTP 回调复用）
+const doRefreshTopology = async () => {
+  try {
+    const res = await refreshTopology({ async_mode: true })
+    if (res.data.task_id) {
+      $alert.success('拓扑采集任务已提交')
+      showRefreshModal.value = true
+      startPollingTaskStatus(res.data.task_id)
+    } else {
+      $alert.success('拓扑刷新请求已完成')
+      fetchTopology()
+    }
+  } catch {
+    // Error handled by global interceptor
+  }
+}
 
 const handleRefreshTopology = () => {
   dialog.info({
@@ -274,21 +320,7 @@ const handleRefreshTopology = () => {
     content: '确定要刷新网络拓扑吗？这将重新采集所有设备的 LLDP 邻居信息。',
     positiveText: '确认',
     negativeText: '取消',
-    onPositiveClick: async () => {
-      try {
-        const res = await refreshTopology({ async_mode: true })
-        if (res.data.task_id) {
-          $alert.success('拓扑采集任务已提交')
-          showRefreshModal.value = true
-          startPollingTaskStatus(res.data.task_id)
-        } else {
-          $alert.success('拓扑刷新请求已完成')
-          fetchTopology()
-        }
-      } catch {
-        // Error handled
-      }
-    },
+    onPositiveClick: doRefreshTopology,
   })
 }
 
@@ -310,6 +342,36 @@ const handleRebuildCache = () => {
       try {
         await rebuildTopologyCache()
         $alert.success('拓扑缓存重建任务已提交')
+      } catch {
+        // Error handled
+      }
+    },
+  })
+}
+
+// 重置拓扑（清除所有链路后重新采集）
+const handleResetTopology = () => {
+  dialog.error({
+    title: '重置拓扑',
+    content: () =>
+      h('div', { style: 'white-space: pre-line' }, [
+        '此操作将清除所有拓扑链路数据，然后重新采集。',
+        '\n\n通常在以下情况使用：',
+        '\n• 设备大规模变更后需要重建拓扑',
+        '\n• 拓扑数据累积过多需要清理',
+        '\n• 切换网络环境后需要重新采集',
+        '\n\n确定要重置拓扑吗？',
+      ]),
+    positiveText: '确认重置',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      try {
+        // 1. 清除所有链路
+        const resetRes = await resetTopology(false)
+        $alert.success(`已清除 ${resetRes.data.deleted_links} 条链路`)
+
+        // 2. 重新采集
+        await doRefreshTopology()
       } catch {
         // Error handled
       }
@@ -383,6 +445,7 @@ const handleToggleFullscreen = async () => {
               <n-button type="primary" @click="handleRefreshTopology" :loading="loading">
                 刷新拓扑
               </n-button>
+              <n-button type="warning" @click="handleResetTopology">重置拓扑</n-button>
               <n-button @click="handleShowLinks">链路列表</n-button>
               <n-button @click="handleExport">导出</n-button>
               <n-button @click="handleRebuildCache">重建缓存</n-button>
@@ -442,7 +505,7 @@ const handleToggleFullscreen = async () => {
             </tr>
             <tr>
               <td>IP 地址</td>
-              <td>{{ selectedNode.ip_address || '-' }}</td>
+              <td>{{ selectedNode.ip || selectedNode.ip_address || '-' }}</td>
             </tr>
             <tr>
               <td>设备类型</td>
@@ -453,8 +516,16 @@ const handleToggleFullscreen = async () => {
               <td>{{ selectedNode.vendor || '-' }}</td>
             </tr>
             <tr>
-              <td>状态</td>
+              <td>设备分组</td>
+              <td>{{ selectedNode.device_group || selectedNode.group || '-' }}</td>
+            </tr>
+            <tr>
+              <td>设备状态</td>
               <td>{{ selectedNode.status || '-' }}</td>
+            </tr>
+            <tr>
+              <td>纳管状态</td>
+              <td>{{ selectedNode.in_cmdb ? '已纳管' : '未纳管' }}</td>
             </tr>
           </tbody>
         </n-table>
@@ -462,32 +533,34 @@ const handleToggleFullscreen = async () => {
     </n-modal>
 
     <!-- 链路列表 Modal -->
-    <n-modal v-model:show="showLinksModal" preset="card" title="链路列表" style="width: 900px">
+    <n-modal v-model:show="showLinksModal" preset="card" title="链路列表" class="links-modal">
       <div v-if="linksLoading" style="text-align: center; padding: 40px">加载中...</div>
       <template v-else>
-        <n-table :bordered="false" :single-line="false">
-          <thead>
-            <tr>
-              <th>源设备ID</th>
-              <th>源端口</th>
-              <th>目标设备ID</th>
-              <th>目标端口</th>
-              <th>链路类型</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="link in links" :key="link.id">
-              <td>{{ link.source_device_id }}</td>
-              <td>{{ link.source_interface }}</td>
-              <td>{{ link.target_device_id || '-' }}</td>
-              <td>{{ link.target_interface || '-' }}</td>
-              <td>{{ link.link_type || '-' }}</td>
-            </tr>
-            <tr v-if="links.length === 0">
-              <td colspan="5" style="text-align: center">暂无链路数据</td>
-            </tr>
-          </tbody>
-        </n-table>
+        <div class="links-table-container">
+          <table class="links-table">
+            <thead>
+              <tr>
+                <th>源设备</th>
+                <th>源端口</th>
+                <th>目标设备</th>
+                <th>目标端口</th>
+                <th>链路类型</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="link in links" :key="link.id">
+                <td>{{ link.source_device_name || link.source_device_id }}</td>
+                <td>{{ link.source_interface }}</td>
+                <td>{{ link.target_device_name || link.target_hostname || link.target_device_id || '-' }}</td>
+                <td>{{ link.target_interface || '-' }}</td>
+                <td>{{ link.link_type || '-' }}</td>
+              </tr>
+              <tr v-if="links.length === 0">
+                <td colspan="5" style="text-align: center">暂无链路数据</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
       </template>
     </n-modal>
 
@@ -601,5 +674,55 @@ const handleToggleFullscreen = async () => {
   justify-content: center;
   background: rgba(255, 255, 255, 0.7);
   z-index: 5;
+}
+</style>
+
+<style>
+/* 链路列表弹窗样式（需要全局样式因为modal使用teleport） */
+.links-modal {
+  width: 900px;
+  max-height: 80vh;
+}
+
+.links-modal .n-card__content {
+  padding: 0 !important;
+  max-height: calc(80vh - 80px);
+  overflow: hidden;
+}
+
+.links-table-container {
+  max-height: calc(80vh - 100px);
+  overflow-y: auto;
+}
+
+.links-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+.links-table thead {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.links-table th {
+  background: #fafafc;
+  padding: 12px 8px;
+  text-align: left;
+  font-weight: 500;
+  border-bottom: 1px solid #e0e0e6;
+  white-space: nowrap;
+}
+
+.links-table td {
+  padding: 10px 8px;
+  border-bottom: 1px solid #e0e0e6;
+  word-break: break-all;
+}
+
+.links-table tbody tr:hover {
+  background: #f5f5f5;
 }
 </style>
