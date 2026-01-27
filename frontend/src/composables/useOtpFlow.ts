@@ -30,7 +30,7 @@ type InfoItem = { label: string; value: string }
 
 export function useOtpFlow(options?: { length?: number }) {
   const length = options?.length ?? 6
-  const maxFailedDevices = 5
+  const maxListItems = 3
 
   const show = ref(false)
   const loading = ref(false)
@@ -38,16 +38,33 @@ export function useOtpFlow(options?: { length?: number }) {
   const pendingAction = ref<((otpCode: string) => Promise<void>) | null>(null)
   const errorMessage = ref('')
 
+  const formatListValue = (value: string | string[]): string => {
+    if (Array.isArray(value)) {
+      if (value.length > maxListItems) {
+        return `${value.slice(0, maxListItems).join(', ')} ...`
+      }
+      return value.join(', ')
+    }
+    const parts = value.split(/[,，、]\s*/).filter(Boolean)
+    if (parts.length > 1) {
+      if (parts.length > maxListItems) {
+        return `${parts.slice(0, maxListItems).join(', ')} ...`
+      }
+      return parts.join(', ')
+    }
+    return value
+  }
+
   const infoItems = computed<InfoItem[]>(() => {
     const d = details.value
     if (!d) return []
     const items: InfoItem[] = [
-      { label: '部门ID', value: d.dept_id },
-      { label: '设备组', value: d.device_group },
+      { label: '部门ID', value: formatListValue(d.dept_id) },
+      { label: '设备组', value: formatListValue(d.device_group) },
     ]
     if (d.failed_devices && d.failed_devices.length > 0) {
-      const preview = d.failed_devices.slice(0, maxFailedDevices)
-      const suffix = d.failed_devices.length > maxFailedDevices ? ' ...' : ''
+      const preview = d.failed_devices.slice(0, maxListItems)
+      const suffix = d.failed_devices.length > maxListItems ? ' ...' : ''
       items.push({ label: '失败设备', value: `${preview.join(', ')}${suffix}` })
     }
     return items
@@ -199,8 +216,19 @@ export function useOtpFlow(options?: { length?: number }) {
     error: unknown,
     action: (otpCode: string) => Promise<void>,
   ): boolean => {
-    const d = extractOtpRequiredDetails(error)
-    if (!d) return false
+    let d = extractOtpRequiredDetails(error)
+    if (!d) {
+      const err = error as AxiosLikeError
+      const status = err?.response?.status
+      const code = err?.response?.data?.code
+      if (status !== 428 && code !== 428) return false
+      d = {
+        dept_id: '未知',
+        device_group: '未知',
+        failed_devices: [],
+        message: err?.response?.data?.message || '需要 OTP 验证',
+      }
+    }
 
     open(d, action)
     return true

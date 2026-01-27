@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, ref, watch, onBeforeUnmount } from 'vue'
 import { NModal, NAlert, NFormItem, NInputOtp, NButton, NSpace, NDescriptions, NDescriptionsItem } from 'naive-ui'
 
 defineOptions({
@@ -43,15 +43,39 @@ const emit = defineEmits<{
 }>()
 
 const otpChars = ref<string[]>([])
+const idleTimeoutMs = 60_000
+const inactivityTimer = ref<ReturnType<typeof setTimeout> | null>(null)
 
 const resetOtp = () => {
   otpChars.value = Array.from({ length: props.length }, () => '')
 }
 
+const clearInactivityTimer = () => {
+  if (inactivityTimer.value) {
+    clearTimeout(inactivityTimer.value)
+    inactivityTimer.value = null
+  }
+}
+
+const startInactivityTimer = () => {
+  if (!props.show || props.loading) return
+  clearInactivityTimer()
+  inactivityTimer.value = setTimeout(() => {
+    if (!props.loading && props.show) {
+      emit('update:show', false)
+    }
+  }, idleTimeoutMs)
+}
+
 watch(
   () => props.show,
   (v) => {
-    if (v) resetOtp()
+    if (v) {
+      resetOtp()
+      startInactivityTimer()
+    } else {
+      clearInactivityTimer()
+    }
   },
   { immediate: true },
 )
@@ -62,9 +86,32 @@ watch(
   (newVal) => {
     if (newVal) {
       resetOtp()
+      startInactivityTimer()
     }
   }
 )
+
+watch(
+  () => otpChars.value.join(''),
+  () => {
+    startInactivityTimer()
+  }
+)
+
+watch(
+  () => props.loading,
+  (v) => {
+    if (v) {
+      clearInactivityTimer()
+    } else {
+      startInactivityTimer()
+    }
+  }
+)
+
+onBeforeUnmount(() => {
+  clearInactivityTimer()
+})
 
 const otpCode = computed(() => otpChars.value.join('').trim())
 const visibleInfoItems = computed(() => props.infoItems.slice(0, props.maxInfoItems))
