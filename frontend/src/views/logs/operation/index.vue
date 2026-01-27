@@ -15,6 +15,15 @@ import {
   type OperationLog,
 } from '@/api/logs'
 import { formatDateTime } from '@/utils/date'
+import {
+  renderIpAddress,
+  renderModule,
+  renderHttpMethod,
+  renderStatusCode,
+  renderDuration,
+  renderPath,
+  renderUuid,
+} from '@/composables/useStyledRenders'
 import ProTable from '@/components/common/ProTable.vue'
 import DataImportExport from '@/components/common/DataImportExport.vue'
 import hljs from 'highlight.js/lib/core'
@@ -32,13 +41,45 @@ const tableRef = ref()
 
 const columns: DataTableColumns<OperationLog> = [
   { title: '用户名', key: 'username', width: 140, sorter: 'default' },
-  { title: 'IP', key: 'ip', width: 140 },
-  { title: '模块', key: 'module', width: 160, ellipsis: { tooltip: true } },
-  { title: '摘要', key: 'summary', width: 220, ellipsis: { tooltip: true } },
-  { title: '方法', key: 'method', width: 90 },
-  { title: '路径', key: 'path', width: 220, ellipsis: { tooltip: true } },
-  { title: '状态码', key: 'response_code', width: 100, sorter: 'default' },
-  { title: '耗时(ms)', key: 'duration', width: 120, sorter: 'default' },
+  {
+    title: 'IP',
+    key: 'ip',
+    width: 160,
+    render: (row) => renderIpAddress(row.ip),
+  },
+  {
+    title: '模块',
+    key: 'module',
+    width: 140,
+    render: (row) => renderModule(row.module),
+  },
+  { title: '摘要', key: 'summary', width: 200, ellipsis: { tooltip: true } },
+  {
+    title: '方法',
+    key: 'method',
+    width: 90,
+    render: (row) => renderHttpMethod(row.method),
+  },
+  {
+    title: '路径',
+    key: 'path',
+    width: 200,
+    render: (row) => renderPath(row.path, 180),
+  },
+  {
+    title: '状态码',
+    key: 'response_code',
+    width: 90,
+    sorter: 'default',
+    render: (row) => renderStatusCode(row.response_code),
+  },
+  {
+    title: '耗时',
+    key: 'duration',
+    width: 110,
+    sorter: 'default',
+    render: (row) => renderDuration(row.duration),
+  },
   {
     title: '时间',
     key: 'created_at',
@@ -94,25 +135,39 @@ const loadData = async (params: LogSearchParams) => {
     </ProTable>
 
     <!-- 详情抽屉 -->
-    <n-drawer v-model:show="showDrawer" :width="630" placement="right" :native-scrollbar="true">
+    <n-drawer v-model:show="showDrawer" :width="680" placement="right" :native-scrollbar="true">
       <n-drawer-content title="审计日志详情" closable>
         <n-descriptions v-if="currentLog" label-placement="left" :column="1" bordered>
-          <n-descriptions-item label="ID">{{ currentLog.id }}</n-descriptions-item>
-          <n-descriptions-item label="用户ID">{{ currentLog.user_id }}</n-descriptions-item>
-          <n-descriptions-item label="用户名">{{ currentLog.username }}</n-descriptions-item>
-          <n-descriptions-item label="IP">{{ currentLog.ip }}</n-descriptions-item>
-          <n-descriptions-item label="模块">{{ currentLog.module || '-' }}</n-descriptions-item>
+          <n-descriptions-item label="ID">
+            <component :is="renderUuid(currentLog.id)" />
+          </n-descriptions-item>
+          <n-descriptions-item label="用户ID">
+            <component :is="renderUuid(currentLog.user_id)" />
+          </n-descriptions-item>
+          <n-descriptions-item label="用户名">
+            <span class="font-medium">{{ currentLog.username }}</span>
+          </n-descriptions-item>
+          <n-descriptions-item label="IP地址">
+            <component :is="renderIpAddress(currentLog.ip)" />
+          </n-descriptions-item>
+          <n-descriptions-item label="模块">
+            <component :is="renderModule(currentLog.module)" />
+          </n-descriptions-item>
           <n-descriptions-item label="摘要">{{ currentLog.summary || '-' }}</n-descriptions-item>
-          <n-descriptions-item label="方法">{{ currentLog.method }}</n-descriptions-item>
-          <n-descriptions-item label="路径">{{ currentLog.path }}</n-descriptions-item>
-          <n-descriptions-item label="状态码">{{ currentLog.response_code }}</n-descriptions-item>
-          <n-descriptions-item label="耗时">{{ currentLog.duration?.toFixed(4) }} ms</n-descriptions-item>
-          <n-descriptions-item label="User-Agent">{{
-            currentLog.user_agent || '-'
-            }}</n-descriptions-item>
-          <n-descriptions-item label="时间">{{
-            formatDateTime(currentLog.created_at)
-            }}</n-descriptions-item>
+          <n-descriptions-item label="方法">
+            <component :is="renderHttpMethod(currentLog.method)" />
+          </n-descriptions-item>
+          <n-descriptions-item label="路径">
+            <code class="path-code">{{ currentLog.path }}</code>
+          </n-descriptions-item>
+          <n-descriptions-item label="状态码">
+            <component :is="renderStatusCode(currentLog.response_code)" />
+          </n-descriptions-item>
+          <n-descriptions-item label="耗时">
+            <component :is="renderDuration(currentLog.duration)" />
+          </n-descriptions-item>
+          <n-descriptions-item label="User-Agent">{{ currentLog.user_agent || '-' }}</n-descriptions-item>
+          <n-descriptions-item label="时间">{{ formatDateTime(currentLog.created_at) }}</n-descriptions-item>
         </n-descriptions>
 
         <div v-if="currentLog" class="json-section">
@@ -133,6 +188,17 @@ const loadData = async (params: LogSearchParams) => {
   height: 100%;
 }
 
+.font-medium {
+  font-weight: 500;
+}
+
+.path-code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+  color: #476582;
+  word-break: break-all;
+}
+
 .json-section {
   margin-top: 16px;
 }
@@ -141,6 +207,17 @@ const loadData = async (params: LogSearchParams) => {
   font-weight: 500;
   margin: 16px 0 8px;
   color: #333;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.json-title::before {
+  content: '';
+  width: 3px;
+  height: 14px;
+  background: #18a058;
+  border-radius: 2px;
 }
 
 .json-code {

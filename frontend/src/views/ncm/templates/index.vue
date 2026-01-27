@@ -56,6 +56,17 @@ import { getUsers } from '@/api/users'
 import { getDeviceOptions, type Device, type DeviceVendor } from '@/api/devices'
 import { formatDateTime } from '@/utils/date'
 import { formatUserDisplayNameParts } from '@/utils/user'
+import { renderEnumTag } from '@/composables/useStyledRenders'
+import {
+  TemplateTypeLabels,
+  TemplateTypeColors,
+  TemplateStatusLabels,
+  TemplateStatusColors,
+  DeviceVendorLabels,
+  DeviceVendorColors,
+  DeviceTypeLabels,
+  DeviceTypeColors,
+} from '@/types/enum-labels'
 import ProTable, { type FilterConfig } from '@/components/common/ProTable.vue'
 import RecycleBinModal from '@/components/common/RecycleBinModal.vue'
 import DataImportExport from '@/components/common/DataImportExport.vue'
@@ -81,13 +92,26 @@ const recycleBinColumns: DataTableColumns<Template> = [
     title: '类型',
     key: 'template_type',
     width: 100,
-    render: (row) => templateTypeLabelMap[row.template_type],
+    render: (row) =>
+      renderEnumTag(row.template_type, TemplateTypeLabels, TemplateTypeColors),
   },
   {
     title: '适用厂商',
     key: 'vendors',
-    width: 150,
-    render: (row) => row.vendors.map((v) => vendorLabelMap[v]).join(', ') || '-',
+    width: 180,
+    render: (row) =>
+      row.vendors?.length
+        ? h(
+            NSpace,
+            { size: 4 },
+            {
+              default: () =>
+                row.vendors.map((v) =>
+                  renderEnumTag(v, DeviceVendorLabels, DeviceVendorColors),
+                ),
+            },
+          )
+        : '-',
   },
   { title: '版本', key: 'version', width: 80 },
   {
@@ -201,45 +225,7 @@ const deviceTypeOptions = [
   { label: '全部', value: 'all' },
 ]
 
-const templateTypeLabelMap: Record<TemplateType, string> = {
-  vlan: 'VLAN配置',
-  interface: '接口配置',
-  acl: 'ACL策略',
-  route: '路由配置',
-  qos: 'QoS策略',
-  custom: '自定义',
-}
-
-const statusLabelMap: Record<TemplateStatus, string> = {
-  draft: '草稿',
-  pending: '待审批',
-  approved: '已批准',
-  rejected: '已拒绝',
-  deprecated: '已废弃',
-}
-
-const statusColorMap: Record<TemplateStatus, 'default' | 'info' | 'success' | 'warning' | 'error'> =
-{
-  draft: 'default',
-  pending: 'info',
-  approved: 'success',
-  rejected: 'error',
-  deprecated: 'warning',
-}
-
-const vendorLabelMap: Record<DeviceVendor, string> = {
-  cisco: 'Cisco',
-  huawei: 'Huawei',
-  h3c: 'H3C',
-  other: '其他',
-}
-
-const deviceTypeLabelMap: Record<DeviceType, string> = {
-  switch: '交换机',
-  router: '路由器',
-  firewall: '防火墙',
-  all: '全部',
-}
+// 使用集中式枚举标签和颜色（从 @/types/enum-labels 导入）
 
 // ==================== 表格列定义 ====================
 
@@ -257,31 +243,42 @@ const columns: DataTableColumns<Template> = [
     title: '类型',
     key: 'template_type',
     width: 100,
-    render: (row) => templateTypeLabelMap[row.template_type],
+    render: (row) =>
+      renderEnumTag(row.template_type, TemplateTypeLabels, TemplateTypeColors),
   },
   {
     title: '适用厂商',
     key: 'vendors',
-    width: 150,
-    render: (row) => row.vendors.map((v) => vendorLabelMap[v]).join(', ') || '-',
+    width: 180,
+    render: (row) =>
+      row.vendors?.length
+        ? h(
+            NSpace,
+            { size: 4 },
+            {
+              default: () =>
+                row.vendors.map((v) =>
+                  renderEnumTag(v, DeviceVendorLabels, DeviceVendorColors),
+                ),
+            },
+          )
+        : '-',
   },
   {
     title: '设备类型',
     key: 'device_type',
     width: 100,
-    render: (row) => (row.device_type ? deviceTypeLabelMap[row.device_type] : '-'),
+    render: (row) =>
+      row.device_type
+        ? renderEnumTag(row.device_type, DeviceTypeLabels, DeviceTypeColors)
+        : '-',
   },
   {
     title: '状态',
     key: 'status',
     width: 100,
-    render(row) {
-      return h(
-        NTag,
-        { type: statusColorMap[row.status], bordered: false, size: 'small' },
-        { default: () => statusLabelMap[row.status] },
-      )
-    },
+    render: (row) =>
+      renderEnumTag(row.status, TemplateStatusLabels, TemplateStatusColors),
   },
   { title: '版本', key: 'version', width: 80 },
   {

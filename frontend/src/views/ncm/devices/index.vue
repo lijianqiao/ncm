@@ -59,7 +59,10 @@ import {
   DeviceStatusLabels,
   DeviceGroupLabels,
   DeviceStatusColors,
+  DeviceVendorColors,
+  DeviceGroupColors,
 } from '@/types/enum-labels'
+import { renderIpAddress } from '@/composables/useStyledRenders'
 import { getDeptTree, type Dept } from '@/api/depts'
 import { formatDateTime } from '@/utils/date'
 import ProTable, { type FilterConfig } from '@/components/common/ProTable.vue'
@@ -125,19 +128,38 @@ const fetchDeptTree = async () => {
 const columns: DataTableColumns<Device> = [
   { type: 'selection', fixed: 'left' },
   { title: '设备名称', key: 'name', width: 150, fixed: 'left', ellipsis: { tooltip: true } },
-  { title: 'IP 地址', key: 'ip_address', width: 140 },
+  {
+    title: 'IP 地址',
+    key: 'ip_address',
+    width: 160,
+    render: (row) => renderIpAddress(row.ip_address),
+  },
   {
     title: '厂商',
     key: 'vendor',
     width: 100,
-    render: (row) => (row.vendor ? vendorLabelMap[row.vendor] : '-'),
+    render: (row) => {
+      if (!row.vendor) return '-'
+      return h(
+        NTag,
+        { type: DeviceVendorColors[row.vendor], bordered: false, size: 'small' },
+        { default: () => vendorLabelMap[row.vendor!] },
+      )
+    },
   },
   { title: '型号', key: 'model', width: 120, ellipsis: { tooltip: true } },
   {
     title: '设备分组',
     key: 'device_group',
     width: 100,
-    render: (row) => (row.device_group ? groupLabelMap[row.device_group] : '-'),
+    render: (row) => {
+      if (!row.device_group) return '-'
+      return h(
+        NTag,
+        { type: DeviceGroupColors[row.device_group], bordered: false, size: 'small' },
+        { default: () => groupLabelMap[row.device_group!] },
+      )
+    },
   },
   {
     title: '所属部门',
@@ -150,13 +172,12 @@ const columns: DataTableColumns<Device> = [
     title: '状态',
     key: 'status',
     width: 100,
-    render(row) {
-      return h(
+    render: (row) =>
+      h(
         NTag,
-        { type: statusColorMap[row.status], bordered: false },
+        { type: statusColorMap[row.status], bordered: false, size: 'small' },
         { default: () => statusLabelMap[row.status] },
-      )
-    },
+      ),
   },
   { title: '位置', key: 'location', width: 120, ellipsis: { tooltip: true } },
   { title: '序列号', key: 'serial_number', width: 140, ellipsis: { tooltip: true } },

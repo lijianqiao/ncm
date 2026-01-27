@@ -32,14 +32,24 @@ import {
   exportBackups,
   type Backup,
   type BackupSearchParams,
-  type BackupType,
   type BackupTaskStatus,
 } from '@/api/backups'
 import { getDeviceOptions, type Device } from '@/api/devices'
 import { getDeviceLatestDiff, type DiffResponse } from '@/api/diff'
 import { cacheOTP, type OTPCacheRequest } from '@/api/credentials'
 import { formatDateTime } from '@/utils/date'
-import { useTaskPolling } from '@/composables'
+import { useTaskPolling, renderIpAddress, renderEnumTag } from '@/composables'
+import {
+  DeviceVendorLabels,
+  DeviceVendorColors,
+  DeviceGroupLabels,
+  DeviceGroupColors,
+  AuthTypeLabels,
+  AuthTypeColors,
+  BackupStatusLabels,
+  BackupStatusColors,
+} from '@/types/enum-labels'
+import type { DeviceVendor, DeviceGroup, AuthType, BackupStatus, BackupTypeType } from '@/types/enums'
 import ProTable, { type FilterConfig } from '@/components/common/ProTable.vue'
 import UnifiedDiffViewer from '@/components/common/UnifiedDiffViewer.vue'
 import OtpModal from '@/components/common/OtpModal.vue'
@@ -98,7 +108,8 @@ const vendorOptions = [
   { label: 'Cisco', value: 'cisco' },
 ]
 
-const backupTypeLabelMap: Record<BackupType, string> = {
+// 字符串键映射（用于模板直接访问）
+const backupTypeLabelMap: Record<string, string> = {
   scheduled: '定时备份',
   manual: '手动备份',
   pre_change: '变更前备份',
@@ -106,32 +117,12 @@ const backupTypeLabelMap: Record<BackupType, string> = {
   incremental: '增量备份',
 }
 
-const backupTypeColorMap: Record<BackupType, 'info' | 'success' | 'warning'> = {
+const backupTypeColorMap: Record<string, 'info' | 'success' | 'warning' | 'default'> = {
   scheduled: 'info',
-  manual: 'success',
+  manual: 'default',
   pre_change: 'warning',
-  post_change: 'warning',
+  post_change: 'success',
   incremental: 'info',
-}
-
-const backupStatusLabelMap: Record<string, string> = {
-  success: '成功',
-  failed: '失败',
-  pending: '等待中',
-  running: '执行中',
-}
-
-const backupStatusColorMap: Record<string, 'success' | 'error' | 'warning' | 'info'> = {
-  success: 'success',
-  failed: 'error',
-  pending: 'info',
-  running: 'warning',
-}
-
-const authTypeLabelMap: Record<string, string> = {
-  static: '静态密码',
-  otp_seed: 'OTP 种子',
-  otp_manual: 'OTP 手动',
 }
 
 const deviceGroupLabels: Record<string, string> = {
@@ -169,9 +160,8 @@ const columns: DataTableColumns<Backup> = [
   {
     title: 'IP',
     key: 'ip_address',
-    width: 130,
-    ellipsis: { tooltip: true },
-    render: (row) => row.device?.ip_address || '-',
+    width: 150,
+    render: (row) => renderIpAddress(row.device?.ip_address),
   },
   {
     title: '部门',
@@ -184,7 +174,10 @@ const columns: DataTableColumns<Backup> = [
     title: '厂商',
     key: 'vendor',
     width: 100,
-    render: (row) => (row.device?.vendor ? String(row.device.vendor).toUpperCase() : '-'),
+    render: (row) =>
+      row.device?.vendor
+        ? renderEnumTag(row.device.vendor as DeviceVendor, DeviceVendorLabels, DeviceVendorColors)
+        : '-',
   },
   {
     title: '型号',
@@ -196,40 +189,44 @@ const columns: DataTableColumns<Backup> = [
   {
     title: '分组',
     key: 'device_group',
-    width: 80,
-    render: (row) => row.device?.device_group || '-',
+    width: 90,
+    render: (row) =>
+      row.device?.device_group
+        ? renderEnumTag(
+            row.device.device_group as DeviceGroup,
+            DeviceGroupLabels,
+            DeviceGroupColors,
+          )
+        : '-',
   },
   {
     title: '认证',
     key: 'auth_type',
     width: 100,
-    render: (row) => {
-      const v = row.device?.auth_type || ''
-      return authTypeLabelMap[String(v)] || (v ? String(v) : '-')
-    },
+    render: (row) =>
+      row.device?.auth_type
+        ? renderEnumTag(row.device.auth_type as AuthType, AuthTypeLabels, AuthTypeColors)
+        : '-',
   },
   {
     title: '备份类型',
     key: 'backup_type',
     width: 100,
-    render(row) {
-      return h(
+    render: (row) =>
+      h(
         NTag,
-        { type: backupTypeColorMap[row.backup_type], bordered: false, size: 'small' },
-        { default: () => backupTypeLabelMap[row.backup_type] },
-      )
-    },
+        { type: backupTypeColorMap[row.backup_type] || 'default', bordered: false, size: 'small' },
+        { default: () => backupTypeLabelMap[row.backup_type] || row.backup_type },
+      ),
   },
   {
     title: '状态',
     key: 'status',
     width: 90,
-    render: (row) => {
-      const status = row.status || 'unknown'
-      const type = backupStatusColorMap[status] || 'info'
-      const label = backupStatusLabelMap[status] || status
-      return h(NTag, { type, bordered: false, size: 'small' }, { default: () => label })
-    },
+    render: (row) =>
+      row.status
+        ? renderEnumTag(row.status as BackupStatus, BackupStatusLabels, BackupStatusColors)
+        : '-',
   },
   {
     title: '配置 Hash',
@@ -347,7 +344,7 @@ const handleRecycleBinContextMenuSelect = (key: string | number, row: Backup) =>
 const showContentModal = ref(false)
 const contentData = ref({
   device_name: '',
-  backup_type: 'scheduled' as BackupType,
+  backup_type: 'scheduled' as BackupTypeType,
   content: '',
   md5_hash: '',
   created_at: '',
@@ -664,7 +661,7 @@ const submitOTP = async (otpCode: string) => {
 const showBatchBackupModal = ref(false)
 const batchBackupModel = ref({
   device_ids: [] as string[],
-  backup_type: 'scheduled' as BackupType,
+  backup_type: 'scheduled' as BackupTypeType,
 })
 // 存储选中的设备对象，用于 OTP 检查
 const selectedBatchDevices = ref<Device[]>([])

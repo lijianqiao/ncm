@@ -11,6 +11,12 @@ import {
 } from 'naive-ui'
 import { getLoginLogs, exportLoginLogs, type LoginLog, type LogSearchParams } from '@/api/logs'
 import { formatDateTime } from '@/utils/date'
+import {
+  renderIpAddress,
+  renderBooleanStatus,
+  renderUserAgent,
+  renderUuid,
+} from '@/composables/useStyledRenders'
 import ProTable from '@/components/common/ProTable.vue'
 import DataImportExport from '@/components/common/DataImportExport.vue'
 
@@ -22,18 +28,17 @@ const tableRef = ref()
 
 const columns: DataTableColumns<LoginLog> = [
   { title: '用户名', key: 'username', width: 140, sorter: 'default' },
-  { title: 'IP', key: 'ip', width: 140 },
+  {
+    title: 'IP',
+    key: 'ip',
+    width: 160,
+    render: (row) => renderIpAddress(row.ip),
+  },
   {
     title: '状态',
     key: 'status',
     width: 100,
-    render(row) {
-      return h(
-        NTag,
-        { type: row.status ? 'success' : 'error', bordered: false },
-        { default: () => (row.status ? '成功' : '失败') },
-      )
-    },
+    render: (row) => renderBooleanStatus(row.status, { trueText: '成功', falseText: '失败' }),
   },
   { title: '消息', key: 'msg', width: 220, ellipsis: { tooltip: true } },
   { title: '浏览器', key: 'browser', width: 160, ellipsis: { tooltip: true } },
@@ -82,25 +87,29 @@ const loadData = async (params: LogSearchParams) => {
     </ProTable>
 
     <!-- 详情抽屉 -->
-    <n-drawer v-model:show="showDrawer" :width="500" placement="right" :native-scrollbar="true">
+    <n-drawer v-model:show="showDrawer" :width="520" placement="right" :native-scrollbar="true">
       <n-drawer-content title="登录日志详情" closable>
         <n-descriptions v-if="currentLog" label-placement="left" :column="1" bordered>
-          <n-descriptions-item label="ID">{{ currentLog.id }}</n-descriptions-item>
-          <n-descriptions-item label="用户ID">{{ currentLog.user_id || '-' }}</n-descriptions-item>
-          <n-descriptions-item label="用户名">{{ currentLog.username }}</n-descriptions-item>
-          <n-descriptions-item label="IP">{{ currentLog.ip }}</n-descriptions-item>
+          <n-descriptions-item label="ID">
+            <component :is="renderUuid(currentLog.id)" />
+          </n-descriptions-item>
+          <n-descriptions-item label="用户ID">
+            <component :is="renderUuid(currentLog.user_id)" />
+          </n-descriptions-item>
+          <n-descriptions-item label="用户名">
+            <span class="font-medium">{{ currentLog.username }}</span>
+          </n-descriptions-item>
+          <n-descriptions-item label="IP地址">
+            <component :is="renderIpAddress(currentLog.ip)" />
+          </n-descriptions-item>
           <n-descriptions-item label="状态">
-            <n-tag :type="currentLog.status ? 'success' : 'error'" size="small">
-              {{ currentLog.status ? '成功' : '失败' }}
-            </n-tag>
+            <component :is="renderBooleanStatus(currentLog.status, { trueText: '登录成功', falseText: '登录失败' })" />
           </n-descriptions-item>
           <n-descriptions-item label="消息">{{ currentLog.msg || '-' }}</n-descriptions-item>
           <n-descriptions-item label="浏览器">{{ currentLog.browser || '-' }}</n-descriptions-item>
           <n-descriptions-item label="系统">{{ currentLog.os || '-' }}</n-descriptions-item>
           <n-descriptions-item label="设备">{{ currentLog.device || '-' }}</n-descriptions-item>
-          <n-descriptions-item label="时间">{{
-            formatDateTime(currentLog.created_at)
-            }}</n-descriptions-item>
+          <n-descriptions-item label="时间">{{ formatDateTime(currentLog.created_at) }}</n-descriptions-item>
         </n-descriptions>
       </n-drawer-content>
     </n-drawer>
@@ -111,5 +120,13 @@ const loadData = async (params: LogSearchParams) => {
 .p-4 {
   padding: 16px;
   height: 100%;
+}
+
+.font-medium {
+  font-weight: 500;
+}
+
+.text-gray {
+  color: #909399;
 }
 </style>

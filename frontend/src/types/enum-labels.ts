@@ -188,6 +188,28 @@ export const AlertStatusOptions = enumToOptions(AlertStatus, AlertStatusLabels)
 
 export type TagType = 'default' | 'info' | 'success' | 'warning' | 'error'
 
+/** 设备厂商颜色 */
+export const DeviceVendorColors: Record<DeviceVendor, TagType> = {
+  [DeviceVendor.H3C]: 'success',
+  [DeviceVendor.HUAWEI]: 'warning',
+  [DeviceVendor.CISCO]: 'info',
+  [DeviceVendor.OTHER]: 'default',
+}
+
+/** 设备分组颜色 */
+export const DeviceGroupColors: Record<DeviceGroup, TagType> = {
+  [DeviceGroup.CORE]: 'error',
+  [DeviceGroup.DISTRIBUTION]: 'warning',
+  [DeviceGroup.ACCESS]: 'info',
+}
+
+/** 认证类型颜色 */
+export const AuthTypeColors: Record<AuthType, TagType> = {
+  [AuthType.STATIC]: 'default',
+  [AuthType.OTP_SEED]: 'info',
+  [AuthType.OTP_MANUAL]: 'warning',
+}
+
 /** 设备状态颜色 */
 export const DeviceStatusColors: Record<DeviceStatus, TagType> = {
   [DeviceStatus.IN_STOCK]: 'default',
@@ -195,6 +217,23 @@ export const DeviceStatusColors: Record<DeviceStatus, TagType> = {
   [DeviceStatus.ACTIVE]: 'success',
   [DeviceStatus.MAINTENANCE]: 'warning',
   [DeviceStatus.RETIRED]: 'error',
+}
+
+/** 设备类型颜色 */
+export const DeviceTypeColors: Record<DeviceType, TagType> = {
+  [DeviceType.SWITCH]: 'info',
+  [DeviceType.ROUTER]: 'success',
+  [DeviceType.FIREWALL]: 'warning',
+  [DeviceType.ALL]: 'default',
+}
+
+/** 备份类型颜色 */
+export const BackupTypeColors: Record<BackupType, TagType> = {
+  [BackupType.SCHEDULED]: 'info',
+  [BackupType.MANUAL]: 'default',
+  [BackupType.PRE_CHANGE]: 'warning',
+  [BackupType.POST_CHANGE]: 'success',
+  [BackupType.INCREMENTAL]: 'info',
 }
 
 /** 备份状态颜色 */
@@ -255,4 +294,48 @@ export const AlertStatusColors: Record<AlertStatus, TagType> = {
   [AlertStatus.OPEN]: 'error',
   [AlertStatus.ACK]: 'warning',
   [AlertStatus.CLOSED]: 'success',
+}
+
+/** 告警类型颜色 */
+export const AlertTypeColors: Record<AlertType, TagType> = {
+  [AlertType.CONFIG_CHANGE]: 'warning',
+  [AlertType.DEVICE_OFFLINE]: 'error',
+  [AlertType.SHADOW_ASSET]: 'info',
+}
+
+/** 模板类型颜色 */
+export const TemplateTypeColors: Record<TemplateType, TagType> = {
+  [TemplateType.VLAN]: 'info',
+  [TemplateType.INTERFACE]: 'success',
+  [TemplateType.ACL]: 'warning',
+  [TemplateType.ROUTE]: 'error',
+  [TemplateType.QOS]: 'info',
+  [TemplateType.CUSTOM]: 'default',
+}
+
+// ===== HTTP 方法颜色 =====
+
+export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD' | 'OPTIONS'
+
+export const HttpMethodColors: Record<HttpMethod, TagType> = {
+  GET: 'success',
+  POST: 'info',
+  PUT: 'warning',
+  PATCH: 'warning',
+  DELETE: 'error',
+  HEAD: 'default',
+  OPTIONS: 'default',
+}
+
+// ===== 状态码颜色工具函数 =====
+
+/**
+ * 根据 HTTP 状态码返回对应的标签类型
+ */
+export function getStatusCodeColor(code: number): TagType {
+  if (code >= 200 && code < 300) return 'success'
+  if (code >= 300 && code < 400) return 'info'
+  if (code >= 400 && code < 500) return 'warning'
+  if (code >= 500) return 'error'
+  return 'default'
 }

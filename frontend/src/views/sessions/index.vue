@@ -14,7 +14,6 @@ import {
   NPopconfirm,
   useDialog,
   type DropdownOption,
-  NEllipsis,
 } from 'naive-ui'
 import { $alert } from '@/utils/alert'
 import {
@@ -26,6 +25,7 @@ import {
   type SessionSearchParams,
 } from '@/api/sessions'
 import { formatDateTime } from '@/utils/date'
+import { renderIpAddress, renderUserAgent } from '@/composables/useStyledRenders'
 import ProTable from '@/components/common/ProTable.vue'
 import DataImportExport from '@/components/common/DataImportExport.vue'
 
@@ -40,13 +40,17 @@ const tableRef = ref()
 const columns: DataTableColumns<OnlineSession> = [
   { type: 'selection', fixed: 'left' },
   { title: '用户名', key: 'username', width: 120, fixed: 'left' },
-  { title: 'IP地址', key: 'ip', width: 140 },
+  {
+    title: 'IP地址',
+    key: 'ip',
+    width: 160,
+    render: (row) => renderIpAddress(row.ip),
+  },
   {
     title: 'User Agent',
     key: 'user_agent',
-    width: 300,
-    ellipsis: { tooltip: true },
-    render: (row) => h(NEllipsis, { style: 'max-width: 280px' }, { default: () => row.user_agent }),
+    width: 280,
+    render: (row) => renderUserAgent(row.user_agent),
   },
   {
     title: '登录时间',

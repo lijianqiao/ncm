@@ -34,6 +34,15 @@ import {
   type AlertStatus,
 } from '@/api/alerts'
 import { formatDateTime } from '@/utils/date'
+import { renderEnumTag } from '@/composables/useStyledRenders'
+import {
+  AlertTypeLabels,
+  AlertTypeColors,
+  AlertSeverityLabels,
+  AlertSeverityColors,
+  AlertStatusLabels,
+  AlertStatusColors,
+} from '@/types/enum-labels'
 import ProTable, { type FilterConfig } from '@/components/common/ProTable.vue'
 import DataImportExport from '@/components/common/DataImportExport.vue'
 
@@ -69,35 +78,7 @@ const statusOptions = [
   { label: '已关闭', value: 'closed' },
 ]
 
-const alertTypeLabelMap: Record<AlertType, string> = {
-  device_offline: '设备离线',
-  config_change: '配置变更',
-  shadow_asset: '影子资产',
-}
-
-const severityLabelMap: Record<AlertSeverity, string> = {
-  low: '低',
-  medium: '中',
-  high: '高',
-}
-
-const statusLabelMap: Record<AlertStatus, string> = {
-  open: '未处理',
-  ack: '已确认',
-  closed: '已关闭',
-}
-
-const severityColorMap: Record<AlertSeverity, 'info' | 'warning' | 'error'> = {
-  low: 'info',
-  medium: 'warning',
-  high: 'error',
-}
-
-const statusColorMap: Record<AlertStatus, 'error' | 'warning' | 'success'> = {
-  open: 'error',
-  ack: 'warning',
-  closed: 'success',
-}
+// 使用集中式枚举标签和颜色（从 @/types/enum-labels 导入）
 
 // ==================== 表格列定义 ====================
 
@@ -114,31 +95,22 @@ const columns: DataTableColumns<Alert> = [
     title: '类型',
     key: 'alert_type',
     width: 100,
-    render: (row) => alertTypeLabelMap[row.alert_type],
+    render: (row) =>
+      renderEnumTag(row.alert_type, AlertTypeLabels, AlertTypeColors),
   },
   {
     title: '级别',
     key: 'severity',
     width: 80,
-    render(row) {
-      return h(
-        NTag,
-        { type: severityColorMap[row.severity], bordered: false, size: 'small' },
-        { default: () => severityLabelMap[row.severity] },
-      )
-    },
+    render: (row) =>
+      renderEnumTag(row.severity, AlertSeverityLabels, AlertSeverityColors),
   },
   {
     title: '状态',
     key: 'status',
     width: 100,
-    render(row) {
-      return h(
-        NTag,
-        { type: statusColorMap[row.status], bordered: false, size: 'small' },
-        { default: () => statusLabelMap[row.status] },
-      )
-    },
+    render: (row) =>
+      renderEnumTag(row.status, AlertStatusLabels, AlertStatusColors),
   },
   {
     title: '关联设备',

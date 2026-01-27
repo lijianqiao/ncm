@@ -40,6 +40,8 @@ import {
   AuthTypeOptions,
   DeviceGroupLabels,
   AuthTypeLabels,
+  DeviceGroupColors,
+  AuthTypeColors,
 } from '@/types/enum-labels'
 import { getDeptTree, type Dept } from '@/api/depts'
 import { formatDateTime } from '@/utils/date'
@@ -73,20 +75,24 @@ const recycleBinColumns: DataTableColumns<Credential> = [
     title: '设备分组',
     key: 'device_group',
     width: 120,
-    render: (row) => groupLabelMap[row.device_group],
+    render: (row) =>
+      h(
+        NTag,
+        { type: DeviceGroupColors[row.device_group], bordered: false, size: 'small' },
+        { default: () => groupLabelMap[row.device_group] },
+      ),
   },
   { title: 'SSH 用户名', key: 'username', width: 150 },
   {
     title: '认证类型',
     key: 'auth_type',
     width: 120,
-    render(row) {
-      return h(
+    render: (row) =>
+      h(
         NTag,
-        { type: row.auth_type === 'static' ? 'default' : 'info', bordered: false },
+        { type: AuthTypeColors[row.auth_type], bordered: false, size: 'small' },
         { default: () => authTypeLabelMap[row.auth_type] },
-      )
-    },
+      ),
   },
   {
     title: '删除时间',
@@ -197,20 +203,24 @@ const columns: DataTableColumns<Credential> = [
     title: '设备分组',
     key: 'device_group',
     width: 120,
-    render: (row) => groupLabelMap[row.device_group],
+    render: (row) =>
+      h(
+        NTag,
+        { type: DeviceGroupColors[row.device_group], bordered: false, size: 'small' },
+        { default: () => groupLabelMap[row.device_group] },
+      ),
   },
   { title: 'SSH 用户名', key: 'username', width: 150 },
   {
     title: '认证类型',
     key: 'auth_type',
     width: 120,
-    render(row) {
-      return h(
+    render: (row) =>
+      h(
         NTag,
-        { type: row.auth_type === 'static' ? 'default' : 'info', bordered: false },
+        { type: AuthTypeColors[row.auth_type], bordered: false, size: 'small' },
         { default: () => authTypeLabelMap[row.auth_type] },
-      )
-    },
+      ),
   },
   {
     title: '描述',

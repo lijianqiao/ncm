@@ -47,6 +47,7 @@ import { getSnmpCredentials, type DeptSnmpCredential } from '@/api/snmp_credenti
 import { type DeviceGroup } from '@/api/devices'
 import { getDeptTree, type Dept } from '@/api/depts'
 import { formatDateTime } from '@/utils/date'
+import { renderIpAddress, renderCode } from '@/composables/useStyledRenders'
 import ProTable, { type FilterConfig } from '@/components/common/ProTable.vue'
 import RecycleBinModal from '@/components/common/RecycleBinModal.vue'
 import DataImportExport from '@/components/common/DataImportExport.vue'
@@ -70,18 +71,33 @@ const statusOptions = [
   { label: '离线设备', value: 'offline' },
 ]
 
-const statusLabelMap: Record<DiscoveryStatus, string> = {
+// 字符串键映射（用于直接访问）
+const statusLabelMap: Record<string, string> = {
   matched: '已匹配',
   pending: '待确认',
   shadow: '影子资产',
   offline: '离线设备',
 }
 
-const statusColorMap: Record<DiscoveryStatus, 'info' | 'default' | 'success'> = {
+const statusColorMap: Record<string, 'success' | 'info' | 'warning' | 'error' | 'default'> = {
   matched: 'success',
   pending: 'info',
-  shadow: 'default',
-  offline: 'default',
+  shadow: 'warning',
+  offline: 'error',
+}
+
+const scanSourceLabelMap: Record<string, string> = {
+  auto: '自动',
+  nmap: 'Nmap',
+  masscan: 'Masscan',
+  manual: '手动',
+}
+
+const scanSourceColorMap: Record<string, 'success' | 'info' | 'warning' | 'default'> = {
+  auto: 'success',
+  nmap: 'info',
+  masscan: 'warning',
+  manual: 'default',
 }
 
 const deviceGroupOptions = [
@@ -171,18 +187,19 @@ const columns: DataTableColumns<DiscoveryRecord> = [
   {
     title: 'IP 地址',
     key: 'ip_address',
-    width: 140,
+    width: 160,
     fixed: 'left',
     sorter: 'default',
     resizable: true,
+    render: (row) => renderIpAddress(row.ip_address),
   },
   {
     title: 'MAC 地址',
     key: 'mac_address',
-    width: 150,
+    width: 175,
     sorter: 'default',
     resizable: true,
-    render: (row) => row.mac_address || '-',
+    render: (row) => (row.mac_address ? renderCode(row.mac_address, { copyable: true }) : '-'),
   },
   {
     title: '厂商',
@@ -190,8 +207,10 @@ const columns: DataTableColumns<DiscoveryRecord> = [
     width: 120,
     sorter: 'default',
     resizable: true,
-    ellipsis: { tooltip: true },
-    render: (row) => row.vendor || '-',
+    render: (row) =>
+      row.vendor
+        ? h(NTag, { type: 'info', bordered: false, size: 'small' }, { default: () => row.vendor })
+        : '-',
   },
   {
     title: '主机名',
@@ -291,13 +310,12 @@ const columns: DataTableColumns<DiscoveryRecord> = [
     title: '状态',
     key: 'status',
     width: 90,
-    render(row) {
-      return h(
+    render: (row) =>
+      h(
         NTag,
-        { type: statusColorMap[row.status], bordered: false, size: 'small' },
-        { default: () => statusLabelMap[row.status] },
-      )
-    },
+        { type: statusColorMap[row.status] || 'default', bordered: false, size: 'small' },
+        { default: () => statusLabelMap[row.status] || row.status },
+      ),
   },
   {
     title: '匹配设备',
@@ -312,7 +330,19 @@ const columns: DataTableColumns<DiscoveryRecord> = [
     width: 110,
     sorter: 'default',
     resizable: true,
-    render: (row) => row.scan_source || '-',
+    render: (row) => {
+      const source = row.scan_source
+      if (!source) return '-'
+      return h(
+        NTag,
+        {
+          type: scanSourceColorMap[source] || 'default',
+          bordered: false,
+          size: 'small',
+        },
+        { default: () => scanSourceLabelMap[source] || source },
+      )
+    },
   },
   {
     title: '首次扫描',
@@ -330,7 +360,19 @@ const columns: DataTableColumns<DiscoveryRecord> = [
     resizable: true,
     render: (row) => formatDateTime(row.last_seen_at),
   },
-  { title: '离线天数', key: 'offline_days', width: 110, sorter: 'default', resizable: true },
+  {
+    title: '离线天数',
+    key: 'offline_days',
+    width: 110,
+    sorter: 'default',
+    resizable: true,
+    render: (row) => {
+      const days = row.offline_days
+      if (days === null || days === undefined) return '-'
+      const type = days > 30 ? 'error' : days > 7 ? 'warning' : 'success'
+      return h(NTag, { type, bordered: false, size: 'small' }, { default: () => `${days} 天` })
+    },
+  },
 ]
 
 // ==================== 搜索筛选 ====================
