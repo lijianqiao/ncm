@@ -379,18 +379,12 @@ class CredentialService:
         test_device = result.scalars().first()
 
         if not test_device:
-            raise BadRequestException(
-                message=f"该部门/分组下没有 otp_manual 类型的设备可供测试"
-            )
+            raise BadRequestException(message="该部门/分组下没有 otp_manual 类型的设备可供测试")
 
         # 2. 获取该设备组的凭据（用户名）
-        credential = await credential_crud.get_by_dept_and_group(
-            self.db, request.dept_id, request.device_group.value
-        )
+        credential = await credential_crud.get_by_dept_and_group(self.db, request.dept_id, request.device_group.value)
         if not credential:
-            raise BadRequestException(
-                message=f"该部门/分组未配置凭据"
-            )
+            raise BadRequestException(message="该部门/分组未配置凭据")
 
         # 3. 构建 Scrapli 连接参数
         platform = get_platform_for_vendor(test_device.vendor or "hp_comware")
@@ -436,9 +430,7 @@ class CredentialService:
                     pass
 
             # 5. 验证成功，缓存 OTP
-            ttl = await otp_service.cache_otp(
-                request.dept_id, request.device_group, request.otp_code
-            )
+            ttl = await otp_service.cache_otp(request.dept_id, request.device_group, request.otp_code)
 
             return OTPVerifyResponse(
                 verified=True,
@@ -459,7 +451,7 @@ class CredentialService:
                 device_group=request.device_group.value,
                 failed_devices=[str(test_device.id)],
                 message="OTP 验证失败，请检查验证码是否正确",
-            )
+            ) from e
 
         except (ScrapliConnectionError, TimeoutError, OSError) as e:
             # 连接失败（网络问题），不能确定 OTP 是否正确
@@ -468,9 +460,7 @@ class CredentialService:
                 device=test_device.name,
                 error=str(e),
             )
-            raise BadRequestException(
-                message=f"无法连接测试设备 {test_device.name}，请检查网络或稍后重试"
-            )
+            raise BadRequestException(message=f"无法连接测试设备 {test_device.name}，请检查网络或稍后重试") from e
 
         except Exception as e:
             logger.error(
@@ -479,9 +469,7 @@ class CredentialService:
                 error=str(e),
                 exc_info=True,
             )
-            raise BadRequestException(
-                message=f"OTP 验证过程中发生错误: {str(e)}"
-            )
+            raise BadRequestException(message=f"OTP 验证过程中发生错误: {str(e)}") from e
 
     def to_response(self, credential: DeviceGroupCredential) -> DeviceGroupCredentialResponse:
         """
