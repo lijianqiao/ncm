@@ -97,7 +97,7 @@ export interface TopologyCollectResult {
   total_devices: number
   success_count: number
   failed_count: number
-  new_links: number
+  total_links: number
   // OTP 相关字段（当任务需要 OTP 时返回）
   otp_required?: boolean
   otp_dept_id?: string

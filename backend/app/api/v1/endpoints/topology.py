@@ -314,6 +314,15 @@ async def get_topology_task_status(task_id: str) -> ResponseBase[TopologyTaskSta
         status=result.status,
     )
 
+    # 处理进度状态
+    if result.status == "PROGRESS" and result.info:
+        # 从任务 meta 中获取进度信息
+        meta = result.info
+        if isinstance(meta, dict):
+            status.progress = meta.get("progress", 0)
+            # 可选：将消息设置到 error 字段（作为状态信息）
+            # status.error = meta.get("message")
+
     if result.ready():
         if result.successful():
             task_result = result.get()

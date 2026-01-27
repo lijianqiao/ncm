@@ -13,7 +13,6 @@ function checkPermission(el: HTMLElement, binding: DirectiveBinding): void {
   const requiredPerms = Array.isArray(value) ? value : [value]
 
   if (!requiredPerms.length || !requiredPerms[0]) {
-    console.warn('[v-permission] 需要传入权限标识，如 v-permission="[\'sys:user:add\']"')
     return
   }
 

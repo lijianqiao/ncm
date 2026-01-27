@@ -12,11 +12,11 @@ from typing import Any
 from uuid import UUID
 
 from app.celery.app import celery_app
-from app.celery.base import BaseTask, run_async
+from app.celery.base import BaseTask, run_async, safe_update_state
 from app.core import cache as cache_module
 from app.core.db import AsyncSessionLocal
 from app.core.exceptions import OTPRequiredException
-from app.core.logger import logger
+from app.core.logger import celery_details_logger, logger
 from app.crud.crud_credential import credential as credential_crud
 from app.crud.crud_device import device as device_crud
 from app.crud.crud_topology import topology_crud
@@ -52,6 +52,17 @@ def collect_topology(
     Returns:
         采集结果，如果需要 OTP 则返回 otp_required 状态
     """
+    # 在同步上下文中获取 Celery 任务 ID（在进入异步之前）
+    celery_task_id = self.request.id
+
+    # 进度回调函数（使用闭包捕获 celery_task_id）
+    def update_progress(progress: int, message: str):
+        safe_update_state(
+            self,
+            celery_task_id,
+            state="PROGRESS",
+            meta={"progress": progress, "message": message},
+        )
 
     async def _collect():
         async with AsyncSessionLocal() as db:
@@ -62,10 +73,12 @@ def collect_topology(
 
             try:
                 # 执行采集
-                result = await topology_service.collect_lldp_all(db, device_ids=uuids)
-                result.task_id = self.request.id
+                result = await topology_service.collect_lldp_all(
+                    db, device_ids=uuids, progress_callback=update_progress
+                )
+                result.task_id = celery_task_id
 
-                logger.info(
+                celery_details_logger.info(
                     "拓扑采集完成",
                     total_devices=result.total_devices,
                     success=result.success_count,
@@ -172,6 +185,17 @@ def scheduled_topology_refresh(self) -> dict[str, Any]:
     Returns:
         刷新结果
     """
+    # 在同步上下文中获取 Celery 任务 ID（在进入异步之前）
+    celery_task_id = self.request.id
+
+    # 进度回调函数（使用闭包捕获 celery_task_id）
+    def update_progress(progress: int, message: str):
+        safe_update_state(
+            self,
+            celery_task_id,
+            state="PROGRESS",
+            meta={"progress": progress, "message": message},
+        )
 
     async def _refresh():
         async with AsyncSessionLocal() as db:
@@ -179,10 +203,12 @@ def scheduled_topology_refresh(self) -> dict[str, Any]:
 
             try:
                 # 采集所有设备
-                result = await topology_service.collect_lldp_all(db, skip_otp_manual=True)
-                result.task_id = self.request.id
+                result = await topology_service.collect_lldp_all(
+                    db, skip_otp_manual=True, progress_callback=update_progress
+                )
+                result.task_id = celery_task_id
 
-                logger.info(
+                celery_details_logger.info(
                     "定时拓扑刷新完成",
                     total_devices=result.total_devices,
                     success=result.success_count,

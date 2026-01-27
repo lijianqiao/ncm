@@ -185,8 +185,8 @@ const handleUpdateProfile = async () => {
     $alert.success('更新成功')
     await userStore.fetchUserInfo() // 刷新
     showProfileModal.value = false
-  } catch (error) {
-    console.error(error)
+  } catch {
+    // 错误由全局拦截器处理
   } finally {
     profileLoading.value = false
   }
@@ -228,8 +228,8 @@ const handleChangePassword = async () => {
     $alert.success('密码修改成功，请重新登录')
     showPasswordModal.value = false
     userStore.logout()
-  } catch (error) {
-    console.error(error)
+  } catch {
+    // 错误由全局拦截器处理
   } finally {
     passwordLoading.value = false
   }
@@ -296,7 +296,8 @@ onMounted(() => {
       >
         <router-view v-slot="{ Component }">
           <transition name="fade" mode="out-in">
-            <component :is="Component" />
+            <component v-if="Component" :is="Component" :key="route.fullPath" />
+            <div v-else />
           </transition>
         </router-view>
       </n-layout-content>

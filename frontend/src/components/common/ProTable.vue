@@ -507,6 +507,10 @@ const handleSearch = async (silent = false) => {
 
     data.value = res.data
     pagination.itemCount = res.total
+
+    // 刷新数据后清空选中状态，避免选中行累积
+    checkedRowKeys.value = []
+    emit('update:checked-row-keys', [])
   } catch (error: unknown) {
     emit('request-error', error)
   } finally {

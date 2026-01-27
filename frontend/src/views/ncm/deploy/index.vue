@@ -553,9 +553,8 @@ const handleExecute = (row: DeployTask) => {
             return // 中断后续直接执行，等待 OTP 回调
           }
         }
-      } catch (e) {
+      } catch {
         // 获取设备信息失败，忽略错误，降级到直接执行（依赖后端 428）
-        console.warn('Failed to pre-check OTP requirement:', e)
       }
 
       // 2. 如果不需要预先 OTP，或预检查失败，直接执行

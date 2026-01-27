@@ -58,7 +58,6 @@ export function generateRoutes(menus: Menu[]): RouteRecordRaw[] {
       if (modules[key]) {
         component = modules[key] as () => Promise<RouteComponent>
       } else {
-        console.warn(`[Router] Component not found: ${menu.component} -> ${key}`)
         // 组件路径不存在，显示 404
         component = () => import('@/views/error/404.vue')
       }

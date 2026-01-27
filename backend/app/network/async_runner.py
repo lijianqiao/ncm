@@ -16,7 +16,7 @@ from nornir.core.task import AggregatedResult, MultiResult, Result
 
 from app.core.config import settings
 from app.core.exceptions import OTPRequiredException
-from app.core.logger import logger
+from app.core.logger import celery_details_logger, logger
 
 if TYPE_CHECKING:
     from nornir.core.inventory import Host, Inventory
@@ -201,6 +201,14 @@ class AsyncRunner:
                             error=str(e),
                             exc_info=True,
                         )
+                        # 记录详细失败日志到 celery_details
+                        celery_details_logger.warning(
+                            "任务执行失败",
+                            host=host.name,
+                            task=task_name,
+                            error=str(e),
+                            error_type=type(e).__name__,
+                        )
 
             return host.name, Result(host=host, exception=last_exception, failed=True)
 
@@ -224,7 +232,7 @@ class AsyncRunner:
         # 统计
         failed_count = sum(1 for r in results.values() if r.failed)
         success_count = len(results) - failed_count
-        logger.info(
+        celery_details_logger.info(
             "异步任务批量执行完成",
             task=task_name,
             total=len(results),

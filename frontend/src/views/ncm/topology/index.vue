@@ -42,6 +42,7 @@ const dialog = useDialog()
 const topologyData = ref<TopologyResponse | null>(null)
 const loading = ref(false)
 const networkContainer = ref<HTMLDivElement | null>(null)
+const networkCanvas = ref<HTMLDivElement | null>(null)
 const networkContainerHeight = ref('600px')
 const isFullscreen = ref(false)
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -98,14 +99,14 @@ const handleFullscreenChange = () => {
 }
 
 const renderNetwork = async () => {
-  if (!topologyData.value || !networkContainer.value || isUnmounted) return
+  if (!topologyData.value || !networkCanvas.value || isUnmounted) return
 
   try {
     // 动态导入 vis-network
     const { Network, DataSet } = await import('vis-network/standalone')
 
     // 异步导入完成后再次检查组件是否已卸载
-    if (isUnmounted || !networkContainer.value) return
+    if (isUnmounted || !networkCanvas.value) return
 
     const nodes = new DataSet(
       topologyData.value.nodes.map((node) => {
@@ -155,6 +156,7 @@ const renderNetwork = async () => {
         },
       },
       layout: {
+        improvedLayout: false,
         hierarchical:
           layoutMode.value === 'hierarchical'
             ? {
@@ -174,11 +176,9 @@ const renderNetwork = async () => {
       },
     }
 
-    if (networkInstance) {
-      networkInstance.destroy()
-    }
+    if (networkInstance) networkInstance.destroy()
 
-    networkInstance = new Network(networkContainer.value, { nodes, edges }, options)
+    networkInstance = new Network(networkCanvas.value, { nodes, edges }, options)
     updateNetworkContainerHeight()
     networkInstance.fit()
 
@@ -192,8 +192,7 @@ const renderNetwork = async () => {
         }
       }
     })
-  } catch (error) {
-    console.error('Failed to load vis-network:', error)
+  } catch {
     $alert.error('加载拓扑可视化库失败，请确保已安装 vis-network')
   }
 }
@@ -327,7 +326,7 @@ const handleRefreshTopology = () => {
 const closeRefreshModal = () => {
   stopPollingTaskStatus()
   showRefreshModal.value = false
-  resetTask()
+  // resetTask 将在 @after-leave 事件中调用，避免 DOM 操作冲突
 }
 
 // ==================== 重建缓存 ====================
@@ -483,6 +482,7 @@ const handleToggleFullscreen = async () => {
       </template>
       <div ref="networkContainer" class="network-container" :class="{ 'network-container--fullscreen': isFullscreen }"
         :style="{ height: networkContainerHeight }">
+        <div ref="networkCanvas" class="network-canvas"></div>
         <div v-if="loading" class="loading-container">加载中...</div>
         <div class="legend-overlay">
           <div v-for="item in legendItems" :key="item.label" class="legend-item">
@@ -566,25 +566,22 @@ const handleToggleFullscreen = async () => {
 
     <!-- 刷新任务状态 Modal -->
     <n-modal v-model:show="showRefreshModal" preset="card" title="拓扑采集任务" style="width: 500px" :closable="!taskPolling"
-      :mask-closable="!taskPolling" @close="closeRefreshModal">
+      :mask-closable="!taskPolling" @after-leave="resetTask">
       <template v-if="taskStatus">
         <n-space vertical style="width: 100%">
           <div style="text-align: center">
             <p>任务 ID: {{ taskStatus.task_id }}</p>
             <p>状态: {{ taskStatus.status }}</p>
           </div>
-          <n-progress v-if="taskStatus.progress !== null" type="line" :percentage="taskStatus.progress" :status="taskStatus.status === 'SUCCESS'
-            ? 'success'
-            : taskStatus.status === 'FAILURE'
-              ? 'error'
-              : 'default'
-            " />
+          <n-progress v-if="taskStatus.progress !== null" type="line"
+            :percentage="typeof taskStatus.progress === 'number' ? taskStatus.progress : 0"
+            :status="taskStatus.status === 'SUCCESS' ? 'success' : taskStatus.status === 'FAILURE' ? 'error' : 'default'" />
           <template v-if="taskStatus.result">
             <div style="text-align: center">
               <p>总设备: {{ taskStatus.result.total_devices }}</p>
               <p>成功: {{ taskStatus.result.success_count }}</p>
               <p>失败: {{ taskStatus.result.failed_count }}</p>
-              <p>新链路: {{ taskStatus.result.new_links }}</p>
+              <p>链路数: {{ taskStatus.result.total_links }}</p>
             </div>
           </template>
           <n-alert v-if="taskStatus.error" type="error" :title="taskStatus.error" />
@@ -633,6 +630,11 @@ const handleToggleFullscreen = async () => {
   border: 1px solid var(--n-border-color);
   border-radius: 4px;
   position: relative;
+}
+
+.network-canvas {
+  width: 100%;
+  height: 100%;
 }
 
 .network-container--fullscreen {

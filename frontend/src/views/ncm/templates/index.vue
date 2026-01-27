@@ -527,8 +527,8 @@ const loadParamTypes = async () => {
   try {
     const res = await getParamTypes()
     paramTypes.value = res.data
-  } catch (e) {
-    console.error(e)
+  } catch {
+    // 错误由全局拦截器处理
   }
 }
 

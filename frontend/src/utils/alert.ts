@@ -11,8 +11,7 @@ const getStore = () => {
   // Since this util is mostly used in API callbacks/Router, app is mounted.
   try {
     return useAlertStore()
-  } catch (e) {
-    console.error('Failed to get alert store. Is Pinia installed?', e)
+  } catch {
     return null
   }
 }

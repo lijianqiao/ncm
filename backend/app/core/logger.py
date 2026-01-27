@@ -204,6 +204,21 @@ def setup_logging() -> None:
     if settings.ENVIRONMENT == "local":
         celery_logger.addHandler(stream_handler)
 
+    # 6. Celery Details 日志记录器
+    # 记录 Celery 任务执行的详细日志（包含 LLDP 数据、采集结果等）
+
+    celery_details_logger = logging.getLogger("celery_details")
+    celery_details_logger.setLevel(logging.DEBUG)
+    celery_details_logger.propagate = False  # 不传播到 root，避免重复
+
+    celery_details_handler = get_file_handler("celery_details_handler", logging.DEBUG, "celery_details.log")
+    celery_details_handler.setFormatter(file_formatter)
+    celery_details_logger.addHandler(celery_details_handler)
+
+    # 本地环境也输出到控制台
+    if settings.ENVIRONMENT == "local":
+        celery_details_logger.addHandler(stream_handler)
+
     # 排除 uvicorn、sqlalchemy 的日志
 
     logging.getLogger("uvicorn.error").setLevel(logging.INFO)
@@ -218,3 +233,6 @@ access_logger = structlog.get_logger("api_traffic")
 
 # Celery 任务日志记录器
 celery_task_logger = structlog.get_logger("celery_task")
+
+# Celery 详细日志记录器（用于记录任务执行的详细信息，如 LLDP 数据、采集结果等）
+celery_details_logger = structlog.get_logger("celery_details")

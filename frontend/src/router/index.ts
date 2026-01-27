@@ -72,8 +72,7 @@ router.beforeEach(async (to, from, next) => {
   if (hasToken && !userStore.userInfo) {
     try {
       await userStore.fetchUserInfo()
-    } catch (error) {
-      console.error(error)
+    } catch {
       userStore.logout()
       next({ name: 'Login' })
       return

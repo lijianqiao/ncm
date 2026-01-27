@@ -418,7 +418,6 @@ const handleExport = async (row: InventoryAudit) => {
     // 由于 responseType: 'blob'，error.response.data 可能是 Blob
     // 这里简单提示失败，具体错误解析比较复杂
     $alert.error('导出失败，请重试')
-    console.error('Export failed:', error)
   }
 }
 

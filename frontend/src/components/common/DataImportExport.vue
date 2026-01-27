@@ -115,9 +115,8 @@ const handleExportCsv = async () => {
     const filename = getFilenameFromContentDisposition(cd) || defaultName
     downloadBlob(res.data, filename)
     $alert.success('导出已开始')
-  } catch (e) {
-    // 错误通常由拦截器处理，这里可补充处理
-    console.error(e)
+  } catch {
+    // 错误由全局拦截器处理
   } finally {
     exporting.value = false
   }
@@ -147,8 +146,8 @@ const handleDownloadImportTemplate = async () => {
     const cd = res.headers?.['content-disposition'] as string | undefined
     const filename = getFilenameFromContentDisposition(cd) || props.templateName
     downloadBlob(res.data, filename)
-  } catch (e) {
-    console.error(e)
+  } catch {
+    // 错误由全局拦截器处理
   }
 }
 
@@ -199,8 +198,7 @@ const loadPreviewData = async (params: { page: number; page_size: number }) => {
       data: res.data.rows.map((r) => r.data),
       total: res.data.total_rows,
     }
-  } catch (e) {
-    console.error(e)
+  } catch {
     $alert.error('加载预览数据失败')
     return { data: [], total: 0 }
   }
@@ -231,8 +229,8 @@ const handleUploadAndValidate = async () => {
         }, 100)
       }
     }
-  } catch (e) {
-    console.error(e)
+  } catch {
+    // 错误由全局拦截器处理
   } finally {
     importUploading.value = false
   }
@@ -256,8 +254,8 @@ const handleCommitImport = async () => {
     $alert.success('导入成功')
     showImportModal.value = false
     emit('success')
-  } catch (e) {
-    console.error(e)
+  } catch {
+    // 错误由全局拦截器处理
   } finally {
     importCommitting.value = false
   }

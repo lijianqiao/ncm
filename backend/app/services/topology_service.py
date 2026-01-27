@@ -9,7 +9,7 @@
 """
 
 from datetime import datetime, timedelta
-from typing import Any
+from typing import Any, Callable
 from uuid import UUID
 
 import redis.asyncio as redis
@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.enums import DeviceStatus
-from app.core.logger import logger
+from app.core.logger import celery_details_logger, logger
 from app.crud.crud_credential import CRUDCredential
 from app.crud.crud_device import CRUDDevice
 from app.crud.crud_topology import CRUDTopology
@@ -66,6 +66,7 @@ class TopologyService(DeviceCredentialMixin):
         db: AsyncSession,
         device_ids: list[UUID] | None = None,
         skip_otp_manual: bool = False,
+        progress_callback: Callable[[int, str], None] | None = None,
     ) -> TopologyCollectResult:
         """
         采集所有设备的 LLDP 邻居信息。
@@ -74,6 +75,7 @@ class TopologyService(DeviceCredentialMixin):
             db: 数据库会话
             device_ids: 指定设备ID列表 (为空则采集所有活跃设备)
             skip_otp_manual: 是否跳过需要手动 OTP 的设备（用于定时任务）
+            progress_callback: 进度回调函数，接收 (进度百分比, 状态描述)
 
         Returns:
             TopologyCollectResult: 采集结果
@@ -100,6 +102,10 @@ class TopologyService(DeviceCredentialMixin):
                 )
 
             result.total_devices = len(devices)
+
+            # 报告进度：获取设备列表完成
+            if progress_callback:
+                progress_callback(10, f"获取到 {len(devices)} 台设备")
 
             if not devices:
                 logger.warning("没有找到需要采集 LLDP 的设备")
@@ -129,6 +135,12 @@ class TopologyService(DeviceCredentialMixin):
                             success=False,
                             error="跳过：需要手动 OTP 认证",
                         )
+                    )
+                    celery_details_logger.info(
+                        "跳过 OTP 手动认证设备",
+                        device=device.name,
+                        device_id=str(device.id),
+                        reason="定时任务不支持手动 OTP",
                     )
                     continue
 
@@ -163,6 +175,13 @@ class TopologyService(DeviceCredentialMixin):
                             error=f"需要 OTP: {e.device_group}",
                         )
                     )
+                    # 记录 OTP 需求到详细日志
+                    celery_details_logger.warning(
+                        "设备需要 OTP 认证",
+                        device=device.name,
+                        device_id=str(device.id),
+                        device_group=e.device_group,
+                    )
                 except Exception as e:
                     # 其他凭据错误，记录并跳过该设备
                     logger.warning("获取设备凭据失败", device=device.name, error=str(e))
@@ -176,6 +195,14 @@ class TopologyService(DeviceCredentialMixin):
                             error=f"凭据获取失败: {e}",
                         )
                     )
+                    # 记录凭据获取失败到详细日志
+                    celery_details_logger.warning(
+                        "设备凭据获取失败",
+                        device=device.name,
+                        device_id=str(device.id),
+                        error=str(e),
+                        error_type=type(e).__name__,
+                    )
 
             # 如果有需要 OTP 的设备组，抛出异常（只返回第一个）
             if otp_required_groups:
@@ -187,18 +214,42 @@ class TopologyService(DeviceCredentialMixin):
                     message=f"需要输入 OTP 验证码（共 {len(otp_required_groups)} 个设备组需要验证）",
                 )
 
+            # 报告进度：凭据准备完成
+            if progress_callback:
+                progress_callback(30, f"凭据准备完成，{len(hosts_data)} 台设备可采集")
+
             if not hosts_data:
                 logger.warning("没有可采集的设备（所有设备凭据获取失败）")
                 result.completed_at = datetime.now()
+                if progress_callback:
+                    progress_callback(100, "完成（无可采集设备）")
                 return result
 
             # 创建异步 Inventory 并执行采集
             inventory = init_nornir_async(hosts_data)
+            total_hosts = len(hosts_data)
+
+            # LLDP 采集进度回调：将内部进度映射到整体进度 (30-60%)
+            completed_count = 0
+
+            def lldp_progress_callback(host_name: str, result: Any):
+                nonlocal completed_count
+                completed_count += 1
+                if progress_callback and total_hosts > 0:
+                    # 计算 LLDP 采集阶段的进度 (30% - 60%)
+                    lldp_progress = int(30 + (completed_count / total_hosts) * 30)
+                    progress_callback(lldp_progress, f"LLDP 采集中 {completed_count}/{total_hosts}")
+
             nornir_results = await run_async_tasks(
                 inventory.hosts,
                 async_get_lldp_neighbors,
                 num_workers=min(50, len(hosts_data)),
+                progress_callback=lldp_progress_callback,
             )
+
+            # 报告进度：LLDP 采集完成
+            if progress_callback:
+                progress_callback(60, "LLDP 采集完成，正在处理结果")
 
             # 转换异步结果为聚合格式
             aggregated = self._convert_lldp_results(nornir_results)
@@ -219,11 +270,19 @@ class TopologyService(DeviceCredentialMixin):
 
             # 处理采集结果
             total_links = 0
-            for host_name, host_result in aggregated.get("results", {}).items():
+            results_items = list(aggregated.get("results", {}).items())
+            total_results = len(results_items)
+
+            for idx, (host_name, host_result) in enumerate(results_items):
                 device = device_map.get(host_name)
                 if not device:
                     logger.warning("设备映射未找到", host_name=host_name, device_map_keys=list(device_map.keys())[:5])
                     continue
+
+                # 报告进度：处理结果（60% - 95%）
+                if progress_callback and total_results > 0:
+                    progress = 60 + int((idx + 1) / total_results * 35)
+                    progress_callback(progress, f"处理结果 {idx + 1}/{total_results}")
 
                 device_result = DeviceLLDPResult(
                     device_id=device.id,
@@ -241,7 +300,7 @@ class TopologyService(DeviceCredentialMixin):
                         raw_content = lldp_data.get("raw") or ""
                         raw_sample = raw_content[:500]
                         parsed_data = lldp_data.get("parsed")
-                        logger.info(
+                        celery_details_logger.info(
                             "LLDP 数据调试",
                             device=device.name,
                             has_raw=bool(raw_content),
@@ -262,6 +321,13 @@ class TopologyService(DeviceCredentialMixin):
                 else:
                     result.failed_count += 1
                     device_result.error = host_result.get("error", "Unknown error")
+                    # 记录失败详情到 celery_details
+                    celery_details_logger.warning(
+                        "LLDP 采集失败",
+                        device=device.name,
+                        device_id=str(device.id),
+                        error=device_result.error,
+                    )
 
                 result.results.append(device_result)
 
@@ -273,6 +339,10 @@ class TopologyService(DeviceCredentialMixin):
 
             # 清除拓扑缓存
             await self._invalidate_cache()
+
+            # 报告进度：完成
+            if progress_callback:
+                progress_callback(100, f"采集完成，成功 {result.success_count} 台，失败 {result.failed_count} 台")
 
         except OTPRequiredException:
             # OTP 异常直接抛出，让任务失败并被 API 捕获

@@ -136,8 +136,7 @@ export const useUserStore = defineStore('user', () => {
       homePath.value = getFirstMenuPath(res.data || []) || ''
 
       return { menus: res.data, routes }
-    } catch (error) {
-      console.error('获取用户菜单失败', error)
+    } catch {
       return { menus: [], routes: [] }
     }
   }
@@ -165,8 +164,8 @@ export const useUserStore = defineStore('user', () => {
   async function logout() {
     try {
       await logoutApi()
-    } catch (error) {
-      console.error('退出登录失败:', error)
+    } catch {
+      // 退出登录失败不影响前端清理
     } finally {
       clearAuth()
       window.location.href = '/login'
