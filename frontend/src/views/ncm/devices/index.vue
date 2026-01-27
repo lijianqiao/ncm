@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, h, onMounted } from 'vue'
+import { ref, h } from 'vue'
 import {
   NButton,
   NIcon,
@@ -33,7 +33,6 @@ import {
   batchHardDeleteDevices,
   transitionDeviceStatus,
   batchTransitionDeviceStatus,
-  getDeviceLifecycleStats,
   exportDevices,
   downloadDeviceImportTemplate,
   uploadDeviceImportFile,
@@ -41,7 +40,7 @@ import {
   commitDeviceImport,
   type Device,
   type DeviceSearchParams,
-  type DeviceLifecycleStatsResponse,
+  type DeviceStatusCounts,
 } from '@/api/devices'
 import {
   DeviceStatus,
@@ -88,25 +87,12 @@ const groupLabelMap = DeviceGroupLabels
 
 // ==================== 生命周期统计 ====================
 
-const lifecycleStats = ref<DeviceLifecycleStatsResponse>({
+const lifecycleStats = ref<DeviceStatusCounts>({
   stock: 0,
   running: 0,
   maintenance: 0,
   retired: 0,
   total: 0,
-})
-
-const fetchLifecycleStats = async () => {
-  try {
-    const res = await getDeviceLifecycleStats()
-    lifecycleStats.value = res.data
-  } catch {
-    // Error handled
-  }
-}
-
-onMounted(() => {
-  fetchLifecycleStats()
 })
 
 // ==================== 部门树 ====================
@@ -201,6 +187,10 @@ const searchFilters: FilterConfig[] = [
 
 const loadData = async (params: DeviceSearchParams) => {
   const res = await getDevices(params)
+  // 更新状态统计
+  if (res.data.status_counts) {
+    lifecycleStats.value = res.data.status_counts
+  }
   return {
     data: res.data.items,
     total: res.data.total,
@@ -330,7 +320,6 @@ const submitCreate = (e: MouseEvent) => {
         }
         showCreateModal.value = false
         tableRef.value?.reload()
-        fetchLifecycleStats()
       } catch {
         // Error handled
       }
@@ -351,7 +340,6 @@ const handleDelete = (row: Device) => {
         await deleteDevice(row.id)
         $alert.success('设备已删除')
         tableRef.value?.reload()
-        fetchLifecycleStats()
       } catch {
         // Error handled
       }
@@ -370,7 +358,6 @@ const handleBatchDelete = (ids: Array<string | number>) => {
         await batchDeleteDevices(ids as string[])
         $alert.success('批量删除成功')
         tableRef.value?.reload()
-        fetchLifecycleStats()
       } catch {
         // Error handled
       }
@@ -414,7 +401,6 @@ const submitTransition = async () => {
     $alert.success('状态流转成功')
     showTransitionModal.value = false
     tableRef.value?.reload()
-    fetchLifecycleStats()
   } catch {
     // Error handled
   }
@@ -452,7 +438,6 @@ const submitBatchTransition = async () => {
     $alert.success('批量状态流转成功')
     showBatchTransitionModal.value = false
     tableRef.value?.reload()
-    fetchLifecycleStats()
   } catch {
     // Error handled
   }
@@ -505,7 +490,6 @@ const handleRestore = async (row: Device) => {
     $alert.success('设备已恢复')
     recycleBinRef.value?.reload()
     tableRef.value?.reload()
-    fetchLifecycleStats()
   } catch {
     // Error handled
   }
@@ -517,7 +501,6 @@ const handleBatchRestore = async (ids: Array<string | number>) => {
     $alert.success('批量恢复成功')
     recycleBinRef.value?.reload()
     tableRef.value?.reload()
-    fetchLifecycleStats()
   } catch {
     // Error handled
   }
@@ -575,12 +558,8 @@ const handleRecycleBin = () => {
         <DataImportExport title="设备" show-import show-export export-name="devices_export.csv"
           template-name="device_import_template.xlsx" :export-api="exportDevices"
           :import-template-api="downloadDeviceImportTemplate" :import-validate-api="uploadDeviceImportFile"
-          :import-preview-api="previewDeviceImport" :import-commit-api="commitDeviceImport" @success="
-            () => {
-              tableRef?.reload()
-              fetchLifecycleStats()
-            }
-          " />
+          :import-preview-api="previewDeviceImport" :import-commit-api="commitDeviceImport"
+          @success="() => tableRef?.reload()" />
       </template>
     </ProTable>
 

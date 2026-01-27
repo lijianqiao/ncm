@@ -64,6 +64,31 @@ class DeviceService:
             dept_id=query.dept_id,
         )
 
+    async def get_status_counts(self) -> dict[str, int]:
+        """
+        获取各状态的设备数量。
+
+        Returns:
+            dict: 各状态对应的设备数量（stock/running/maintenance/retired/total）
+        """
+        stmt = (
+            select(Device.status, func.count(Device.id))
+            .where(Device.is_deleted == False)  # noqa: E712
+            .group_by(Device.status)
+        )
+        rows = (await self.db.execute(stmt)).all()
+        counts = {str(status): count for status, count in rows}
+
+        # 映射枚举值到前端字段
+        # IN_STOCK -> stock, ACTIVE/IN_USE -> running, MAINTENANCE -> maintenance, RETIRED -> retired
+        return {
+            "stock": counts.get(DeviceStatus.IN_STOCK.value, 0),
+            "running": counts.get(DeviceStatus.ACTIVE.value, 0) + counts.get(DeviceStatus.IN_USE.value, 0),
+            "maintenance": counts.get(DeviceStatus.MAINTENANCE.value, 0),
+            "retired": counts.get(DeviceStatus.RETIRED.value, 0),
+            "total": sum(counts.values()),
+        }
+
     async def get_device(self, device_id: UUID) -> Device:
         """
         根据 ID 获取设备。

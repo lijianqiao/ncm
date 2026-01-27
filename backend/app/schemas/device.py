@@ -182,3 +182,23 @@ class DeviceLifecycleStatsResponse(BaseModel):
     by_status: dict[str, int] = Field(default_factory=dict, description="按状态统计")
     by_vendor: dict[str, int] = Field(default_factory=dict, description="按厂商统计")
     by_dept: dict[str, int] = Field(default_factory=dict, description="按部门统计（dept_id 字符串）")
+
+
+class DeviceStatusCounts(BaseModel):
+    """设备状态计数。"""
+
+    stock: int = Field(default=0, description="库存数量")
+    running: int = Field(default=0, description="运行中数量")
+    maintenance: int = Field(default=0, description="维护中数量")
+    retired: int = Field(default=0, description="已退役数量")
+    total: int = Field(default=0, description="总数量")
+
+
+class DeviceListResponse(BaseModel):
+    """设备列表响应（含状态统计）。"""
+
+    total: int = Field(..., description="总记录数")
+    page: int = Field(..., description="当前页码")
+    page_size: int = Field(..., description="每页大小")
+    items: list["DeviceResponse"] = Field(default_factory=list, description="数据列表")
+    status_counts: DeviceStatusCounts = Field(default_factory=DeviceStatusCounts, description="各状态设备数量")

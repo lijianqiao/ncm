@@ -129,11 +129,29 @@ export interface DeviceLifecycleStatsResponse {
   total: number
 }
 
+/** 设备状态计数 */
+export interface DeviceStatusCounts {
+  stock: number
+  running: number
+  maintenance: number
+  retired: number
+  total: number
+}
+
+/** 设备列表响应（含状态统计） */
+export interface DeviceListResponse {
+  total: number
+  page: number
+  page_size: number
+  items: Device[]
+  status_counts: DeviceStatusCounts
+}
+
 // ==================== API 函数 ====================
 
-/** 获取设备列表 */
+/** 获取设备列表（含状态统计） */
 export function getDevices(params?: DeviceSearchParams) {
-  return request<ResponseBase<PaginatedResponse<Device>>>({
+  return request<ResponseBase<DeviceListResponse>>({
     url: '/devices/',
     method: 'get',
     params,

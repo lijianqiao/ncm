@@ -31,8 +31,10 @@ from app.schemas.device import (
     DeviceCreate,
     DeviceLifecycleStatsResponse,
     DeviceListQuery,
+    DeviceListResponse,
     DeviceResponse,
     DeviceStatusBatchTransitionRequest,
+    DeviceStatusCounts,
     DeviceStatusTransitionRequest,
     DeviceUpdate,
 )
@@ -40,7 +42,7 @@ from app.schemas.device import (
 router = APIRouter()
 
 
-@router.get("/", response_model=ResponseBase[PaginatedResponse[DeviceResponse]], summary="获取设备列表")
+@router.get("/", response_model=ResponseBase[DeviceListResponse], summary="获取设备列表")
 async def read_devices(
     device_service: deps.DeviceServiceDep,
     current_user: deps.CurrentUser,
@@ -52,10 +54,11 @@ async def read_devices(
     status: DeviceStatus | None = Query(None, description="状态筛选"),
     device_group: DeviceGroup | None = Query(None, description="设备分组筛选"),
     dept_id: UUID | None = Query(None, description="部门筛选"),
-) -> ResponseBase[PaginatedResponse[DeviceResponse]]:
+) -> ResponseBase[DeviceListResponse]:
     """查询设备列表（分页）。
 
     支持按关键词、厂商、状态、设备分组、部门筛选。
+    响应中包含各状态的设备数量统计。
 
     Args:
         device_service (DeviceService): 设备服务依赖。
@@ -69,7 +72,7 @@ async def read_devices(
         dept_id (UUID | None): 部门 ID 筛选。
 
     Returns:
-        ResponseBase[PaginatedResponse[DeviceResponse]]: 分页后的设备列表响应。
+        ResponseBase[DeviceListResponse]: 分页后的设备列表响应（含状态统计）。
     """
     query = DeviceListQuery(
         page=page,
@@ -81,14 +84,16 @@ async def read_devices(
         dept_id=dept_id,
     )
     devices, total = await device_service.get_devices_paginated(query)
+    status_counts = await device_service.get_status_counts()
 
     items = [DeviceResponse.model_validate(d) for d in devices]
     return ResponseBase(
-        data=PaginatedResponse(
+        data=DeviceListResponse(
             total=total,
             page=page,
             page_size=page_size,
             items=items,
+            status_counts=DeviceStatusCounts(**status_counts),
         )
     )
 
