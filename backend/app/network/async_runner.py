@@ -16,7 +16,7 @@ from nornir.core.task import AggregatedResult, MultiResult, Result
 
 from app.core.config import settings
 from app.core.exceptions import OTPRequiredException
-from app.core.logger import celery_details_logger, logger
+from app.core.logger import celery_details_logger, celery_task_logger, logger
 
 if TYPE_CHECKING:
     from nornir.core.inventory import Host, Inventory
@@ -49,6 +49,8 @@ class AsyncRunner:
         num_workers: int | None = None,
         max_retries: int = 0,
         retry_delay: float = 1.0,
+        max_retry_delay: float = 30.0,
+        exponential_backoff: bool = True,
     ):
         """
         初始化异步运行器。
@@ -56,11 +58,15 @@ class AsyncRunner:
         Args:
             num_workers: 最大并发数，默认从配置读取 ASYNC_SSH_SEMAPHORE
             max_retries: 失败重试次数（默认 0 不重试）
-            retry_delay: 重试间隔秒数（默认 1.0）
+            retry_delay: 初始重试间隔秒数（默认 1.0）
+            max_retry_delay: 最大重试间隔秒数（默认 30.0）
+            exponential_backoff: 是否启用指数退避（默认 True）
         """
         self.semaphore_limit = num_workers or settings.ASYNC_SSH_SEMAPHORE
         self.max_retries = max_retries
         self.retry_delay = retry_delay
+        self.max_retry_delay = max_retry_delay
+        self.exponential_backoff = exponential_backoff
 
     def run(
         self,
@@ -148,7 +154,7 @@ class AsyncRunner:
                         device_group = host.data.get("device_group")
 
                         if dept_id_raw and device_group:
-                            logger.info(
+                            celery_task_logger.info(
                                 "OTP 异常，开始等待新 OTP",
                                 host=host.name,
                                 dept_id=str(dept_id_raw),
@@ -165,12 +171,12 @@ class AsyncRunner:
                             if new_otp:
                                 # 收到新 OTP，更新 host 密码并重试
                                 host.password = new_otp
-                                logger.info("收到新 OTP，准备重试", host=host.name)
+                                celery_task_logger.info("收到新 OTP，准备重试", host=host.name)
                                 continue  # 重新进入循环执行任务
                             else:
                                 # 等待超时，设置超时标记
                                 otp_timeout_event.set()
-                                logger.warning("等待新 OTP 超时，终止剩余任务", host=host.name)
+                                celery_task_logger.warning("等待新 OTP 超时，终止剩余任务", host=host.name)
                                 return host.name, Result(
                                     host=host,
                                     result={"success": False, "otp_timeout": True, "error": "等待 OTP 超时"},
@@ -184,36 +190,92 @@ class AsyncRunner:
                 except Exception as e:
                     last_exception = e
                     if attempt < self.max_retries:
-                        logger.warning(
+                        # 计算重试延迟（支持指数退避）
+                        if self.exponential_backoff:
+                            delay = min(self.retry_delay * (2**attempt), self.max_retry_delay)
+                        else:
+                            delay = self.retry_delay
+
+                        celery_task_logger.warning(
                             "任务失败，准备重试",
                             host=host.name,
                             task=task_name,
                             attempt=attempt + 1,
                             max_retries=self.max_retries,
+                            retry_delay=delay,
                             error=str(e),
                         )
-                        await asyncio.sleep(self.retry_delay)
+                        await asyncio.sleep(delay)
                     else:
-                        logger.error(
-                            "任务执行失败",
-                            host=host.name,
-                            task=task_name,
-                            error=str(e),
-                            exc_info=True,
-                        )
                         # 记录详细失败日志到 celery_details
-                        celery_details_logger.warning(
+                        celery_details_logger.error(
                             "任务执行失败",
                             host=host.name,
                             task=task_name,
                             error=str(e),
                             error_type=type(e).__name__,
+                            exc_info=True,
                         )
 
             return host.name, Result(host=host, exception=last_exception, failed=True)
 
-        # 并行执行所有主机任务
-        tasks = [asyncio.create_task(_execute_host(host)) for host in hosts.values()]
+        # 并行执行所有主机任务（按设备分组创建，避免内存问题）
+        GROUP_BATCH_SIZE = 100  # 每组内分批大小
+        hosts_list = list(hosts.values())
+        total_hosts = len(hosts_list)
+
+        # 按设备分组（device_group）进行分组
+        groups: dict[str, list] = {}
+        for host in hosts_list:
+            group_name = host.data.get("device_group", "default") if host.data else "default"
+            if group_name not in groups:
+                groups[group_name] = []
+            groups[group_name].append(host)
+
+        tasks: list[asyncio.Task] = []
+
+        if len(groups) == 1 and total_hosts <= GROUP_BATCH_SIZE:
+            # 单分组且设备数量少：一次性创建所有任务
+            tasks = [asyncio.create_task(_execute_host(host)) for host in hosts_list]
+        else:
+            # 按分组创建任务，大分组内部再按 100 台分批
+            celery_details_logger.info(
+                "按设备分组创建任务",
+                total_hosts=total_hosts,
+                groups=list(groups.keys()),
+                group_counts={k: len(v) for k, v in groups.items()},
+            )
+
+            for group_name, group_hosts in groups.items():
+                group_size = len(group_hosts)
+
+                if group_size <= GROUP_BATCH_SIZE:
+                    # 分组内设备数量少：一次性创建该分组的任务
+                    group_tasks = [asyncio.create_task(_execute_host(host)) for host in group_hosts]
+                    tasks.extend(group_tasks)
+                    celery_details_logger.debug(
+                        "创建分组任务",
+                        group=group_name,
+                        count=group_size,
+                    )
+                else:
+                    # 分组内设备数量多：按 100 台分批创建
+                    celery_details_logger.info(
+                        "大分组分批创建任务",
+                        group=group_name,
+                        total=group_size,
+                        batch_size=GROUP_BATCH_SIZE,
+                    )
+                    for i in range(0, group_size, GROUP_BATCH_SIZE):
+                        batch = group_hosts[i : i + GROUP_BATCH_SIZE]
+                        batch_tasks = [asyncio.create_task(_execute_host(host)) for host in batch]
+                        tasks.extend(batch_tasks)
+                        # 让出事件循环，避免阻塞
+                        await asyncio.sleep(0)
+
+                # 每个分组创建完后让出事件循环
+                await asyncio.sleep(0)
+
         for done in asyncio.as_completed(tasks):
             host_name, result = await done
             multi = MultiResult(host_name)
@@ -227,7 +289,7 @@ class AsyncRunner:
                         await maybe_awaitable
                     logger.debug("进度回调完成", host=host_name)
                 except Exception as e:
-                    logger.warning("进度回调失败", host=host_name, error=str(e), exc_info=True)
+                    celery_details_logger.warning("进度回调失败", host=host_name, error=str(e), exc_info=True)
 
         # 统计
         failed_count = sum(1 for r in results.values() if r.failed)
@@ -344,7 +406,7 @@ class AsyncRunnerWithRetry(AsyncRunner):
     """
     带重试机制的异步运行器。
 
-    继承 AsyncRunner，默认启用重试（max_retries=2）。
+    继承 AsyncRunner，默认启用重试（max_retries=2）和指数退避。
     """
 
     def __init__(
@@ -352,6 +414,8 @@ class AsyncRunnerWithRetry(AsyncRunner):
         num_workers: int | None = None,
         max_retries: int = 2,
         retry_delay: float = 1.0,
+        max_retry_delay: float = 30.0,
+        exponential_backoff: bool = True,
     ):
         """
         初始化带重试的异步运行器。
@@ -359,6 +423,14 @@ class AsyncRunnerWithRetry(AsyncRunner):
         Args:
             num_workers: 最大并发数
             max_retries: 最大重试次数（默认 2）
-            retry_delay: 重试间隔秒数（默认 1.0）
+            retry_delay: 初始重试间隔秒数（默认 1.0）
+            max_retry_delay: 最大重试间隔秒数（默认 30.0）
+            exponential_backoff: 是否启用指数退避（默认 True）
         """
-        super().__init__(num_workers, max_retries=max_retries, retry_delay=retry_delay)
+        super().__init__(
+            num_workers,
+            max_retries=max_retries,
+            retry_delay=retry_delay,
+            max_retry_delay=max_retry_delay,
+            exponential_backoff=exponential_backoff,
+        )

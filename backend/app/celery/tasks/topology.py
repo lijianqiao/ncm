@@ -16,7 +16,7 @@ from app.celery.base import BaseTask, run_async, safe_update_state
 from app.core import cache as cache_module
 from app.core.db import AsyncSessionLocal
 from app.core.exceptions import OTPRequiredException
-from app.core.logger import celery_details_logger, logger
+from app.core.logger import celery_details_logger, celery_task_logger
 from app.crud.crud_credential import credential as credential_crud
 from app.crud.crud_device import device as device_crud
 from app.crud.crud_topology import topology_crud
@@ -78,7 +78,7 @@ def collect_topology(
                 )
                 result.task_id = celery_task_id
 
-                celery_details_logger.info(
+                celery_task_logger.info(
                     "拓扑采集完成",
                     total_devices=result.total_devices,
                     success=result.success_count,
@@ -91,7 +91,7 @@ def collect_topology(
 
             except OTPRequiredException as e:
                 # 返回 OTP 所需信息，不抛出异常
-                logger.info(
+                celery_task_logger.info(
                     "拓扑采集需要 OTP",
                     dept_id=e.dept_id_str,
                     device_group=e.device_group,
@@ -148,7 +148,7 @@ def collect_device_topology(self, device_id: str) -> dict[str, Any]:
                 }
 
             except OTPRequiredException as e:
-                logger.info(
+                celery_task_logger.info(
                     "单设备拓扑采集需要 OTP",
                     device_id=device_id,
                     dept_id=e.dept_id_str,
@@ -208,7 +208,7 @@ def scheduled_topology_refresh(self) -> dict[str, Any]:
                 )
                 result.task_id = celery_task_id
 
-                celery_details_logger.info(
+                celery_task_logger.info(
                     "定时拓扑刷新完成",
                     total_devices=result.total_devices,
                     success=result.success_count,
@@ -221,7 +221,7 @@ def scheduled_topology_refresh(self) -> dict[str, Any]:
 
             except OTPRequiredException as e:
                 # 定时任务不应该触发 OTP，记录警告并跳过
-                logger.warning(
+                celery_task_logger.warning(
                     "定时拓扑刷新遇到 OTP 需求（已跳过）",
                     dept_id=e.dept_id_str,
                     device_group=e.device_group,
@@ -260,7 +260,7 @@ def build_topology_cache(self) -> dict[str, Any]:
 
             topology = await topology_service.build_topology(db)
 
-            logger.info(
+            celery_task_logger.info(
                 "拓扑缓存构建完成",
                 nodes=topology.stats.total_nodes,
                 edges=topology.stats.total_edges,

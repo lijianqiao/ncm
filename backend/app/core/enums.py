@@ -264,3 +264,14 @@ class ParamType(str, Enum):
     INTERFACE = "interface"  # 接口名 (GigabitEthernet0/0/1)
     MAC_ADDRESS = "mac_address"  # MAC 地址
     PORT = "port"  # 端口号 (1-65535)
+
+
+# ===== 熔断器相关枚举 =====
+
+
+class CircuitState(str, Enum):
+    """熔断器状态。"""
+
+    CLOSED = "CLOSED"  # 正常工作
+    OPEN = "OPEN"  # 熔断，快速失败
+    HALF_OPEN = "HALF_OPEN"  # 半开，尝试恢复

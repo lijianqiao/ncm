@@ -18,7 +18,7 @@ from app.celery.base import BaseTask, run_async
 from app.core.config import settings
 from app.core.db import AsyncSessionLocal
 from app.core.enums import InventoryAuditStatus
-from app.core.logger import logger
+from app.core.logger import celery_details_logger, celery_task_logger
 from app.crud.crud_device import device as device_crud
 from app.crud.crud_discovery import discovery_crud
 from app.models.device import Device
@@ -35,7 +35,7 @@ from app.services.scan_service import ScanService
 )
 def run_inventory_audit(self, audit_id: str) -> dict[str, Any]:
     """执行资产盘点任务（复用 Nmap 扫描 + Discovery/CMDB 比对）。"""
-    logger.info("开始资产盘点任务", task_id=self.request.id, audit_id=audit_id)
+    celery_task_logger.info("开始资产盘点任务", task_id=self.request.id, audit_id=audit_id)
     return run_async(_run_inventory_audit_async(self, audit_id))
 
 
@@ -72,7 +72,7 @@ async def _run_inventory_audit_async(self, audit_id: str) -> dict[str, Any]:
             if targets:
                 subnets = list(dict.fromkeys(subnets + targets))
         except Exception as e:
-            logger.warning("根据 dept_id/device_ids 生成扫描目标失败", error=str(e))
+            celery_task_logger.warning("根据 dept_id/device_ids 生成扫描目标失败", error=str(e))
 
         processed_hosts = 0
         scan_errors: list[str] = []
@@ -85,16 +85,16 @@ async def _run_inventory_audit_async(self, audit_id: str) -> dict[str, Any]:
             """扫描单个子网，返回 (subnet, ScanResult, 错误信息)"""
             async with semaphore:
                 try:
-                    logger.info("开始扫描子网", subnet=subnet, audit_id=audit_id)
+                    celery_task_logger.info("开始扫描子网", subnet=subnet, audit_id=audit_id)
                     scan_result = await service.nmap_scan(subnet=subnet, ports=ports)
-                    logger.info(
+                    celery_task_logger.info(
                         "子网扫描完成",
                         subnet=subnet,
                         hosts_found=scan_result.hosts_found,
                     )
                     return subnet, scan_result, None
                 except Exception as e:
-                    logger.error("子网扫描失败", subnet=subnet, error=str(e))
+                    celery_details_logger.error("子网扫描失败", subnet=subnet, error=str(e))
                     return subnet, None, f"{subnet}: {e}"
 
         # 并发执行所有子网扫描
@@ -114,7 +114,7 @@ async def _run_inventory_audit_async(self, audit_id: str) -> dict[str, Any]:
                 )
                 processed_hosts += count
             except Exception as e:
-                logger.error("处理扫描结果失败", subnet=subnet, error=str(e))
+                celery_details_logger.error("处理扫描结果失败", subnet=subnet, error=str(e))
                 scan_errors.append(f"{subnet} (处理): {e}")
 
         # 2) CMDB 比对：产出 shadow/matched

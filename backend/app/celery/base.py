@@ -14,7 +14,7 @@ from typing import Any, TypeVar
 
 from celery import Task
 
-from app.core.logger import celery_task_logger, logger
+from app.core.logger import celery_details_logger, celery_task_logger
 
 T = TypeVar("T")
 
@@ -167,7 +167,7 @@ def safe_update_state(
         task.update_state(task_id=celery_task_id, state=state, meta=meta, **kwargs)
         return True
     except Exception as e:
-        logger.warning(
+        celery_details_logger.warning(
             "更新任务状态失败",
             task_id=celery_task_id,
             task_name=getattr(task, "name", None),
@@ -215,7 +215,7 @@ async def safe_update_state_async(
             meta,
             state,
         )
-        logger.debug(
+        celery_task_logger.debug(
             "异步更新任务状态成功",
             task_id=celery_task_id,
             state=state,
@@ -223,7 +223,7 @@ async def safe_update_state_async(
         )
         return True
     except Exception as e:
-        logger.warning(
+        celery_details_logger.warning(
             "异步更新任务状态失败",
             task_id=celery_task_id,
             task_name=getattr(task, "name", None),
@@ -278,7 +278,7 @@ class BaseTask(Task):
 
     def on_failure(self, exc, task_id: str, args, kwargs, einfo) -> None:
         """任务失败时的回调。"""
-        celery_task_logger.error(
+        celery_details_logger.error(
             "任务执行失败",
             task_id=task_id,
             task_name=self.name,
@@ -288,7 +288,7 @@ class BaseTask(Task):
 
     def on_retry(self, exc, task_id: str, args, kwargs, einfo) -> None:
         """任务重试时的回调。"""
-        celery_task_logger.warning(
+        celery_details_logger.warning(
             "任务重试中",
             task_id=task_id,
             task_name=self.name,

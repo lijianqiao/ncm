@@ -132,6 +132,7 @@ class Settings(BaseSettings):
     SCAN_TIMEOUT: int = 300  # 扫描超时时间（秒）
     SCAN_RATE: int = 1000  # Masscan 扫描速率（packets/sec）
     SCAN_MAX_CONCURRENT_SUBNETS: int = 4  # 资产盘点最大并发扫描子网数
+    SCAN_MAX_CONCURRENT: int = 5  # 批量网段扫描最大并发数
     SCAN_SCHEDULED_SUBNETS: str = ""  # 定时扫描网段列表（逗号分隔，如 "192.168.1.0/24,10.0.0.0/24"）
     CELERY_BEAT_SCAN_HOUR: int = 3  # 定时扫描小时（0-23）
     CELERY_BEAT_SCAN_MINUTE: int = 0  # 定时扫描分钟
@@ -161,6 +162,8 @@ class Settings(BaseSettings):
     SCRAPLI_POOL_MAX_CONNECTIONS: int = 100  # 连接池最大连接数
     SCRAPLI_POOL_MAX_IDLE_TIME: int = 300  # 连接最大空闲时间（秒）
     SCRAPLI_POOL_MAX_AGE: int = 3600  # 连接最大存活时间（秒）
+    SCRAPLI_POOL_HEALTH_CHECK: bool = True  # 是否启用连接健康检查
+    POOL_HEALTH_CHECK_TIMEOUT: float = 5.0  # 连接健康检查超时（秒）
 
     # Nornir 任务超时配置
     NORNIR_TASK_TIMEOUT: int = 30  # Nornir 单任务超时时间（秒），用于快速失败
@@ -187,6 +190,15 @@ class Settings(BaseSettings):
     MINIO_SECRET_KEY: str = "minioadmin"
     MINIO_BUCKET: str = "ncm"
     MINIO_SECURE: bool = False
+
+    # MinIO 熔断器配置
+    MINIO_CIRCUIT_FAILURE_THRESHOLD: int = 5  # 失败阈值，达到后打开熔断器
+    MINIO_CIRCUIT_RECOVERY_TIMEOUT: float = 60.0  # 熔断恢复超时（秒）
+    MINIO_CIRCUIT_SUCCESS_THRESHOLD: int = 2  # 半开状态连续成功次数阈值
+
+    # 备份执行配置
+    BACKUP_BATCH_SIZE: int = 10  # 备份任务批次大小（每批处理的设备数）
+    BACKUP_NUM_WORKERS: int = 50  # 备份任务最大并发数
 
     # 备份保留策略（按设备+类型保留最近 N 条，0 表示不限制）
     BACKUP_RETENTION_SCHEDULED_KEEP: int = 500  # 定时备份保留条数

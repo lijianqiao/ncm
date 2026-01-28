@@ -16,7 +16,7 @@ from uuid import UUID
 from app.celery.app import celery_app
 from app.celery.base import BaseTask, run_async
 from app.core.db import AsyncSessionLocal
-from app.core.logger import logger
+from app.core.logger import celery_details_logger, celery_task_logger
 from app.crud.crud_credential import credential as credential_crud
 from app.crud.crud_device import device as device_crud
 from app.schemas.collect import CollectBatchRequest
@@ -39,7 +39,7 @@ def collect_device_tables(self, device_id: str) -> dict[str, Any]:
     Returns:
         dict: 采集结果
     """
-    logger.info(f"开始采集设备: {device_id}")
+    celery_task_logger.info(f"开始采集设备: {device_id}")
 
     async def _collect():
         async with AsyncSessionLocal() as db:
@@ -54,10 +54,10 @@ def collect_device_tables(self, device_id: str) -> dict[str, Any]:
 
     try:
         result = run_async(_collect())
-        logger.info(f"采集完成: device_id={device_id}, success={result.get('success')}")
+        celery_task_logger.info(f"采集完成: device_id={device_id}, success={result.get('success')}")
         return result
     except Exception as e:
-        logger.error(f"采集异常: device_id={device_id}, error={str(e)}", exc_info=True)
+        celery_details_logger.error(f"采集异常: device_id={device_id}, error={str(e)}", exc_info=True)
         raise
 
 
@@ -86,7 +86,7 @@ def batch_collect_tables(
     Returns:
         dict: 采集结果
     """
-    logger.info(f"开始批量采集: count={len(device_ids)}")
+    celery_task_logger.info(f"开始批量采集: count={len(device_ids)}")
 
     async def _batch_collect():
         async with AsyncSessionLocal() as db:
@@ -103,13 +103,13 @@ def batch_collect_tables(
 
     try:
         result = run_async(_batch_collect())
-        logger.info(
+        celery_task_logger.info(
             f"批量采集完成: total={result.get('total_devices')}, "
             f"success={result.get('success_count')}, failed={result.get('failed_count')}"
         )
         return result
     except Exception as e:
-        logger.error(f"批量采集异常: error={str(e)}", exc_info=True)
+        celery_details_logger.error(f"批量采集异常: error={str(e)}", exc_info=True)
         raise
 
 
@@ -128,7 +128,7 @@ def scheduled_collect_all(self) -> dict[str, Any]:
     Returns:
         dict: 采集结果
     """
-    logger.info("定时采集任务开始")
+    celery_task_logger.info("定时采集任务开始")
 
     async def _collect_all():
         async with AsyncSessionLocal() as db:
@@ -143,11 +143,11 @@ def scheduled_collect_all(self) -> dict[str, Any]:
 
     try:
         result = run_async(_collect_all())
-        logger.info(
+        celery_task_logger.info(
             f"定时采集完成: total={result.get('total_devices')}, "
             f"success={result.get('success_count')}, failed={result.get('failed_count')}"
         )
         return result
     except Exception as e:
-        logger.error(f"定时采集异常: error={str(e)}", exc_info=True)
+        celery_details_logger.error(f"定时采集异常: error={str(e)}", exc_info=True)
         raise

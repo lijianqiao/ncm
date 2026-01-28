@@ -15,7 +15,7 @@ from app.core.config import settings
 
 
 def compute_text_md5(text: str, *, encoding: str = "utf-8") -> str:
-    """计算文本的 MD5 哈希值。
+    """计算文本的 MD5 哈希值（同步版本）。
 
     Args:
         text: 待计算哈希的文本内容。
@@ -27,6 +27,24 @@ def compute_text_md5(text: str, *, encoding: str = "utf-8") -> str:
     import hashlib
 
     return hashlib.md5(text.encode(encoding)).hexdigest()
+
+
+async def compute_text_md5_async(text: str, *, encoding: str = "utf-8") -> str:
+    """计算文本的 MD5 哈希值（异步版本，避免阻塞事件循环）。
+
+    对于大文本（如设备配置文件），MD5 计算可能耗时较长，
+    使用 asyncio.to_thread 将计算移至线程池执行。
+
+    Args:
+        text: 待计算哈希的文本内容。
+        encoding: 文本编码方式，默认 utf-8。
+
+    Returns:
+        文本内容的 MD5 十六进制字符串（32 位小写）。
+    """
+    import asyncio
+
+    return await asyncio.to_thread(compute_text_md5, text, encoding=encoding)
 
 
 def should_skip_backup_save_due_to_unchanged_md5(

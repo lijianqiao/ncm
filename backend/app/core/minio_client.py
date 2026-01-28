@@ -4,6 +4,8 @@
 @FileName: minio_client.py
 @DateTime: 2026-01-09 21:45:00
 @Docs: MinIO 客户端封装（用于大配置备份存储）。
+
+支持熔断器保护，当 MinIO 不可用时快速降级。
 """
 
 
@@ -13,6 +15,7 @@ from io import BytesIO
 from minio import Minio
 from minio.error import S3Error
 
+from app.core.circuit_breaker import CircuitBreakerOpenError, minio_circuit_breaker
 from app.core.config import settings
 from app.core.logger import logger
 
@@ -38,6 +41,7 @@ async def ensure_bucket() -> None:
 
 
 async def put_text(object_name: str, content: str, *, content_type: str = "text/plain; charset=utf-8") -> None:
+    """写入文本内容到 MinIO（无熔断保护）。"""
     client = _get_minio()
     await ensure_bucket()
     data = content.encode("utf-8")
@@ -55,7 +59,47 @@ async def put_text(object_name: str, content: str, *, content_type: str = "text/
     await asyncio.to_thread(_put)
 
 
+async def put_text_safe(
+    object_name: str,
+    content: str,
+    *,
+    content_type: str = "text/plain; charset=utf-8",
+) -> bool:
+    """
+    写入文本内容到 MinIO（带熔断保护）。
+
+    当 MinIO 不可用时，返回 False 而不是抛出异常。
+
+    Args:
+        object_name: 对象名称
+        content: 文本内容
+        content_type: 内容类型
+
+    Returns:
+        bool: 是否成功
+    """
+    try:
+        await minio_circuit_breaker.call(
+            put_text,
+            object_name,
+            content,
+            content_type=content_type,
+        )
+        return True
+    except CircuitBreakerOpenError as e:
+        logger.warning(
+            "MinIO 熔断器打开，跳过写入",
+            object_name=object_name,
+            remaining=e.remaining_time,
+        )
+        return False
+    except Exception as e:
+        logger.error("MinIO 写入失败", object_name=object_name, error=str(e))
+        return False
+
+
 async def get_text(object_name: str) -> str:
+    """从 MinIO 读取文本内容（无熔断保护）。"""
     client = _get_minio()
     await ensure_bucket()
 
@@ -70,7 +114,34 @@ async def get_text(object_name: str) -> str:
     return await asyncio.to_thread(_get)
 
 
+async def get_text_safe(object_name: str) -> str | None:
+    """
+    从 MinIO 读取文本内容（带熔断保护）。
+
+    当 MinIO 不可用时，返回 None 而不是抛出异常。
+
+    Args:
+        object_name: 对象名称
+
+    Returns:
+        str | None: 文本内容，失败时返回 None
+    """
+    try:
+        return await minio_circuit_breaker.call(get_text, object_name)
+    except CircuitBreakerOpenError as e:
+        logger.warning(
+            "MinIO 熔断器打开，跳过读取",
+            object_name=object_name,
+            remaining=e.remaining_time,
+        )
+        return None
+    except Exception as e:
+        logger.error("MinIO 读取失败", object_name=object_name, error=str(e))
+        return None
+
+
 async def delete_object(object_name: str) -> None:
+    """从 MinIO 删除对象（无熔断保护）。"""
     client = _get_minio()
     await ensure_bucket()
 
@@ -81,3 +152,35 @@ async def delete_object(object_name: str) -> None:
             logger.warning("MinIO 删除对象失败", object_name=object_name, error=str(e))
 
     await asyncio.to_thread(_del)
+
+
+async def delete_object_safe(object_name: str) -> bool:
+    """
+    从 MinIO 删除对象（带熔断保护）。
+
+    当 MinIO 不可用时，返回 False 而不是抛出异常。
+
+    Args:
+        object_name: 对象名称
+
+    Returns:
+        bool: 是否成功
+    """
+    try:
+        await minio_circuit_breaker.call(delete_object, object_name)
+        return True
+    except CircuitBreakerOpenError as e:
+        logger.warning(
+            "MinIO 熔断器打开，跳过删除",
+            object_name=object_name,
+            remaining=e.remaining_time,
+        )
+        return False
+    except Exception as e:
+        logger.error("MinIO 删除失败", object_name=object_name, error=str(e))
+        return False
+
+
+def get_circuit_breaker_stats() -> dict:
+    """获取 MinIO 熔断器统计信息。"""
+    return minio_circuit_breaker.stats()

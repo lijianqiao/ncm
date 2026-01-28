@@ -21,7 +21,7 @@
 存储: PostgreSQL + Redis
 ```
 
-**支持设备**：Cisco IOS/NX-OS、Huawei VRP、H3C Comware、Arista EOS、Juniper JunOS
+**支持设备**：H3C Comware、Huawei VRP、Cisco IOS
 
 ## 快速开始
 

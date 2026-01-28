@@ -24,7 +24,7 @@ from app.core.config import settings
 from app.core.db import AsyncSessionLocal
 from app.core.enums import AlertSeverity, AlertType, AuthType, BackupStatus, BackupType, DeviceStatus
 from app.core.exceptions import OTPRequiredException
-from app.core.logger import logger
+from app.core.logger import celery_details_logger, celery_task_logger
 from app.core.minio_client import delete_object, put_text
 from app.core.otp_service import otp_service
 from app.crud.crud_alert import alert_crud
@@ -36,7 +36,11 @@ from app.schemas.alert import AlertCreate
 from app.schemas.backup import BackupCreate
 from app.services.alert_service import AlertService
 from app.services.notification_service import NotificationService
-from app.utils.validators import compute_text_md5, should_skip_backup_save_due_to_unchanged_md5
+from app.utils.validators import (
+    compute_text_md5,
+    compute_text_md5_async,
+    should_skip_backup_save_due_to_unchanged_md5,
+)
 
 # 备份类型与保留数量的映射（懒加载，避免模块导入时 settings 未初始化）
 _BACKUP_RETENTION_MAP: dict[BackupType, str] | None = None
@@ -137,7 +141,7 @@ async def _enforce_retention_for_device(db: Any, device_id: str) -> None:
             try:
                 await delete_object(b.content_path)
             except Exception as e:
-                logger.warning("MinIO 删除对象失败", path=b.content_path, error=str(e))
+                celery_details_logger.warning("MinIO 删除对象失败", path=b.content_path, error=str(e))
         b.is_deleted = True
         db.add(b)
 
@@ -168,44 +172,150 @@ def _compute_unified_diff(old_text: str, new_text: str, context_lines: int = 3) 
     return "\n".join(diff_iter)
 
 
-def _convert_async_results_to_summary(results) -> dict:
+def _convert_async_results_to_summary(
+    results: Any,
+    hosts_data: list[dict[str, Any]] | None = None,
+    *,
+    include_otp_info: bool = False,
+) -> dict[str, Any]:
     """
-    将 AsyncRunner 结果转换为 aggregate_results 兼容的格式。
+    将 AsyncRunner 结果转换为统一的聚合格式。
+
+    统一的结果聚合函数，支持简单模式（仅聚合成功/失败）和完整模式（包含 OTP 信息）。
 
     Args:
         results: AsyncRunner 返回的 AggregatedResult
+        hosts_data: 原始主机数据（include_otp_info=True 时需要）
+        include_otp_info: 是否包含 OTP 超时/认证信息
 
     Returns:
         dict: 兼容 _save_backup_results 的格式
-            {"results": {name: {"status": ..., "result": ..., "error": ...}}, "success": n, "failed": n}
+            {"results": {name: {"status": ..., "result": ..., "error": ...}}, "success": n, "failed": n, ...}
     """
-    summary: dict = {"results": {}, "success": 0, "failed": 0}
+    success_count = 0
+    failed_count = 0
+    results_dict: dict[str, dict[str, Any]] = {}
+
+    # OTP 相关跟踪（仅在 include_otp_info=True 时使用）
+    otp_required_info: dict[str, Any] | None = None
+    otp_failed_device_ids: list[str] = []
+    otp_timeout_device_ids: list[str] = []
+    completed_device_ids: list[str] = []
+    skipped_device_ids: list[str] = []
+
+    # 构建 device_id -> name 映射（仅在 include_otp_info=True 且有 hosts_data 时）
+    id_to_name: dict[str, str] = {}
+    name_to_id: dict[str, str] = {}
+    if include_otp_info and hosts_data:
+        for h in hosts_data:
+            host_name_val = h.get("name")
+            device_id_val = h.get("device_id")
+            if host_name_val and isinstance(host_name_val, str):
+                id_to_name[host_name_val] = host_name_val
+                if device_id_val:
+                    name_to_id[host_name_val] = str(device_id_val)
+                    id_to_name[str(device_id_val)] = host_name_val
 
     for host_name, multi_result in results.items():
-        if multi_result.failed:
-            exc = multi_result[0].exception if multi_result else None
-            summary["results"][host_name] = {
-                "status": "failed",
-                "result": None,
-                "error": str(exc) if exc else "Unknown error",
-            }
-            summary["failed"] += 1
+        # 尝试映射回设备名（如果有映射），确保 name 为 str
+        host_key = str(host_name) if host_name else "unknown"
+        name: str = id_to_name.get(host_key, host_key) if id_to_name else host_key
+        device_id = name_to_id.get(name) if name_to_id else None
+
+        if not multi_result or multi_result.failed:
+            failed_count += 1
+            error_msg = "Unknown error"
+            otp_required: OTPRequiredException | None = None
+            is_otp_timeout = False
+
+            if multi_result and len(multi_result) > 0:
+                r = multi_result[0]
+                result_data = r.result or {}
+
+                # 检查 OTP 相关状态
+                if include_otp_info:
+                    if result_data.get("otp_timeout"):
+                        is_otp_timeout = True
+                        error_msg = result_data.get("error", "等待 OTP 超时")
+                        if device_id:
+                            otp_timeout_device_ids.append(str(device_id))
+                        if result_data.get("skipped") and device_id:
+                            skipped_device_ids.append(str(device_id))
+
+                if r.exception:
+                    error_msg = str(r.exception)
+                    if include_otp_info and isinstance(r.exception, OTPRequiredException):
+                        otp_required = r.exception
+
+            if include_otp_info and is_otp_timeout:
+                results_dict[name] = {
+                    "status": "otp_timeout",
+                    "error": error_msg,
+                    "result": None,
+                }
+            elif include_otp_info and otp_required is not None:
+                results_dict[name] = {
+                    "status": "otp_required",
+                    "error": error_msg,
+                    "result": None,
+                    "otp_dept_id": str(otp_required.dept_id),
+                    "otp_device_group": otp_required.device_group,
+                }
+                if device_id:
+                    otp_failed_device_ids.append(str(device_id))
+                if otp_required_info is None:
+                    otp_required_info = {
+                        "otp_required": True,
+                        "otp_dept_id": str(otp_required.dept_id),
+                        "otp_device_group": otp_required.device_group,
+                    }
+            else:
+                results_dict[name] = {
+                    "status": "failed",
+                    "error": error_msg,
+                    "result": None,
+                }
         else:
             result_data = multi_result[0].result if multi_result else None
-            if result_data and result_data.get("success"):
-                summary["results"][host_name] = {
+            task_success = result_data.get("success", True) if result_data else False
+
+            if task_success:
+                success_count += 1
+                if include_otp_info and device_id:
+                    completed_device_ids.append(str(device_id))
+                results_dict[name] = {
                     "status": "success",
-                    "result": result_data.get("config"),
+                    "result": result_data.get("config") if result_data else None,
                     "error": None,
                 }
-                summary["success"] += 1
             else:
-                summary["results"][host_name] = {
+                failed_count += 1
+                results_dict[name] = {
                     "status": "failed",
                     "result": None,
                     "error": result_data.get("error") if result_data else "Unknown error",
                 }
-                summary["failed"] += 1
+
+    # 构建汇总结果
+    summary: dict[str, Any] = {
+        "success": success_count,
+        "failed": failed_count,
+        "total": success_count + failed_count,
+        "results": results_dict,
+    }
+
+    # 添加 OTP 相关信息（仅在 include_otp_info=True 时）
+    if include_otp_info:
+        summary["otp_failed_device_ids"] = otp_failed_device_ids
+        summary["completed_device_ids"] = completed_device_ids
+
+        if otp_timeout_device_ids:
+            summary["otp_timeout"] = True
+            summary["otp_timeout_device_ids"] = otp_timeout_device_ids
+            summary["skipped_device_ids"] = skipped_device_ids
+
+        if otp_required_info:
+            summary.update(otp_required_info)
 
     return summary
 
@@ -239,7 +349,7 @@ async def _save_backup_results(
                 and "otp" in error_message.lower()
                 and ("过期" in error_message or "required" in error_message.lower() or "认证" in error_message)
             ):
-                logger.info(
+                celery_details_logger.info(
                     "OTP 过期导致备份暂停，跳过记录",
                     device_id=device_id,
                     device_name=name,
@@ -267,7 +377,7 @@ async def _save_backup_results(
                             old_md5=old_md5,
                             new_md5=md5_hash,
                         ):
-                            logger.info(
+                            celery_task_logger.info(
                                 "备份内容未变化，跳过保存",
                                 device_id=device_id,
                                 backup_type=bt.value,
@@ -275,7 +385,7 @@ async def _save_backup_results(
                             )
                             continue
                     except Exception as e:
-                        logger.warning(
+                        celery_details_logger.warning(
                             "md5 去重检查失败，继续保存",
                             device_id=device_id,
                             error=str(e),
@@ -292,7 +402,7 @@ async def _save_backup_results(
                     except Exception as e:
                         # MinIO 不可用时降级存 DB（尽力而为）
                         content = config_content
-                        logger.warning("大配置存 MinIO 失败，降级存 DB", device_id=device_id, error=str(e))
+                        celery_details_logger.warning("大配置存 MinIO 失败，降级存 DB", device_id=device_id, error=str(e))
 
             try:
                 backup_data = BackupCreate(
@@ -310,7 +420,7 @@ async def _save_backup_results(
                 backup = Backup(**backup_data.model_dump())
                 db.add(backup)
             except Exception as e:
-                logger.error("保存备份记录失败", device_id=device_id, error=str(e))
+                celery_details_logger.error("保存备份记录失败", device_id=device_id, error=str(e))
 
         await db.commit()
 
@@ -320,7 +430,7 @@ async def _save_backup_results(
             try:
                 await _enforce_retention_for_device(db, did)
             except Exception as e:
-                logger.warning("备份保留策略清理失败", device_id=did, error=str(e))
+                celery_details_logger.warning("备份保留策略清理失败", device_id=did, error=str(e))
 
         await db.commit()
 
@@ -356,7 +466,7 @@ def backup_single_device(
     """
     name = device_name or hostname
 
-    logger.info(
+    celery_task_logger.info(
         "开始单设备备份",
         task_id=self.request.id,
         device=name,
@@ -417,7 +527,7 @@ def backup_single_device(
         }
 
     except Exception as e:
-        logger.error(
+        celery_details_logger.error(
             "单设备备份失败",
             task_id=self.request.id,
             device=name,
@@ -453,7 +563,7 @@ def scheduled_backup_all(self) -> dict[str, Any]:
     task_id = self.request.id
     start_time = datetime.now(UTC)
 
-    logger.info(
+    celery_task_logger.info(
         "定时全量备份任务开始",
         task_id=task_id,
         scheduled_time=start_time.isoformat(),
@@ -482,7 +592,7 @@ def scheduled_backup_all(self) -> dict[str, Any]:
                 "skipped_count": len(skipped_devices),
                 "skipped_reason": "OTP_MANUAL 类型需要人工输入",
             }
-            logger.info("定时备份: 没有可自动备份的设备", skipped=len(skipped_devices))
+            celery_task_logger.info("定时备份: 没有可自动备份的设备", skipped=len(skipped_devices))
             return result
 
         self.update_state(
@@ -532,7 +642,7 @@ def scheduled_backup_all(self) -> dict[str, Any]:
             "skipped_count": len(skipped_devices),
         }
 
-        logger.info(
+        celery_task_logger.info(
             "定时全量备份任务完成",
             task_id=task_id,
             success=summary.get("success", 0),
@@ -544,7 +654,7 @@ def scheduled_backup_all(self) -> dict[str, Any]:
         return result
 
     except Exception as e:
-        logger.error(
+        celery_details_logger.error(
             "定时全量备份任务失败",
             task_id=task_id,
             error=str(e),
@@ -583,7 +693,7 @@ async def _get_devices_for_scheduled_backup() -> tuple[list[dict], list[str]]:
                 # 获取凭据
                 if auth_type == AuthType.STATIC:
                     if not device.username or not device.password_encrypted:
-                        logger.warning("设备缺少用户名或密码配置，跳过", device_name=device.name)
+                        celery_task_logger.warning("设备缺少用户名或密码配置，跳过", device_name=device.name)
                         skipped_devices.append(device.name)
                         continue
                     credential = await otp_service.get_credential_for_static_device(
@@ -601,13 +711,13 @@ async def _get_devices_for_scheduled_backup() -> tuple[list[dict], list[str]]:
                 elif auth_type == AuthType.OTP_SEED:
                     # 从 DeviceGroupCredential 获取
                     if not device.dept_id:
-                        logger.warning("设备缺少部门关联，跳过", device_name=device.name)
+                        celery_task_logger.warning("设备缺少部门关联，跳过", device_name=device.name)
                         skipped_devices.append(device.name)
                         continue
 
                     cred = await credential_crud.get_by_dept_and_group(db, device.dept_id, device.device_group)
                     if not cred or not cred.otp_seed_encrypted:
-                        logger.warning("设备的凭据未配置 OTP 种子，跳过", device_name=device.name)
+                        celery_task_logger.warning("设备的凭据未配置 OTP 种子，跳过", device_name=device.name)
                         skipped_devices.append(device.name)
                         continue
                     username = cred.username
@@ -639,7 +749,7 @@ async def _get_devices_for_scheduled_backup() -> tuple[list[dict], list[str]]:
                 )
 
             except Exception as e:
-                logger.error("设备凭据获取失败", device_name=device.name, error=str(e))
+                celery_details_logger.error("设备凭据获取失败", device_name=device.name, error=str(e))
                 skipped_devices.append(device.name)
 
     return hosts_data, skipped_devices
@@ -669,7 +779,7 @@ def incremental_backup_check(self) -> dict[str, Any]:
     task_id = self.request.id
     start_time = datetime.now(UTC)
 
-    logger.info(
+    celery_task_logger.info(
         "增量配置检查任务开始",
         task_id=task_id,
         scheduled_time=start_time.isoformat(),
@@ -697,7 +807,7 @@ def incremental_backup_check(self) -> dict[str, Any]:
             **check_result,
         }
 
-        logger.info(
+        celery_task_logger.info(
             "增量配置检查任务完成",
             task_id=task_id,
             total_checked=check_result.get("total_checked", 0),
@@ -708,7 +818,7 @@ def incremental_backup_check(self) -> dict[str, Any]:
         return result
 
     except Exception as e:
-        logger.error(
+        celery_details_logger.error(
             "增量配置检查任务失败",
             task_id=task_id,
             error=str(e),
@@ -790,7 +900,8 @@ async def _perform_incremental_check(task, celery_task_id: str | None) -> dict[s
             if not config:
                 continue
 
-            new_md5 = compute_text_md5(config)
+            # 使用异步 MD5 计算，避免阻塞事件循环
+            new_md5 = await compute_text_md5_async(config)
             old_info = old_info_map.get(UUID(device_id), {})
             old_md5 = old_info.get("md5_hash")
             old_backup_id = old_info.get("backup_id")
@@ -810,10 +921,11 @@ async def _perform_incremental_check(task, celery_task_id: str | None) -> dict[s
                     }
                 )
 
-    # 批量保存变更设备的备份（使用单个 Session，减少数据库连接开销）
+    # 批量保存变更设备的备份（分批提交，每 10 个设备提交一次）
+    BATCH_COMMIT_SIZE = settings.BACKUP_BATCH_SIZE
     if changed_devices:
         async with AsyncSessionLocal() as db:
-            for device_info in changed_devices:
+            for idx, device_info in enumerate(changed_devices, start=1):
                 device_id = device_info["device_id"]
                 name = device_info["device_name"]
                 config = device_info["config"]
@@ -824,20 +936,26 @@ async def _perform_incremental_check(task, celery_task_id: str | None) -> dict[s
 
                 content_size = len(config.encode("utf-8"))
 
-                # 处理大配置：存储到 MinIO
+                # 处理大配置：存储到 MinIO（使用熔断器保护）
                 content = None
                 content_path = None
                 if content_size < settings.BACKUP_CONTENT_SIZE_THRESHOLD_BYTES:
                     content = config
                 else:
                     try:
+                        from app.core.minio_client import put_text_safe
+
                         object_name = f"backups/{device_id}/{datetime.now(UTC).strftime('%Y%m%d_%H%M%S')}.txt"
-                        await put_text(object_name, config)
-                        content_path = object_name
+                        success = await put_text_safe(object_name, config)
+                        if success:
+                            content_path = object_name
+                        else:
+                            # 熔断器打开或写入失败，降级存 DB
+                            content = config
                     except Exception as e:
                         # MinIO 不可用时降级存 DB
                         content = config
-                        logger.warning("大配置存 MinIO 失败，降级存 DB", device_id=device_id, error=str(e))
+                        celery_task_logger.warning("大配置存 MinIO 失败，降级存 DB", device_id=device_id, error=str(e))
 
                 backup_data = BackupCreate(
                     device_id=UUID(device_id),
@@ -883,8 +1001,14 @@ async def _perform_incremental_check(task, celery_task_id: str | None) -> dict[s
                     )
                     await notification_service.send_webhook(alert)
                 except Exception as e:
-                    logger.warning("配置变更告警触发失败", error=str(e))
+                    celery_task_logger.warning("配置变更告警触发失败", error=str(e))
 
+                # 分批提交事务，减少单个事务的持续时间
+                if idx % BATCH_COMMIT_SIZE == 0:
+                    await db.commit()
+                    celery_task_logger.debug("分批提交事务", processed=idx, total=len(changed_devices))
+
+            # 提交剩余的事务
             await db.commit()
 
     return {
@@ -929,7 +1053,7 @@ def async_backup_devices(
     from app.network.async_tasks import async_collect_config
     from app.network.nornir_config import init_nornir_async
 
-    logger.info(
+    celery_task_logger.info(
         "开始异步配置备份任务",
         task_id=self.request.id,
         hosts_count=len(hosts_data),
@@ -1004,7 +1128,7 @@ def async_backup_devices(
                 if otp_meta:
                     progress_meta.update(otp_meta)
 
-                logger.debug(
+                celery_task_logger.debug(
                     "进度回调触发",
                     task_id=celery_task_id,
                     host=host_name,
@@ -1039,8 +1163,8 @@ def async_backup_devices(
             )
         )
 
-        # 聚合结果（转换为与同步版本兼容的格式）
-        summary = _aggregate_async_results(results, hosts_data)
+        # 聚合结果（转换为与同步版本兼容的格式，包含 OTP 信息）
+        summary = _convert_async_results_to_summary(results, hosts_data, include_otp_info=True)
 
         # 保存备份结果到数据库
         run_async(
@@ -1062,7 +1186,7 @@ def async_backup_devices(
             },
         )
 
-        logger.info(
+        celery_task_logger.info(
             "异步配置备份任务完成",
             task_id=self.request.id,
             success=summary["success"],
@@ -1072,7 +1196,7 @@ def async_backup_devices(
         return summary
 
     except Exception as e:
-        logger.error(
+        celery_details_logger.error(
             "异步配置备份任务失败",
             task_id=self.request.id,
             error=str(e),
@@ -1081,151 +1205,3 @@ def async_backup_devices(
         raise
 
 
-def _aggregate_async_results(
-    results: Any,
-    hosts_data: list[dict[str, Any]],
-) -> dict[str, Any]:
-    """
-    聚合 AsyncRunner 结果为与同步版本兼容的格式。
-
-    支持 OTP 超时检测：当有设备因 OTP 等待超时而失败时，
-    在返回结果中标记 otp_timeout 状态。
-
-    Args:
-        results: AsyncRunner 返回的 AggregatedResult
-        hosts_data: 原始主机数据
-
-    Returns:
-        dict: 兼容格式的聚合结果
-    """
-    success_count = 0
-    failed_count = 0
-    results_dict: dict[str, dict[str, Any]] = {}
-    otp_required_info: dict[str, Any] | None = None
-    otp_failed_device_ids: list[str] = []
-    otp_timeout_device_ids: list[str] = []
-    completed_device_ids: list[str] = []
-    skipped_device_ids: list[str] = []
-
-    # 构建 device_id -> name 映射
-    id_to_name = {h.get("name"): h.get("name") for h in hosts_data}
-    name_to_id = {h.get("name"): h.get("device_id") for h in hosts_data if h.get("name") and h.get("device_id")}
-    for h in hosts_data:
-        if h.get("device_id"):
-            id_to_name[h.get("device_id")] = h.get("name")
-
-    # 记录原始数据用于调试
-    logger.debug(
-        "开始聚合异步结果",
-        hosts_count=len(hosts_data),
-        results_count=len(results) if results else 0,
-    )
-
-    for host_name, multi_result in results.items():
-        # 尝试映射回设备名
-        name = id_to_name.get(host_name) or host_name
-        device_id = name_to_id.get(name)
-
-        # multi_result 是 MultiResult，取第一个 Result
-        if not multi_result or multi_result.failed:
-            failed_count += 1
-            error_msg = "执行失败"
-            otp_required: OTPRequiredException | None = None
-            is_otp_timeout = False
-
-            if multi_result and len(multi_result) > 0:
-                r = multi_result[0]
-                result_data = r.result or {}
-
-                # 检查是否为 OTP 超时
-                if result_data.get("otp_timeout"):
-                    is_otp_timeout = True
-                    error_msg = result_data.get("error", "等待 OTP 超时")
-                    if device_id:
-                        otp_timeout_device_ids.append(str(device_id))
-                    # 检查是否为跳过的设备（超时后未执行）
-                    if result_data.get("skipped"):
-                        if device_id:
-                            skipped_device_ids.append(str(device_id))
-
-                if r.exception:
-                    error_msg = str(r.exception)
-                    if isinstance(r.exception, OTPRequiredException):
-                        otp_required = r.exception
-
-            if is_otp_timeout:
-                results_dict[name] = {
-                    "status": "otp_timeout",
-                    "error": error_msg,
-                    "result": None,
-                }
-            elif otp_required is not None:
-                results_dict[name] = {
-                    "status": "otp_required",
-                    "error": error_msg,
-                    "result": None,
-                    "otp_dept_id": str(otp_required.dept_id),
-                    "otp_device_group": otp_required.device_group,
-                }
-                if device_id:
-                    otp_failed_device_ids.append(str(device_id))
-                if otp_required_info is None:
-                    otp_required_info = {
-                        "otp_required": True,
-                        "otp_dept_id": str(otp_required.dept_id),
-                        "otp_device_group": otp_required.device_group,
-                    }
-            else:
-                results_dict[name] = {
-                    "status": "failed",
-                    "error": error_msg,
-                    "result": None,
-                }
-        else:
-            r = multi_result[0]
-            result_data = r.result or {}
-
-            # 检查任务返回结果中的 success 标志
-            task_success = result_data.get("success", True)  # 默认为 True（无异常即成功）
-            if task_success:
-                success_count += 1
-                if device_id:
-                    completed_device_ids.append(str(device_id))
-            else:
-                failed_count += 1
-
-            results_dict[name] = {
-                "status": "success" if task_success else "failed",
-                "result": result_data.get("config"),
-                "error": result_data.get("error") if not task_success else None,
-            }
-
-    # 构建汇总结果
-    summary: dict[str, Any] = {
-        "success": success_count,
-        "failed": failed_count,
-        "total": success_count + failed_count,
-        "results": results_dict,
-        "otp_failed_device_ids": otp_failed_device_ids,
-        "completed_device_ids": completed_device_ids,
-    }
-
-    # 添加 OTP 超时信息（如果有）
-    if otp_timeout_device_ids:
-        summary["otp_timeout"] = True
-        summary["otp_timeout_device_ids"] = otp_timeout_device_ids
-        summary["skipped_device_ids"] = skipped_device_ids
-
-    # 添加 OTP 认证信息（如果有）
-    if otp_required_info:
-        summary.update(otp_required_info)
-
-    logger.info(
-        "异步结果聚合完成",
-        success=success_count,
-        failed=failed_count,
-        total=success_count + failed_count,
-        otp_timeout_count=len(otp_timeout_device_ids),
-    )
-
-    return summary

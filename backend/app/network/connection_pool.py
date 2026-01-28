@@ -82,6 +82,7 @@ class AsyncConnectionPool:
         max_idle_time: float | None = None,
         max_age: float | None = None,
         health_check: bool = True,
+        health_check_timeout: float | None = None,
     ):
         """
         初始化连接池。
@@ -91,14 +92,17 @@ class AsyncConnectionPool:
             max_idle_time: 最大空闲时间秒数（默认从配置读取 SCRAPLI_POOL_MAX_IDLE_TIME）
             max_age: 连接最大存活时间秒数（默认从配置读取 SCRAPLI_POOL_MAX_AGE）
             health_check: 是否在复用连接前进行健康检查（默认 True）
+            health_check_timeout: 健康检查超时秒数（默认从配置读取 POOL_HEALTH_CHECK_TIMEOUT 或 5.0）
         """
         self.max_connections = max_connections or settings.SCRAPLI_POOL_MAX_CONNECTIONS
         self.max_idle_time = max_idle_time or float(settings.SCRAPLI_POOL_MAX_IDLE_TIME)
         self.max_age = max_age or float(settings.SCRAPLI_POOL_MAX_AGE)
         self.health_check = health_check
+        self.health_check_timeout = health_check_timeout or getattr(settings, "POOL_HEALTH_CHECK_TIMEOUT", 5.0)
 
         self._pool: dict[str, PooledConnection] = {}
         self._lock = asyncio.Lock()
+        self._pending: set[str] = set()  # 正在创建中的连接键
         self._closed = False
 
     def _make_key(self, host: str, port: int, username: str) -> str:
@@ -106,7 +110,7 @@ class AsyncConnectionPool:
         return f"{host}:{port}:{username}"
 
     async def _is_connection_healthy(self, pooled: PooledConnection) -> bool:
-        """检查连接是否健康。"""
+        """检查连接是否健康（带超时控制）。"""
         if pooled.age > self.max_age:
             logger.debug("连接超过最大存活时间", host=pooled.host, age=pooled.age, max_age=self.max_age)
             return False
@@ -117,9 +121,19 @@ class AsyncConnectionPool:
 
         if self.health_check:
             try:
-                # 尝试获取提示符来验证连接
-                await pooled.conn.get_prompt()
+                # 使用超时控制进行健康检查
+                await asyncio.wait_for(
+                    pooled.conn.get_prompt(),
+                    timeout=self.health_check_timeout,
+                )
                 return True
+            except asyncio.TimeoutError:
+                logger.debug(
+                    "连接健康检查超时",
+                    host=pooled.host,
+                    timeout=self.health_check_timeout,
+                )
+                return False
             except Exception as e:
                 logger.debug("连接健康检查失败", host=pooled.host, error=str(e))
                 return False
@@ -152,6 +166,11 @@ class AsyncConnectionPool:
         """
         获取连接（优先复用，无可用连接时创建新连接）。
 
+        使用两阶段锁定优化：
+        1. 短锁：检查缓存、预留槽位
+        2. 无锁：创建连接（耗时的网络 I/O）
+        3. 短锁：放入缓存
+
         Args:
             host: 设备 IP 地址或主机名
             username: SSH 用户名
@@ -170,63 +189,100 @@ class AsyncConnectionPool:
             raise RuntimeError("连接池已关闭")
 
         key = self._make_key(host, port, username)
+        pooled_to_check: PooledConnection | None = None
+        need_create = False
 
+        # 阶段 1：短锁 - 检查缓存并预留槽位
         async with self._lock:
             # 尝试复用现有连接
             if key in self._pool:
-                pooled = self._pool[key]
-                if await self._is_connection_healthy(pooled):
-                    pooled.touch()
+                pooled_to_check = self._pool[key]
+            elif key not in self._pending:
+                # 检查连接数限制
+                total_count = len(self._pool) + len(self._pending)
+                if total_count >= self.max_connections:
+                    # 移除最旧的空闲连接
+                    await self._evict_oldest()
+
+                # 标记为正在创建
+                self._pending.add(key)
+                need_create = True
+
+        # 阶段 2：无锁 - 检查健康状态或创建连接
+        if pooled_to_check is not None:
+            # 在锁外检查连接健康状态
+            if await self._is_connection_healthy(pooled_to_check):
+                async with self._lock:
+                    # 双重检查连接还在池中
+                    if key in self._pool and self._pool[key] is pooled_to_check:
+                        pooled_to_check.touch()
+                        logger.debug(
+                            "连接池复用连接",
+                            host=host,
+                            port=port,
+                            use_count=pooled_to_check.use_count,
+                            idle_time=int(pooled_to_check.idle_time),
+                        )
+                        return PooledConnectionContext(self, pooled_to_check, key, reused=True)
+
+            # 连接不健康或已被其他协程移除，需要创建新连接
+            async with self._lock:
+                if key in self._pool:
+                    old_pooled = self._pool.pop(key)
+                    # 异步关闭旧连接（不阻塞）
+                    asyncio.create_task(self._close_connection(old_pooled))
+
+                if key not in self._pending:
+                    self._pending.add(key)
+                    need_create = True
+
+        if need_create:
+            # 在锁外创建新连接（耗时操作）
+            try:
+                conn_kwargs = {
+                    "host": host,
+                    "auth_username": username,
+                    "auth_password": password,
+                    "port": port,
+                    "platform": platform,
+                    "transport": "asyncssh",  # AsyncScrapli 需要异步 transport
+                    **kwargs,
+                }
+                conn = AsyncScrapli(**conn_kwargs)
+                await conn.open()
+
+                pooled = PooledConnection(
+                    conn=conn,
+                    host=host,
+                    port=port,
+                    username=username,
+                    platform=platform,
+                )
+                pooled.touch()
+
+                # 阶段 3：短锁 - 放入缓存
+                async with self._lock:
+                    self._pending.discard(key)
+                    self._pool[key] = pooled
+
                     logger.debug(
-                        "连接池复用连接",
+                        "连接池创建新连接",
                         host=host,
                         port=port,
-                        use_count=pooled.use_count,
-                        idle_time=int(pooled.idle_time),
+                        platform=platform,
+                        pool_size=len(self._pool),
                     )
-                    return PooledConnectionContext(self, pooled, key, reused=True)
-                else:
-                    # 连接不健康，关闭并移除
-                    await self._close_connection(pooled)
-                    del self._pool[key]
 
-            # 检查连接数限制
-            if len(self._pool) >= self.max_connections:
-                # 移除最旧的空闲连接
-                await self._evict_oldest()
+                return PooledConnectionContext(self, pooled, key, reused=False)
+            except Exception:
+                # 创建失败，移除待创建标记
+                async with self._lock:
+                    self._pending.discard(key)
+                raise
 
-            # 创建新连接（AsyncScrapli 必须使用异步 transport）
-            conn_kwargs = {
-                "host": host,
-                "auth_username": username,
-                "auth_password": password,
-                "port": port,
-                "platform": platform,
-                "transport": "asyncssh",  # AsyncScrapli 需要异步 transport
-                **kwargs,
-            }
-            conn = AsyncScrapli(**conn_kwargs)
-            await conn.open()
-
-            pooled = PooledConnection(
-                conn=conn,
-                host=host,
-                port=port,
-                username=username,
-                platform=platform,
-            )
-            pooled.touch()
-            self._pool[key] = pooled
-
-            logger.debug(
-                "连接池创建新连接",
-                host=host,
-                port=port,
-                platform=platform,
-                pool_size=len(self._pool),
-            )
-
-            return PooledConnectionContext(self, pooled, key, reused=False)
+        # 如果其他协程正在创建此连接，等待并重试
+        await asyncio.sleep(0.1)
+        return await self.acquire(host, username, password, platform, port, **kwargs)
 
     async def _evict_oldest(self) -> None:
         """移除最旧的空闲连接。"""
@@ -260,6 +316,7 @@ class AsyncConnectionPool:
         """关闭连接池，释放所有连接。"""
         async with self._lock:
             self._closed = True
+            self._pending.clear()
             for _, pooled in list(self._pool.items()):
                 await self._close_connection(pooled)
             self._pool.clear()
@@ -295,6 +352,7 @@ class AsyncConnectionPool:
         """获取连接池统计信息。"""
         return {
             "size": len(self._pool),
+            "pending": len(self._pending),
             "max_connections": self.max_connections,
             "closed": self._closed,
             "connections": [
@@ -375,11 +433,13 @@ async def get_connection_pool() -> AsyncConnectionPool:
                 max_idle_time=getattr(settings, "SCRAPLI_POOL_MAX_IDLE_TIME", 300.0),
                 max_age=getattr(settings, "SCRAPLI_POOL_MAX_AGE", 3600.0),
                 health_check=getattr(settings, "SCRAPLI_POOL_HEALTH_CHECK", True),
+                health_check_timeout=getattr(settings, "POOL_HEALTH_CHECK_TIMEOUT", 5.0),
             )
             logger.info(
                 "全局连接池已初始化",
                 max_connections=_global_pool.max_connections,
                 max_idle_time=_global_pool.max_idle_time,
+                health_check_timeout=_global_pool.health_check_timeout,
             )
 
     return _global_pool

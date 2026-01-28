@@ -3,12 +3,14 @@
 @Email: lijianqiao2906@live.com
 @FileName: async_tasks.py
 @DateTime: 2026-01-14 00:30:00
-@Docs: Scrapli 异步任务函数库（使用原生 AsyncScrapli）。
+@Docs: Scrapli 异步任务函数库（使用原生 AsyncScrapli + 连接池）。
 
 提供通用的异步网络设备操作任务，配合 AsyncRunner 使用。
 所有函数都是独立的异步函数，接收 Host 对象并返回执行结果。
 
-注意：本模块使用 Scrapli 原生异步驱动 AsyncScrapli，无需 asyncio.to_thread 包装。
+注意：
+- 本模块使用 Scrapli 原生异步驱动 AsyncScrapli
+- 使用连接池（AsyncConnectionPool）复用连接，显著提升批量操作性能
 """
 
 import time
@@ -22,9 +24,9 @@ from uuid import UUID
 
 from app.core.config import settings
 from app.core.logger import logger
+from app.network.connection_pool import get_connection_pool
 from app.network.otp_utils import handle_otp_auth_failure, resolve_otp_password, wait_and_retry_otp
-from app.network.platform_config import get_scrapli_options
-from app.network.scrapli_utils import disable_paging_async, send_command_with_paging_async
+from app.network.scrapli_utils import build_scrapli_config, disable_paging_async, send_command_with_paging_async
 
 if TYPE_CHECKING:
     from nornir.core.inventory import Host
@@ -34,8 +36,8 @@ def _get_scrapli_kwargs(host: "Host") -> dict[str, Any]:
     """
     从 Nornir Host 对象提取 Scrapli 连接参数。
 
-    使用 platform_config.py 中的统一配置作为基础，
-    然后覆盖主机特定的连接信息和超时参数。
+    使用 scrapli_utils.build_scrapli_config 作为统一入口，
+    然后添加 AsyncScrapli 特定的配置（asyncssh transport）。
 
     注意：AsyncScrapli 需要使用异步 transport（asyncssh），
     同步 transport（ssh2、paramiko）会导致错误。
@@ -51,49 +53,25 @@ def _get_scrapli_kwargs(host: "Host") -> dict[str, Any]:
     raw_platform = host.platform or "hp_comware"
     platform = get_platform_for_vendor(raw_platform)
 
-    # 从 platform_config.py 获取平台特定的 Scrapli 配置
-    base_options = get_scrapli_options(platform)
-
-    # 从 host 的 connection_options 中获取额外配置（优先级更高）
-    extras = {}
+    # 从 host 的 connection_options 中获取额外配置
+    extras: dict[str, Any] = {}
     if host.connection_options and "scrapli" in host.connection_options:
         extras = host.connection_options["scrapli"].extras or {}
 
-    # 合并配置：base_options → extras → 固定覆盖项
-    base_timeout_socket = base_options.get("timeout_socket")
-    base_timeout_transport = base_options.get("timeout_transport")
-    base_timeout_ops = base_options.get("timeout_ops")
+    # 使用统一的配置构建函数
+    config = build_scrapli_config(
+        host=host.hostname or "",
+        username=host.username or "",
+        password=host.password or "",
+        platform=platform,
+        port=host.port or 22,
+        extras=extras,
+    )
 
-    def _as_int(value: Any) -> int:
-        try:
-            return int(value)
-        except Exception:
-            return 0
+    # AsyncScrapli 必须使用异步 transport（覆盖 platform_config 中的 ssh2）
+    config["transport"] = "asyncssh"
 
-    timeout_socket = max(_as_int(base_timeout_socket), int(settings.ASYNC_SSH_CONNECT_TIMEOUT))
-    timeout_transport = max(_as_int(base_timeout_transport), int(settings.ASYNC_SSH_CONNECT_TIMEOUT))
-    timeout_ops = max(_as_int(base_timeout_ops), int(settings.ASYNC_SSH_TIMEOUT))
-
-    result = {
-        **base_options,
-        **extras,
-        # 主机特定信息（必须覆盖）
-        "host": host.hostname,
-        "auth_username": host.username,
-        "auth_password": host.password,
-        "port": host.port or 22,
-        "platform": platform,
-        # 使用配置文件中的超时参数
-        "timeout_socket": timeout_socket,
-        "timeout_transport": timeout_transport,
-        "timeout_ops": timeout_ops,
-        # AsyncScrapli 必须使用异步 transport（覆盖 platform_config 中的 ssh2）
-        "transport": "asyncssh",
-    }
-    if platform.startswith("cisco_") and not result.get("auth_secondary"):
-        result["auth_secondary"] = result.get("auth_password") or ""
-
-    return result
+    return config
 
 
 async def _apply_otp_manual_password(host: "Host", kwargs: dict[str, Any]) -> dict[str, Any]:
@@ -114,61 +92,120 @@ async def _run_send_command(
     command: str,
     *,
     timeout_ops: float | None = None,
+    use_pool: bool = True,
 ) -> Response:
-    """使用 AsyncScrapli 执行单条命令（原生异步）。"""
+    """使用 AsyncScrapli 执行单条命令（支持连接池复用）。
+
+    Args:
+        host: Nornir Host 对象
+        kwargs: Scrapli 连接参数
+        command: 要执行的命令
+        timeout_ops: 命令超时时间
+        use_pool: 是否使用连接池（默认 True）
+
+    Returns:
+        Response: Scrapli 响应对象
+    """
     start = time.monotonic()
     safe_command = (command or "").strip().splitlines()[0][:120]
     platform = kwargs.get("platform")
 
-    conn = AsyncScrapli(**kwargs)
-    try:
-        logger.info("AsyncScrapli 打开连接", host=host.name, device=host.hostname, platform=platform)
-        await conn.open()
-        logger.info(
-            "AsyncScrapli 连接已打开",
-            host=host.name,
-            device=host.hostname,
-            platform=platform,
-            elapsed_ms=int((time.monotonic() - start) * 1000),
+    if use_pool:
+        # 使用连接池
+        pool = await get_connection_pool()
+        pool_ctx = await pool.acquire(
+            host=kwargs["host"],
+            username=kwargs["auth_username"],
+            password=kwargs["auth_password"],
+            platform=platform or "hp_comware",
+            port=kwargs.get("port", 22),
+            timeout_socket=kwargs.get("timeout_socket"),
+            timeout_transport=kwargs.get("timeout_transport"),
+            timeout_ops=kwargs.get("timeout_ops"),
+            auth_strict_key=kwargs.get("auth_strict_key", False),
+            ssh_config_file=kwargs.get("ssh_config_file", ""),
         )
-
-        logger.info(
-            "AsyncScrapli 发送命令",
-            host=host.name,
-            device=host.hostname,
-            platform=platform,
-            command=safe_command,
-            timeout_ops=timeout_ops,
-        )
-        response = await conn.send_command(command, timeout_ops=timeout_ops)
-        logger.info(
-            "AsyncScrapli 命令返回",
-            host=host.name,
-            device=host.hostname,
-            platform=platform,
-            command=safe_command,
-            failed=response.failed,
-            elapsed_ms=int((time.monotonic() - start) * 1000),
-            result_len=len(response.result or ""),
-        )
-        return response
-    finally:
-        try:
-            await conn.close()
+        async with pool_ctx as conn:
             logger.info(
-                "AsyncScrapli 连接已关闭",
+                "连接池获取连接",
+                host=host.name,
+                device=host.hostname,
+                platform=platform,
+                reused=pool_ctx.reused,
+                elapsed_ms=int((time.monotonic() - start) * 1000),
+            )
+
+            logger.info(
+                "AsyncScrapli 发送命令",
+                host=host.name,
+                device=host.hostname,
+                platform=platform,
+                command=safe_command,
+                timeout_ops=timeout_ops,
+            )
+            response = await conn.send_command(command, timeout_ops=timeout_ops)
+            logger.info(
+                "AsyncScrapli 命令返回",
+                host=host.name,
+                device=host.hostname,
+                platform=platform,
+                command=safe_command,
+                failed=response.failed,
+                elapsed_ms=int((time.monotonic() - start) * 1000),
+                result_len=len(response.result or ""),
+            )
+            return response
+    else:
+        # 不使用连接池（用于 OTP 重试等场景）
+        conn = AsyncScrapli(**kwargs)
+        try:
+            logger.info("AsyncScrapli 打开连接", host=host.name, device=host.hostname, platform=platform)
+            await conn.open()
+            logger.info(
+                "AsyncScrapli 连接已打开",
                 host=host.name,
                 device=host.hostname,
                 platform=platform,
                 elapsed_ms=int((time.monotonic() - start) * 1000),
             )
-        except Exception:
-            pass
+
+            logger.info(
+                "AsyncScrapli 发送命令",
+                host=host.name,
+                device=host.hostname,
+                platform=platform,
+                command=safe_command,
+                timeout_ops=timeout_ops,
+            )
+            response = await conn.send_command(command, timeout_ops=timeout_ops)
+            logger.info(
+                "AsyncScrapli 命令返回",
+                host=host.name,
+                device=host.hostname,
+                platform=platform,
+                command=safe_command,
+                failed=response.failed,
+                elapsed_ms=int((time.monotonic() - start) * 1000),
+                result_len=len(response.result or ""),
+            )
+            return response
+        finally:
+            try:
+                await conn.close()
+                logger.info(
+                    "AsyncScrapli 连接已关闭",
+                    host=host.name,
+                    device=host.hostname,
+                    platform=platform,
+                    elapsed_ms=int((time.monotonic() - start) * 1000),
+                )
+            except Exception:
+                pass
 
 
 async def async_send_command(host: "Host", command: str, *, timeout_ops: float | None = None) -> dict[str, Any] | None:
     """
-    异步执行单条命令（使用原生 AsyncScrapli）。
+    异步执行单条命令（使用连接池复用连接）。
 
     支持 OTP 断点续传：认证失败时等待新 OTP 并重试。
 
@@ -189,7 +226,7 @@ async def async_send_command(host: "Host", command: str, *, timeout_ops: float |
     device_name = host.data.get("device_name", host.name)
 
     try:
-        response = await _run_send_command(host, kwargs, command, timeout_ops=timeout_ops)
+        response = await _run_send_command(host, kwargs, command, timeout_ops=timeout_ops, use_pool=True)
         return {
             "success": not response.failed,
             "result": response.result,
@@ -216,9 +253,9 @@ async def async_send_command(host: "Host", command: str, *, timeout_ops: float |
                     timeout=settings.OTP_WAIT_TIMEOUT_SECONDS,
                 )
                 if new_otp:
-                    # 使用新 OTP 重试
+                    # 使用新 OTP 重试（不使用连接池，因为密码已变更）
                     kwargs["auth_password"] = new_otp
-                    response = await _run_send_command(host, kwargs, command, timeout_ops=timeout_ops)
+                    response = await _run_send_command(host, kwargs, command, timeout_ops=timeout_ops, use_pool=False)
                     return {
                         "success": not response.failed,
                         "result": response.result,
@@ -239,7 +276,7 @@ async def async_send_command(host: "Host", command: str, *, timeout_ops: float |
 
 async def async_send_commands(host: "Host", commands: list[str]) -> dict[str, Any]:
     """
-    异步执行多条命令（使用原生 AsyncScrapli）。
+    异步执行多条命令（使用连接池复用连接）。
 
     支持 OTP 断点续传：认证失败时等待新 OTP 并重试。
 
@@ -258,64 +295,117 @@ async def async_send_commands(host: "Host", commands: list[str]) -> dict[str, An
     device_name = host.data.get("device_name", host.name)
     platform = kwargs.get("platform")
 
-    async def _execute_commands(connection_kwargs: dict[str, Any]) -> dict[str, Any]:
-        """执行命令的内部函数，支持重试。"""
+    async def _execute_commands(connection_kwargs: dict[str, Any], use_pool: bool = True) -> dict[str, Any]:
+        """执行命令的内部函数，支持连接池。"""
         start = time.monotonic()
         safe_first = (commands[0] or "").strip().splitlines()[0][:120] if commands else ""
 
-        conn = AsyncScrapli(**connection_kwargs)
-        try:
-            logger.info("AsyncScrapli 打开连接", host=device_name, device=host.hostname, platform=platform)
-            await conn.open()
-            logger.info(
-                "AsyncScrapli 连接已打开",
-                host=device_name,
-                device=host.hostname,
-                platform=platform,
-                elapsed_ms=int((time.monotonic() - start) * 1000),
+        if use_pool:
+            # 使用连接池
+            pool = await get_connection_pool()
+            pool_ctx = await pool.acquire(
+                host=connection_kwargs["host"],
+                username=connection_kwargs["auth_username"],
+                password=connection_kwargs["auth_password"],
+                platform=platform or "hp_comware",
+                port=connection_kwargs.get("port", 22),
+                timeout_socket=connection_kwargs.get("timeout_socket"),
+                timeout_transport=connection_kwargs.get("timeout_transport"),
+                timeout_ops=connection_kwargs.get("timeout_ops"),
+                auth_strict_key=connection_kwargs.get("auth_strict_key", False),
+                ssh_config_file=connection_kwargs.get("ssh_config_file", ""),
             )
-
-            logger.info(
-                "AsyncScrapli 执行多条命令",
-                host=device_name,
-                device=host.hostname,
-                platform=platform,
-                commands_count=len(commands),
-                first_command=safe_first,
-            )
-            responses: MultiResponse = await conn.send_commands(commands)
-            logger.info(
-                "AsyncScrapli 多命令返回",
-                host=device_name,
-                device=host.hostname,
-                platform=platform,
-                failed=responses.failed,
-                elapsed_ms=int((time.monotonic() - start) * 1000),
-            )
-
-            results: list[dict[str, Any]] = []
-            failed_commands_list: list[str] = []
-            for cmd, resp in zip(commands, responses, strict=False):
-                results.append({"command": cmd, "result": resp.result, "failed": resp.failed})
-                if resp.failed:
-                    failed_commands_list.append(cmd)
-
-            return {"success": len(failed_commands_list) == 0, "results": results, "failed_commands": failed_commands_list}
-        finally:
-            try:
-                await conn.close()
+            async with pool_ctx as conn:
                 logger.info(
-                    "AsyncScrapli 连接已关闭",
+                    "连接池获取连接",
+                    host=device_name,
+                    device=host.hostname,
+                    platform=platform,
+                    reused=pool_ctx.reused,
+                    elapsed_ms=int((time.monotonic() - start) * 1000),
+                )
+
+                logger.info(
+                    "AsyncScrapli 执行多条命令",
+                    host=device_name,
+                    device=host.hostname,
+                    platform=platform,
+                    commands_count=len(commands),
+                    first_command=safe_first,
+                )
+                responses: MultiResponse = await conn.send_commands(commands)
+                logger.info(
+                    "AsyncScrapli 多命令返回",
+                    host=device_name,
+                    device=host.hostname,
+                    platform=platform,
+                    failed=responses.failed,
+                    elapsed_ms=int((time.monotonic() - start) * 1000),
+                )
+
+                results: list[dict[str, Any]] = []
+                failed_commands_list: list[str] = []
+                for cmd, resp in zip(commands, responses, strict=False):
+                    results.append({"command": cmd, "result": resp.result, "failed": resp.failed})
+                    if resp.failed:
+                        failed_commands_list.append(cmd)
+
+                return {"success": len(failed_commands_list) == 0, "results": results, "failed_commands": failed_commands_list}
+        else:
+            # 不使用连接池
+            conn = AsyncScrapli(**connection_kwargs)
+            try:
+                logger.info("AsyncScrapli 打开连接", host=device_name, device=host.hostname, platform=platform)
+                await conn.open()
+                logger.info(
+                    "AsyncScrapli 连接已打开",
                     host=device_name,
                     device=host.hostname,
                     platform=platform,
                     elapsed_ms=int((time.monotonic() - start) * 1000),
                 )
-            except Exception:
-                pass
+
+                logger.info(
+                    "AsyncScrapli 执行多条命令",
+                    host=device_name,
+                    device=host.hostname,
+                    platform=platform,
+                    commands_count=len(commands),
+                    first_command=safe_first,
+                )
+                responses = await conn.send_commands(commands)
+                logger.info(
+                    "AsyncScrapli 多命令返回",
+                    host=device_name,
+                    device=host.hostname,
+                    platform=platform,
+                    failed=responses.failed,
+                    elapsed_ms=int((time.monotonic() - start) * 1000),
+                )
+
+                results = []
+                failed_commands_list = []
+                for cmd, resp in zip(commands, responses, strict=False):
+                    results.append({"command": cmd, "result": resp.result, "failed": resp.failed})
+                    if resp.failed:
+                        failed_commands_list.append(cmd)
+
+                return {"success": len(failed_commands_list) == 0, "results": results, "failed_commands": failed_commands_list}
+            finally:
+                try:
+                    await conn.close()
+                    logger.info(
+                        "AsyncScrapli 连接已关闭",
+                        host=device_name,
+                        device=host.hostname,
+                        platform=platform,
+                        elapsed_ms=int((time.monotonic() - start) * 1000),
+                    )
+                except Exception:
+                    pass
 
     try:
-        return await _execute_commands(kwargs)
+        return await _execute_commands(kwargs, use_pool=True)
     except ScrapliAuthenticationFailed as e:
         # 尝试等待新 OTP 并重试
         auth_type = host.data.get("auth_type")
@@ -336,9 +426,9 @@ async def async_send_commands(host: "Host", commands: list[str]) -> dict[str, An
                     timeout=settings.OTP_WAIT_TIMEOUT_SECONDS,
                 )
                 if new_otp:
-                    # 使用新 OTP 重试
+                    # 使用新 OTP 重试（不使用连接池）
                     kwargs["auth_password"] = new_otp
-                    return await _execute_commands(kwargs)
+                    return await _execute_commands(kwargs, use_pool=False)
 
         # 无法恢复，抛出 OTPRequiredException
         await handle_otp_auth_failure(dict(host.data), e)
@@ -353,7 +443,7 @@ async def async_send_commands(host: "Host", commands: list[str]) -> dict[str, An
 
 async def async_send_config(host: "Host", config: str | list[str]) -> dict[str, Any]:
     """
-    异步下发配置（使用原生 AsyncScrapli）。
+    异步下发配置（使用连接池复用连接）。
 
     支持 OTP 断点续传：认证失败时等待新 OTP 并重试。
 
@@ -378,40 +468,85 @@ async def async_send_config(host: "Host", config: str | list[str]) -> dict[str, 
     else:
         config_lines = config
 
-    async def _send_config(connection_kwargs: dict[str, Any]) -> dict[str, Any]:
-        """执行配置下发的内部函数，支持重试。"""
+    async def _send_config(connection_kwargs: dict[str, Any], use_pool: bool = True) -> dict[str, Any]:
+        """执行配置下发的内部函数，支持连接池。"""
         start = time.monotonic()
-        conn = AsyncScrapli(**connection_kwargs)
-        try:
-            logger.info("AsyncScrapli 打开连接（配置下发）", host=device_name, device=host.hostname, platform=platform)
-            await conn.open()
 
-            response: MultiResponse = await conn.send_configs(config_lines)
-            failed_lines = [r for r in response if r.failed]
-
-            logger.info(
-                "AsyncScrapli 配置下发完成",
-                host=device_name,
-                device=host.hostname,
-                platform=platform,
-                config_lines=len(config_lines),
-                failed_count=len(failed_lines),
-                elapsed_ms=int((time.monotonic() - start) * 1000),
+        if use_pool:
+            # 使用连接池
+            pool = await get_connection_pool()
+            pool_ctx = await pool.acquire(
+                host=connection_kwargs["host"],
+                username=connection_kwargs["auth_username"],
+                password=connection_kwargs["auth_password"],
+                platform=platform or "hp_comware",
+                port=connection_kwargs.get("port", 22),
+                timeout_socket=connection_kwargs.get("timeout_socket"),
+                timeout_transport=connection_kwargs.get("timeout_transport"),
+                timeout_ops=connection_kwargs.get("timeout_ops"),
+                auth_strict_key=connection_kwargs.get("auth_strict_key", False),
+                ssh_config_file=connection_kwargs.get("ssh_config_file", ""),
             )
+            async with pool_ctx as conn:
+                logger.info(
+                    "连接池获取连接（配置下发）",
+                    host=device_name,
+                    device=host.hostname,
+                    platform=platform,
+                    reused=pool_ctx.reused,
+                )
 
-            return {
-                "success": len(failed_lines) == 0,
-                "result": "\n".join(r.result for r in response),
-                "failed_count": len(failed_lines),
-            }
-        finally:
+                response: MultiResponse = await conn.send_configs(config_lines)
+                failed_lines = [r for r in response if r.failed]
+
+                logger.info(
+                    "AsyncScrapli 配置下发完成",
+                    host=device_name,
+                    device=host.hostname,
+                    platform=platform,
+                    config_lines=len(config_lines),
+                    failed_count=len(failed_lines),
+                    elapsed_ms=int((time.monotonic() - start) * 1000),
+                )
+
+                return {
+                    "success": len(failed_lines) == 0,
+                    "result": "\n".join(r.result for r in response),
+                    "failed_count": len(failed_lines),
+                }
+        else:
+            # 不使用连接池
+            conn = AsyncScrapli(**connection_kwargs)
             try:
-                await conn.close()
-            except Exception:
-                pass
+                logger.info("AsyncScrapli 打开连接（配置下发）", host=device_name, device=host.hostname, platform=platform)
+                await conn.open()
+
+                response = await conn.send_configs(config_lines)
+                failed_lines = [r for r in response if r.failed]
+
+                logger.info(
+                    "AsyncScrapli 配置下发完成",
+                    host=device_name,
+                    device=host.hostname,
+                    platform=platform,
+                    config_lines=len(config_lines),
+                    failed_count=len(failed_lines),
+                    elapsed_ms=int((time.monotonic() - start) * 1000),
+                )
+
+                return {
+                    "success": len(failed_lines) == 0,
+                    "result": "\n".join(r.result for r in response),
+                    "failed_count": len(failed_lines),
+                }
+            finally:
+                try:
+                    await conn.close()
+                except Exception:
+                    pass
 
     try:
-        return await _send_config(kwargs)
+        return await _send_config(kwargs, use_pool=True)
     except ScrapliAuthenticationFailed as e:
         # 尝试等待新 OTP 并重试
         auth_type = host.data.get("auth_type")
@@ -432,9 +567,9 @@ async def async_send_config(host: "Host", config: str | list[str]) -> dict[str, 
                     timeout=settings.OTP_WAIT_TIMEOUT_SECONDS,
                 )
                 if new_otp:
-                    # 使用新 OTP 重试
+                    # 使用新 OTP 重试（不使用连接池）
                     kwargs["auth_password"] = new_otp
-                    return await _send_config(kwargs)
+                    return await _send_config(kwargs, use_pool=False)
 
         # 无法恢复，抛出 OTPRequiredException
         await handle_otp_auth_failure(dict(host.data), e)
@@ -446,7 +581,7 @@ async def async_send_config(host: "Host", config: str | list[str]) -> dict[str, 
 
 async def async_get_prompt(host: "Host") -> dict[str, Any]:
     """
-    异步获取设备提示符（用于连通性测试，使用原生 AsyncScrapli）。
+    异步获取设备提示符（用于连通性测试，使用连接池复用连接）。
 
     Args:
         host: Nornir Host 对象
@@ -460,25 +595,39 @@ async def async_get_prompt(host: "Host") -> dict[str, Any]:
     kwargs = await _apply_otp_manual_password(host, kwargs)
     platform = kwargs.get("platform")
 
-    conn = AsyncScrapli(**kwargs)
     try:
-        logger.info("AsyncScrapli 打开连接（获取提示符）", host=host.name, device=host.hostname, platform=platform)
-        await conn.open()
-        prompt = await conn.get_prompt()
-        return {"success": True, "prompt": prompt}
+        # 使用连接池
+        pool = await get_connection_pool()
+        pool_ctx = await pool.acquire(
+            host=kwargs["host"],
+            username=kwargs["auth_username"],
+            password=kwargs["auth_password"],
+            platform=platform or "hp_comware",
+            port=kwargs.get("port", 22),
+            timeout_socket=kwargs.get("timeout_socket"),
+            timeout_transport=kwargs.get("timeout_transport"),
+            timeout_ops=kwargs.get("timeout_ops"),
+            auth_strict_key=kwargs.get("auth_strict_key", False),
+            ssh_config_file=kwargs.get("ssh_config_file", ""),
+        )
+        async with pool_ctx as conn:
+            logger.info(
+                "连接池获取连接（获取提示符）",
+                host=host.name,
+                device=host.hostname,
+                platform=platform,
+                reused=pool_ctx.reused,
+            )
+            prompt = await conn.get_prompt()
+            return {"success": True, "prompt": prompt}
     except Exception as e:
         logger.error("获取提示符失败", host=host.name, error=str(e), exc_info=True)
         raise
-    finally:
-        try:
-            await conn.close()
-        except Exception:
-            pass
 
 
 async def async_collect_config(host: "Host") -> dict[str, Any]:
     """
-    异步采集设备运行配置（使用原生 AsyncScrapli）。
+    异步采集设备运行配置（使用连接池复用连接）。
 
     根据设备平台自动选择正确的命令。
     支持 OTP 断点续传：认证失败时等待新 OTP 并重试。
@@ -508,45 +657,96 @@ async def async_collect_config(host: "Host") -> dict[str, Any]:
     kwargs = _get_scrapli_kwargs(host)
     kwargs = await _apply_otp_manual_password(host, kwargs)
 
-    async def _collect_config(connection_kwargs: dict[str, Any]) -> dict[str, Any]:
-        """执行配置采集的内部函数，支持重试。"""
+    async def _collect_config(connection_kwargs: dict[str, Any], use_pool: bool = True) -> dict[str, Any]:
+        """执行配置采集的内部函数，支持连接池。"""
         start = time.monotonic()
-        conn = AsyncScrapli(**connection_kwargs)
-        try:
-            logger.info("AsyncScrapli 打开连接（配置采集）", host=host.name, device=host.hostname, platform=platform)
-            await conn.open()
 
-            # 获取提示符
-            prompt = None
-            try:
-                prompt = await conn.get_prompt()
-            except Exception:
-                pass
-
-            # 关闭分页
-            await disable_paging_async(conn, platform)
-
-            # 采集配置（处理分页）
-            output = await send_command_with_paging_async(conn, command, timeout_ops=timeout_ops, prompt=prompt)
-
-            logger.info(
-                "AsyncScrapli 配置采集完成",
-                host=host.name,
-                device=host.hostname,
+        if use_pool:
+            # 使用连接池
+            pool = await get_connection_pool()
+            pool_ctx = await pool.acquire(
+                host=connection_kwargs["host"],
+                username=connection_kwargs["auth_username"],
+                password=connection_kwargs["auth_password"],
                 platform=platform,
-                config_len=len(output or ""),
-                elapsed_ms=int((time.monotonic() - start) * 1000),
+                port=connection_kwargs.get("port", 22),
+                timeout_socket=connection_kwargs.get("timeout_socket"),
+                timeout_transport=connection_kwargs.get("timeout_transport"),
+                timeout_ops=connection_kwargs.get("timeout_ops"),
+                auth_strict_key=connection_kwargs.get("auth_strict_key", False),
+                ssh_config_file=connection_kwargs.get("ssh_config_file", ""),
             )
+            async with pool_ctx as conn:
+                logger.info(
+                    "连接池获取连接（配置采集）",
+                    host=host.name,
+                    device=host.hostname,
+                    platform=platform,
+                    reused=pool_ctx.reused,
+                    elapsed_ms=int((time.monotonic() - start) * 1000),
+                )
 
-            return {"success": True, "config": output, "platform": platform}
-        finally:
+                # 获取提示符
+                prompt = None
+                try:
+                    prompt = await conn.get_prompt()
+                except Exception:
+                    pass
+
+                # 关闭分页
+                await disable_paging_async(conn, platform)
+
+                # 采集配置（处理分页）
+                output = await send_command_with_paging_async(conn, command, timeout_ops=timeout_ops, prompt=prompt)
+
+                logger.info(
+                    "AsyncScrapli 配置采集完成",
+                    host=host.name,
+                    device=host.hostname,
+                    platform=platform,
+                    config_len=len(output or ""),
+                    elapsed_ms=int((time.monotonic() - start) * 1000),
+                )
+
+                return {"success": True, "config": output, "platform": platform}
+        else:
+            # 不使用连接池
+            conn = AsyncScrapli(**connection_kwargs)
             try:
-                await conn.close()
-            except Exception:
-                pass
+                logger.info("AsyncScrapli 打开连接（配置采集）", host=host.name, device=host.hostname, platform=platform)
+                await conn.open()
+
+                # 获取提示符
+                prompt = None
+                try:
+                    prompt = await conn.get_prompt()
+                except Exception:
+                    pass
+
+                # 关闭分页
+                await disable_paging_async(conn, platform)
+
+                # 采集配置（处理分页）
+                output = await send_command_with_paging_async(conn, command, timeout_ops=timeout_ops, prompt=prompt)
+
+                logger.info(
+                    "AsyncScrapli 配置采集完成",
+                    host=host.name,
+                    device=host.hostname,
+                    platform=platform,
+                    config_len=len(output or ""),
+                    elapsed_ms=int((time.monotonic() - start) * 1000),
+                )
+
+                return {"success": True, "config": output, "platform": platform}
+            finally:
+                try:
+                    await conn.close()
+                except Exception:
+                    pass
 
     try:
-        return await _collect_config(kwargs)
+        return await _collect_config(kwargs, use_pool=True)
     except ScrapliAuthenticationFailed as e:
         # 尝试等待新 OTP 并重试
         auth_type = host.data.get("auth_type")
@@ -567,9 +767,9 @@ async def async_collect_config(host: "Host") -> dict[str, Any]:
                     timeout=settings.OTP_WAIT_TIMEOUT_SECONDS,
                 )
                 if new_otp:
-                    # 使用新 OTP 重试
+                    # 使用新 OTP 重试（不使用连接池）
                     kwargs["auth_password"] = new_otp
-                    return await _collect_config(kwargs)
+                    return await _collect_config(kwargs, use_pool=False)
 
         # 无法恢复，抛出 OTPRequiredException
         await handle_otp_auth_failure(dict(host.data), e)
@@ -618,7 +818,7 @@ async def async_deploy_from_host_data(host: "Host") -> dict[str, Any]:
 
 async def async_get_lldp_neighbors(host: "Host") -> dict[str, Any]:
     """
-    异步获取设备 LLDP 邻居信息（使用原生 AsyncScrapli）。
+    异步获取设备 LLDP 邻居信息（使用连接池复用连接）。
 
     根据设备平台自动选择正确的命令，并使用 TextFSM 解析输出。
     支持 OTP 断点续传：认证失败时等待新 OTP 并重试。
@@ -649,53 +849,112 @@ async def async_get_lldp_neighbors(host: "Host") -> dict[str, Any]:
     kwargs = await _apply_otp_manual_password(host, kwargs)
     device_name = host.data.get("device_name", host.name)
 
-    async def _collect_lldp(connection_kwargs: dict[str, Any]) -> dict[str, Any]:
-        """执行 LLDP 采集的内部函数，支持重试。"""
+    async def _collect_lldp(connection_kwargs: dict[str, Any], use_pool: bool = True) -> dict[str, Any]:
+        """执行 LLDP 采集的内部函数，支持连接池。"""
         start = time.monotonic()
-        conn = AsyncScrapli(**connection_kwargs)
-        try:
-            logger.info("AsyncScrapli 打开连接（LLDP 采集）", host=device_name, device=host.hostname, platform=platform)
-            await conn.open()
 
-            response = await conn.send_command(command)
-
-            raw_output = response.result
-            parsed = None
-
-            # 使用 TextFSM 解析
-            if platform:
-                try:
-                    parsed = parse_command_output(
-                        platform=platform,
-                        command=command,
-                        output=raw_output,
-                    )
-                except Exception as e:
-                    logger.warning("TextFSM 解析失败", host=device_name, error=str(e))
-
-            logger.info(
-                "AsyncScrapli LLDP 采集完成",
-                host=device_name,
-                device=host.hostname,
+        if use_pool:
+            # 使用连接池
+            pool = await get_connection_pool()
+            pool_ctx = await pool.acquire(
+                host=connection_kwargs["host"],
+                username=connection_kwargs["auth_username"],
+                password=connection_kwargs["auth_password"],
                 platform=platform,
-                elapsed_ms=int((time.monotonic() - start) * 1000),
-                parsed_count=len(parsed) if parsed else 0,
+                port=connection_kwargs.get("port", 22),
+                timeout_socket=connection_kwargs.get("timeout_socket"),
+                timeout_transport=connection_kwargs.get("timeout_transport"),
+                timeout_ops=connection_kwargs.get("timeout_ops"),
+                auth_strict_key=connection_kwargs.get("auth_strict_key", False),
+                ssh_config_file=connection_kwargs.get("ssh_config_file", ""),
             )
+            async with pool_ctx as conn:
+                logger.info(
+                    "连接池获取连接（LLDP 采集）",
+                    host=device_name,
+                    device=host.hostname,
+                    platform=platform,
+                    reused=pool_ctx.reused,
+                    elapsed_ms=int((time.monotonic() - start) * 1000),
+                )
 
-            return {
-                "success": not response.failed,
-                "raw": raw_output,
-                "parsed": parsed,
-                "platform": platform,
-            }
-        finally:
+                response = await conn.send_command(command)
+
+                raw_output = response.result
+                parsed = None
+
+                # 使用 TextFSM 解析
+                if platform:
+                    try:
+                        parsed = parse_command_output(
+                            platform=platform,
+                            command=command,
+                            output=raw_output,
+                        )
+                    except Exception as e:
+                        logger.warning("TextFSM 解析失败", host=device_name, error=str(e))
+
+                logger.info(
+                    "AsyncScrapli LLDP 采集完成",
+                    host=device_name,
+                    device=host.hostname,
+                    platform=platform,
+                    elapsed_ms=int((time.monotonic() - start) * 1000),
+                    parsed_count=len(parsed) if parsed else 0,
+                )
+
+                return {
+                    "success": not response.failed,
+                    "raw": raw_output,
+                    "parsed": parsed,
+                    "platform": platform,
+                }
+        else:
+            # 不使用连接池
+            conn = AsyncScrapli(**connection_kwargs)
             try:
-                await conn.close()
-            except Exception:
-                pass
+                logger.info("AsyncScrapli 打开连接（LLDP 采集）", host=device_name, device=host.hostname, platform=platform)
+                await conn.open()
+
+                response = await conn.send_command(command)
+
+                raw_output = response.result
+                parsed = None
+
+                # 使用 TextFSM 解析
+                if platform:
+                    try:
+                        parsed = parse_command_output(
+                            platform=platform,
+                            command=command,
+                            output=raw_output,
+                        )
+                    except Exception as e:
+                        logger.warning("TextFSM 解析失败", host=device_name, error=str(e))
+
+                logger.info(
+                    "AsyncScrapli LLDP 采集完成",
+                    host=device_name,
+                    device=host.hostname,
+                    platform=platform,
+                    elapsed_ms=int((time.monotonic() - start) * 1000),
+                    parsed_count=len(parsed) if parsed else 0,
+                )
+
+                return {
+                    "success": not response.failed,
+                    "raw": raw_output,
+                    "parsed": parsed,
+                    "platform": platform,
+                }
+            finally:
+                try:
+                    await conn.close()
+                except Exception:
+                    pass
 
     try:
-        return await _collect_lldp(kwargs)
+        return await _collect_lldp(kwargs, use_pool=True)
     except ScrapliAuthenticationFailed as e:
         # 尝试等待新 OTP 并重试
         auth_type = host.data.get("auth_type")
@@ -716,9 +975,9 @@ async def async_get_lldp_neighbors(host: "Host") -> dict[str, Any]:
                     timeout=settings.OTP_WAIT_TIMEOUT_SECONDS,
                 )
                 if new_otp:
-                    # 使用新 OTP 重试
+                    # 使用新 OTP 重试（不使用连接池）
                     kwargs["auth_password"] = new_otp
-                    return await _collect_lldp(kwargs)
+                    return await _collect_lldp(kwargs, use_pool=False)
 
         # 无法恢复，抛出 OTPRequiredException
         await handle_otp_auth_failure(dict(host.data), e)

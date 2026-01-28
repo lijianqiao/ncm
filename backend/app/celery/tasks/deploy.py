@@ -32,7 +32,7 @@ from app.core.enums import (
     TemplateStatus,
 )
 from app.core.exceptions import OTPRequiredException
-from app.core.logger import logger
+from app.core.logger import celery_details_logger, celery_task_logger
 from app.core.otp_service import otp_service
 from app.crud.crud_credential import credential as credential_crud
 from app.models.backup import Backup
@@ -111,7 +111,7 @@ async def _update_task_status_with_retry(
             await db.commit()
             return
         except StaleDataError:
-            logger.warning(
+            celery_task_logger.warning(
                 "任务状态更新发生并发冲突，准备重试",
                 deploy_task_id=task_id,
                 attempt=attempt + 1,
@@ -202,12 +202,12 @@ def rollback_task(self, task_id: str) -> dict[str, Any]:
 
     若遇到 OTP 认证失败，会将任务状态置为 PAUSED 并返回 otp_required 信息。
     """
-    logger.info("开始回滚任务", task_id=self.request.id, deploy_task_id=task_id)
+    celery_task_logger.info("开始回滚任务", task_id=self.request.id, deploy_task_id=task_id)
     try:
         return run_async(_rollback_task_async(self, task_id))
     except OTPRequiredException as otp_exc:
         # OTP 认证失败：标记为 PAUSED，让用户重新输入 OTP
-        logger.info("回滚需要 OTP 输入", deploy_task_id=task_id, message=otp_exc.message)
+        celery_task_logger.info("回滚需要 OTP 输入", deploy_task_id=task_id, message=otp_exc.message)
         try:
             run_async(_mark_task_paused(task_id, otp_exc.message, otp_exc.details))
         except Exception:
@@ -215,7 +215,7 @@ def rollback_task(self, task_id: str) -> dict[str, Any]:
         return {"status": "paused", "otp_required": otp_exc.details}
     except Exception as e:
         error_text = str(e)
-        logger.error("回滚任务执行异常", deploy_task_id=task_id, error=error_text, exc_info=True)
+        celery_details_logger.error("回滚任务执行异常", deploy_task_id=task_id, error=error_text, exc_info=True)
         try:
             run_async(_mark_task_failed(task_id, error_text))
         except Exception:
@@ -377,7 +377,7 @@ async def _rollback_task_async(self, task_id: str) -> dict[str, Any]:
 
             if not result_data or not result_data.get("success"):
                 # 无法获取当前配置，尝试回滚
-                logger.warning("无法获取当前配置，仍尝试回滚", device_id=device_id_str)
+                celery_task_logger.warning("无法获取当前配置，仍尝试回滚", device_id=device_id_str)
             else:
                 current_config = result_data.get("config", "")
                 current_md5 = hashlib.md5(current_config.encode("utf-8")).hexdigest() if current_config else ""
@@ -391,7 +391,7 @@ async def _rollback_task_async(self, task_id: str) -> dict[str, Any]:
                         "current_md5": current_md5,
                         "expected_md5": expected_md5,
                     })
-                    logger.info("配置未变化，跳过回滚", device_id=device_id_str)
+                    celery_task_logger.info("配置未变化，跳过回滚", device_id=device_id_str)
                     continue
 
             # 需要回滚
@@ -481,7 +481,7 @@ async def _rollback_task_async(self, task_id: str) -> dict[str, Any]:
         otp_exc = _check_otp_exception_in_results(verify_results)
         if otp_exc:
             # 验证阶段 OTP 失败不直接抛出，记录警告继续处理
-            logger.warning("回滚验证阶段 OTP 异常，跳过验证", error=otp_exc.message)
+            celery_task_logger.warning("回滚验证阶段 OTP 异常，跳过验证", error=otp_exc.message)
 
         verify: dict[str, Any] = {"matched": [], "mismatched": [], "missing": []}
         for host_id, expected_md5 in verify_expected_md5.items():
@@ -515,7 +515,7 @@ async def _rollback_task_async(self, task_id: str) -> dict[str, Any]:
         await db.flush()
         await db.commit()
 
-        logger.info(
+        celery_task_logger.info(
             "回滚任务完成",
             task_id=task_id,
             rolled_back=len(rollback_hosts_data),
@@ -559,7 +559,7 @@ def async_deploy_task(self, task_id: str) -> dict[str, Any]:
         dict: 下发结果
     """
     celery_task_id = getattr(self.request, "id", None)
-    logger.info("开始异步下发任务", task_id=celery_task_id, deploy_task_id=task_id)
+    celery_task_logger.info("开始异步下发任务", task_id=celery_task_id, deploy_task_id=task_id)
     if celery_task_id:
         self.update_state(task_id=celery_task_id, state="PROGRESS", meta={"stage": "initializing"})
 
@@ -567,7 +567,7 @@ def async_deploy_task(self, task_id: str) -> dict[str, Any]:
         return run_async(_async_deploy_task_impl(self, task_id, celery_task_id=celery_task_id))
     except OTPRequiredException as otp_exc:
         # OTP 认证失败：标记为 PAUSED，让用户重新输入 OTP
-        logger.info("异步下发需要 OTP 输入", deploy_task_id=task_id, message=otp_exc.message)
+        celery_task_logger.info("异步下发需要 OTP 输入", deploy_task_id=task_id, message=otp_exc.message)
         try:
             run_async(_mark_task_paused(task_id, otp_exc.message, otp_exc.details))
         except Exception:
@@ -576,7 +576,7 @@ def async_deploy_task(self, task_id: str) -> dict[str, Any]:
         return {"status": "paused", "otp_required": otp_exc.details}
     except Exception as e:
         error_text = str(e)
-        logger.error("异步下发任务执行异常", deploy_task_id=task_id, error=error_text, exc_info=True)
+        celery_details_logger.error("异步下发任务执行异常", deploy_task_id=task_id, error=error_text, exc_info=True)
         try:
             run_async(_mark_task_failed(task_id, error_text))
         except Exception:
@@ -616,7 +616,7 @@ async def _async_deploy_task_impl(self, task_id: str, *, celery_task_id: str | N
             TaskStatus.SUCCESS.value,
             TaskStatus.PARTIAL.value,
         }:
-            logger.info(
+            celery_task_logger.info(
                 "任务状态不允许执行，跳过",
                 deploy_task_id=task_id,
                 current_status=task.status,
@@ -667,7 +667,7 @@ async def _async_deploy_task_impl(self, task_id: str, *, celery_task_id: str | N
                 rendered_hash[str(device.id)] = hashlib.md5(rendered.encode("utf-8")).hexdigest()
             except Exception as e:
                 failed_devices.append(str(device.id))
-                logger.warning("渲染/校验失败", device_id=str(device.id), error=str(e))
+                celery_task_logger.warning("渲染/校验失败", device_id=str(device.id), error=str(e))
 
         if failed_devices:
             task.failed_count = len(failed_devices)
@@ -725,7 +725,7 @@ async def _async_deploy_task_impl(self, task_id: str, *, celery_task_id: str | N
                 await db.commit()
                 return {"status": "paused", "otp_required": e.details}
             except Exception as e:
-                logger.warning("获取凭据失败", device_id=str(d.id), error=str(e))
+                celery_task_logger.warning("获取凭据失败", device_id=str(d.id), error=str(e))
                 failed_devices.append(str(d.id))
 
         if not hosts_data:
@@ -797,7 +797,7 @@ async def _async_deploy_task_impl(self, task_id: str, *, celery_task_id: str | N
             task.finished_at = datetime.now(UTC)
             await db.flush()
             await db.commit()
-            logger.warning(
+            celery_task_logger.warning(
                 "变更前备份阶段 OTP 超时，返回部分结果",
                 task_id=task_id,
                 timeout_count=len(backup_otp_timeout),
@@ -898,7 +898,7 @@ async def _async_deploy_task_impl(self, task_id: str, *, celery_task_id: str | N
             task.finished_at = datetime.now(UTC)
             await db.flush()
             await db.commit()
-            logger.warning(
+            celery_task_logger.warning(
                 "下发阶段 OTP 超时，返回部分结果",
                 task_id=task_id,
                 timeout_count=len(deploy_otp_timeout),
@@ -933,7 +933,7 @@ async def _async_deploy_task_impl(self, task_id: str, *, celery_task_id: str | N
         await db.flush()
         await db.commit()
 
-        logger.info(
+        celery_task_logger.info(
             "异步下发任务完成",
             task_id=task_id,
             success=success_count,

@@ -20,7 +20,7 @@ from app.celery.base import BaseTask, run_async
 from app.core.config import settings
 from app.core.db import AsyncSessionLocal
 from app.core.enums import AlertSeverity, AlertType, DiscoveryStatus
-from app.core.logger import celery_task_logger
+from app.core.logger import celery_details_logger, celery_task_logger
 from app.crud.crud_alert import alert_crud
 from app.models.discovery import Discovery
 from app.schemas.alert import AlertCreate
@@ -91,7 +91,7 @@ async def _process_offline_devices(
                 await notifier.send_webhook(alert)
                 created += 1
             except Exception as e:
-                celery_task_logger.warning(
+                celery_details_logger.warning(
                     "创建离线告警失败",
                     discovery_id=str(d.id),
                     ip_address=d.ip_address,
@@ -165,7 +165,7 @@ async def _process_shadow_assets(
                 await notifier.send_webhook(alert)
                 created += 1
             except Exception as e:
-                celery_task_logger.warning(
+                celery_details_logger.warning(
                     "创建影子资产告警失败",
                     discovery_id=str(d.id),
                     ip_address=d.ip_address,
@@ -310,5 +310,5 @@ def scheduled_offline_alerts(self) -> dict[str, Any]:
         )
         return result
     except Exception as e:
-        celery_task_logger.error("告警扫描失败", task_id=task_id, error=str(e), exc_info=True)
+        celery_details_logger.error("告警扫描失败", task_id=task_id, error=str(e), exc_info=True)
         raise
