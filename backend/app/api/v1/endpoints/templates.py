@@ -18,7 +18,7 @@ from app.core.enums import DeviceVendor, ParamType, TemplateStatus, TemplateType
 from app.core.permissions import PermissionCode
 from app.features.import_export.templates import export_templates_df
 from app.import_export import ImportExportService, delete_export_file
-from app.schemas.common import PaginatedResponse, ResponseBase
+from app.schemas.common import BatchOperationResult, PaginatedResponse, ResponseBase
 from app.schemas.template import (
     ExtractVariablesRequest,
     ExtractVariablesResponse,
@@ -26,7 +26,6 @@ from app.schemas.template import (
     ParamTypeListResponse,
     TemplateApproveRequest,
     TemplateBatchRequest,
-    TemplateBatchResult,
     TemplateCreate,
     TemplateCreateV2,
     TemplateExample,
@@ -276,14 +275,14 @@ async def delete_template(template_id: UUID, service: TemplateServiceDep) -> Res
 
 @router.delete(
     "/batch",
-    response_model=ResponseBase[TemplateBatchResult],
+    response_model=ResponseBase[BatchOperationResult],
     dependencies=[Depends(require_permissions([PermissionCode.TEMPLATE_DELETE.value]))],
     summary="批量删除模板",
 )
 async def batch_delete_templates(
     request: TemplateBatchRequest,
     service: TemplateServiceDep,
-) -> ResponseBase[TemplateBatchResult]:
+) -> ResponseBase[BatchOperationResult]:
     """批量软删除模板（可从回收站恢复）。
 
     Args:
@@ -291,20 +290,13 @@ async def batch_delete_templates(
         service (TemplateService): 模板服务依赖。
 
     Returns:
-        ResponseBase[TemplateBatchResult]: 返回批量操作结果（成功数、失败数、失败ID）。
+        ResponseBase[BatchOperationResult]: 返回批量操作结果（成功数、失败数、失败ID）。
 
     Raises:
         ForbiddenException: 当无删除权限或部分模板不允许删除时。
     """
-    success_count, failed_ids = await service.batch_delete_templates(request.ids)
-    return ResponseBase(
-        data=TemplateBatchResult(
-            success_count=success_count,
-            failed_count=len(failed_ids),
-            failed_ids=failed_ids,
-        ),
-        message=f"批量删除完成，成功 {success_count} 条",
-    )
+    result = await service.batch_delete_templates(request.ids)
+    return ResponseBase(data=result)
 
 
 @router.get(
@@ -376,14 +368,14 @@ async def restore_template(
 
 @router.post(
     "/batch/restore",
-    response_model=ResponseBase[TemplateBatchResult],
+    response_model=ResponseBase[BatchOperationResult],
     dependencies=[Depends(require_permissions([PermissionCode.TEMPLATE_DELETE.value]))],
     summary="批量恢复模板",
 )
 async def batch_restore_templates(
     request: TemplateBatchRequest,
     service: TemplateServiceDep,
-) -> ResponseBase[TemplateBatchResult]:
+) -> ResponseBase[BatchOperationResult]:
     """批量恢复模板（从回收站恢复至正常状态）。
 
     Args:
@@ -391,17 +383,10 @@ async def batch_restore_templates(
         service (TemplateService): 模板服务依赖。
 
     Returns:
-        ResponseBase[TemplateBatchResult]: 批量恢复的结果统计。
+        ResponseBase[BatchOperationResult]: 批量恢复的结果统计。
     """
-    success_count, failed_ids = await service.batch_restore_templates(request.ids)
-    return ResponseBase(
-        data=TemplateBatchResult(
-            success_count=success_count,
-            failed_count=len(failed_ids),
-            failed_ids=failed_ids,
-        ),
-        message=f"批量恢复完成，成功 {success_count} 条",
-    )
+    result = await service.batch_restore_templates(request.ids)
+    return ResponseBase(data=result)
 
 
 @router.delete(
@@ -436,14 +421,14 @@ async def hard_delete_template(
 
 @router.delete(
     "/batch/hard",
-    response_model=ResponseBase[TemplateBatchResult],
+    response_model=ResponseBase[BatchOperationResult],
     dependencies=[Depends(require_permissions([PermissionCode.TEMPLATE_DELETE.value]))],
     summary="批量彻底删除模板",
 )
 async def batch_hard_delete_templates(
     request: TemplateBatchRequest,
     service: TemplateServiceDep,
-) -> ResponseBase[TemplateBatchResult]:
+) -> ResponseBase[BatchOperationResult]:
     """批量彻底删除模板（物理删除，不可恢复）。
 
     Args:
@@ -451,17 +436,10 @@ async def batch_hard_delete_templates(
         service (TemplateService): 模板服务依赖。
 
     Returns:
-        ResponseBase[TemplateBatchResult]: 批量硬删除的结果统计。
+        ResponseBase[BatchOperationResult]: 批量硬删除的结果统计。
     """
-    success_count, failed_ids = await service.batch_hard_delete_templates(request.ids)
-    return ResponseBase(
-        data=TemplateBatchResult(
-            success_count=success_count,
-            failed_count=len(failed_ids),
-            failed_ids=failed_ids,
-        ),
-        message=f"批量彻底删除完成，成功 {success_count} 条",
-    )
+    result = await service.batch_hard_delete_templates(request.ids)
+    return ResponseBase(data=result)
 
 
 @router.get(

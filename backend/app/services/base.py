@@ -6,17 +6,200 @@
 @Docs: 服务层基类和 Mixin (Service Base Classes and Mixins).
 """
 
+from collections.abc import Sequence
+from typing import Any
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.cache import invalidate_user_permissions_cache
+from app.core import cache as cache_module
+from app.core.cache import invalidate_cache, invalidate_user_permissions_cache
 from app.core.enums import AuthType
-from app.core.exceptions import BadRequestException
+from app.core.exceptions import BadRequestException, NotFoundException
+from app.core.logger import logger
 from app.core.otp_service import otp_service
+from app.crud.base import CRUDBase
 from app.crud.crud_credential import CRUDCredential
 from app.models.device import Device
+from app.schemas.common import BatchOperationResult
 from app.schemas.credential import DeviceCredential
+
+
+class BaseService:
+    """
+    服务基类，提供通用能力。
+
+    提供以下功能：
+    - 统一"获取并验证存在"模式
+    - 统一批量操作结果构建
+    - 事务后任务队列管理
+
+    Usage:
+        class MyService(BaseService):
+            def __init__(self, db: AsyncSession, my_crud: CRUDMy):
+                super().__init__(db)
+                self.my_crud = my_crud
+
+            async def get_item(self, item_id: UUID):
+                return await self._get_or_raise(self.my_crud, item_id, entity_name="项目")
+    """
+
+    def __init__(self, db: AsyncSession):
+        """
+        初始化服务基类。
+
+        Args:
+            db: 异步数据库会话
+        """
+        self.db = db
+        self._post_commit_tasks: list = []
+
+    async def _get_or_raise(
+        self,
+        crud: CRUDBase,
+        id: UUID,
+        *,
+        entity_name: str = "记录",
+        is_deleted: bool | None = False,
+        options: Sequence[Any] | None = None,
+    ) -> Any:
+        """
+        获取记录，不存在则抛出 NotFoundException。
+
+        Args:
+            crud: CRUD 实例
+            id: 记录 ID
+            entity_name: 实体名称，用于错误消息
+            is_deleted: 软删除过滤（False=未删除，True=已删除，None=全部）
+            options: SQLAlchemy 加载选项
+
+        Returns:
+            查询到的记录
+
+        Raises:
+            NotFoundException: 记录不存在
+        """
+        obj = await crud.get(self.db, id=id, is_deleted=is_deleted, options=options)
+        if not obj:
+            raise NotFoundException(message=f"{entity_name}不存在")
+        return obj
+
+    @staticmethod
+    def _build_batch_result(
+        success_count: int,
+        failed_ids: list[UUID],
+        *,
+        message: str = "操作完成",
+    ) -> BatchOperationResult:
+        """
+        构建统一的批量操作结果。
+
+        Args:
+            success_count: 成功数量
+            failed_ids: 失败的 ID 列表
+            message: 操作结果消息
+
+        Returns:
+            BatchOperationResult: 批量操作结果
+        """
+        return BatchOperationResult(
+            success_count=success_count,
+            failed_ids=failed_ids,
+            message=message,
+        )
+
+
+class CacheMixin:
+    """
+    缓存操作 Mixin。
+
+    提供统一的 Redis 缓存操作，包括：
+    - 获取缓存
+    - 设置缓存（支持 TTL）
+    - 删除缓存
+    - 按模式删除缓存（使用 scan_iter，避免阻塞）
+
+    Usage:
+        class MyService(CacheMixin):
+            async def get_data(self, key: str):
+                cached = await self._cache_get(f"my:prefix:{key}")
+                if cached:
+                    return json.loads(cached)
+                # ... 查询数据库 ...
+                await self._cache_set(f"my:prefix:{key}", json.dumps(data), ttl=3600)
+                return data
+    """
+
+    async def _cache_get(self, key: str) -> str | None:
+        """
+        获取缓存。
+
+        Args:
+            key: 缓存键
+
+        Returns:
+            缓存值，不存在返回 None
+        """
+        if cache_module.redis_client is None:
+            return None
+        try:
+            return await cache_module.redis_client.get(key)
+        except Exception as e:
+            logger.warning(f"获取缓存失败 [{key}]: {e}")
+            return None
+
+    async def _cache_set(self, key: str, value: str, ttl: int) -> bool:
+        """
+        设置缓存。
+
+        Args:
+            key: 缓存键
+            value: 缓存值
+            ttl: 过期时间（秒）
+
+        Returns:
+            是否设置成功
+        """
+        if cache_module.redis_client is None:
+            return False
+        try:
+            await cache_module.redis_client.setex(key, ttl, value)
+            return True
+        except Exception as e:
+            logger.warning(f"设置缓存失败 [{key}]: {e}")
+            return False
+
+    async def _cache_delete(self, *keys: str) -> int:
+        """
+        删除指定缓存。
+
+        Args:
+            keys: 要删除的缓存键
+
+        Returns:
+            删除的键数量
+        """
+        if cache_module.redis_client is None or not keys:
+            return 0
+        try:
+            return await cache_module.redis_client.delete(*keys)
+        except Exception as e:
+            logger.warning(f"删除缓存失败 {keys}: {e}")
+            return 0
+
+    async def _cache_delete_pattern(self, pattern: str) -> int:
+        """
+        删除匹配模式的缓存（复用 cache.py 的 invalidate_cache）。
+
+        使用 scan_iter 遍历，避免 keys() 命令阻塞 Redis。
+
+        Args:
+            pattern: 匹配模式，如 "my:prefix:*"
+
+        Returns:
+            删除的键数量
+        """
+        return await invalidate_cache(pattern)
 
 
 class PermissionCacheMixin:

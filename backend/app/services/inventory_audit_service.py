@@ -17,12 +17,14 @@ from app.core.enums import InventoryAuditStatus
 from app.core.exceptions import NotFoundException
 from app.crud.crud_inventory_audit import CRUDInventoryAudit
 from app.models.inventory_audit import InventoryAudit
+from app.schemas.common import BatchOperationResult
 from app.schemas.inventory_audit import InventoryAuditCreate
+from app.services.base import BaseService
 
 
-class InventoryAuditService:
+class InventoryAuditService(BaseService):
     def __init__(self, db: AsyncSession, inventory_audit_crud: CRUDInventoryAudit):
-        self.db = db
+        super().__init__(db)
         self.inventory_audit_crud = inventory_audit_crud
 
     async def get(self, audit_id: UUID) -> InventoryAudit:
@@ -63,8 +65,10 @@ class InventoryAuditService:
         return audit
 
     @transactional()
-    async def batch_delete(self, *, ids: list[UUID], hard_delete: bool = False) -> tuple[int, list[UUID]]:
-        return await self.inventory_audit_crud.batch_remove(self.db, ids=ids, hard_delete=hard_delete)
+    async def batch_delete(self, *, ids: list[UUID], hard_delete: bool = False) -> BatchOperationResult:
+        """批量删除盘点任务。"""
+        success_count, failed_ids = await self.inventory_audit_crud.batch_remove(self.db, ids=ids, hard_delete=hard_delete)
+        return self._build_batch_result(success_count, failed_ids, message="删除完成")
 
     @transactional()
     async def restore(self, audit_id: UUID) -> InventoryAudit:
@@ -77,8 +81,10 @@ class InventoryAuditService:
         return audit
 
     @transactional()
-    async def batch_restore(self, *, ids: list[UUID]) -> tuple[int, list[UUID]]:
-        return await self.inventory_audit_crud.batch_restore(self.db, ids=ids)
+    async def batch_restore(self, *, ids: list[UUID]) -> BatchOperationResult:
+        """批量恢复盘点任务。"""
+        success_count, failed_ids = await self.inventory_audit_crud.batch_restore(self.db, ids=ids)
+        return self._build_batch_result(success_count, failed_ids, message="恢复完成")
 
     @transactional()
     async def hard_delete(self, audit_id: UUID) -> None:
@@ -86,8 +92,8 @@ class InventoryAuditService:
         exists = (await self.db.execute(stmt)).scalars().first()
         if exists is None:
             raise NotFoundException(message="盘点任务不存在或未被软删除")
-        success_count, failed_ids = await self.batch_delete(ids=[audit_id], hard_delete=True)
-        if success_count == 0 or failed_ids:
+        result = await self.batch_delete(ids=[audit_id], hard_delete=True)
+        if result.success_count == 0 or result.failed_ids:
             raise NotFoundException(message="彻底删除失败")
 
     @transactional()

@@ -80,14 +80,8 @@ async def kick_users(
         CustomException: 当用户没有权限时抛出 403 错误。
 
     """
-    success_count, failed_ids = await session_service.kick_users(user_ids=request.user_ids)
-    return ResponseBase(
-        data=BatchOperationResult(
-            success_count=success_count,
-            failed_ids=failed_ids,
-            message=f"成功下线 {success_count} 个用户" if not failed_ids else "部分下线成功",
-        )
-    )
+    result = await session_service.kick_users(user_ids=request.user_ids)
+    return ResponseBase(data=result)
 
 
 @router.post("/kick/{user_id}", response_model=ResponseBase[None], summary="强制下线(踢人)")

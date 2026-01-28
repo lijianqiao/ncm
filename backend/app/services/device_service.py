@@ -29,9 +29,10 @@ from app.schemas.device import (
     DeviceListQuery,
     DeviceUpdate,
 )
+from app.services.base import CacheMixin
 
 
-class DeviceService:
+class DeviceService(CacheMixin):
     """
     设备服务类。
     通过构造函数注入 CRUD 实例，实现解耦。
@@ -343,16 +344,9 @@ class DeviceService:
         return success, failed
 
     async def _invalidate_lifecycle_cache(self) -> None:
-        if cache_module.redis_client is None:
-            return
-        try:
-            # 简化：删除所有 stats key（规模小可接受）
-            # key 规范：v1:ncm:device:lifecycle:stats:{hash}
-            keys = await cache_module.redis_client.keys("v1:ncm:device:lifecycle:stats:*")
-            if keys:
-                await cache_module.redis_client.delete(*keys)
-        except Exception:
-            return
+        """失效设备生命周期统计缓存（使用 CacheMixin 的 scan_iter 方式）。"""
+        # key 规范：v1:ncm:device:lifecycle:stats:{hash}
+        await self._cache_delete_pattern("v1:ncm:device:lifecycle:stats:*")
 
     async def get_lifecycle_stats(
         self,

@@ -22,12 +22,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core import cache as cache_module
 from app.core.config import settings
 from app.core.enums import AuthType, DeviceStatus
-from app.core.exceptions import BadRequestException, NotFoundException, OTPRequiredException
+from app.core.exceptions import NotFoundException, OTPRequiredException
 from app.core.logger import logger
 from app.core.otp_service import otp_service
 from app.crud.crud_credential import CRUDCredential
 from app.crud.crud_device import CRUDDevice
-from app.models.device import Device
 from app.network.platform_config import get_command, get_platform_for_vendor, get_scrapli_options
 from app.network.textfsm_parser import parse_arp_table, parse_mac_table
 from app.schemas.collect import (
@@ -41,6 +40,7 @@ from app.schemas.collect import (
     MACEntry,
     MACTableResponse,
 )
+from app.services.base import CacheMixin, DeviceCredentialMixin
 
 # Redis 键前缀
 ARP_CACHE_PREFIX = "ncm:arp"
@@ -48,9 +48,12 @@ MAC_CACHE_PREFIX = "ncm:mac"
 COLLECT_LAST_PREFIX = "ncm:collect:last"
 
 
-class CollectService:
+class CollectService(DeviceCredentialMixin, CacheMixin):
     """
     ARP/MAC 采集服务类。
+
+    继承 DeviceCredentialMixin 提供统一的凭据获取能力。
+    继承 CacheMixin 提供统一的缓存操作能力。
     """
 
     def __init__(self, db: AsyncSession, device_crud: CRUDDevice, credential_crud: CRUDCredential):
@@ -81,16 +84,15 @@ class CollectService:
         entries: list[ARPEntry] = []
         cached_at: datetime | None = None
 
-        if cache_module.redis_client:
-            cache_key = f"{ARP_CACHE_PREFIX}:{device_id}"
+        cache_key = f"{ARP_CACHE_PREFIX}:{device_id}"
+        cached_data = await self._cache_get(cache_key)
+        if cached_data:
             try:
-                cached_data = await cache_module.redis_client.get(cache_key)
-                if cached_data:
-                    data = json.loads(cached_data)
-                    entries = [ARPEntry(**entry) for entry in data.get("entries", [])]
-                    cached_at = datetime.fromisoformat(data["cached_at"]) if data.get("cached_at") else None
+                data = json.loads(cached_data)
+                entries = [ARPEntry(**entry) for entry in data.get("entries", [])]
+                cached_at = datetime.fromisoformat(data["cached_at"]) if data.get("cached_at") else None
             except Exception as e:
-                logger.warning(f"读取 ARP 缓存失败: {e}")
+                logger.warning(f"解析 ARP 缓存失败: {e}")
 
         return ARPTableResponse(
             device_id=device_id,
@@ -121,16 +123,15 @@ class CollectService:
         entries: list[MACEntry] = []
         cached_at: datetime | None = None
 
-        if cache_module.redis_client:
-            cache_key = f"{MAC_CACHE_PREFIX}:{device_id}"
+        cache_key = f"{MAC_CACHE_PREFIX}:{device_id}"
+        cached_data = await self._cache_get(cache_key)
+        if cached_data:
             try:
-                cached_data = await cache_module.redis_client.get(cache_key)
-                if cached_data:
-                    data = json.loads(cached_data)
-                    entries = [MACEntry(**entry) for entry in data.get("entries", [])]
-                    cached_at = datetime.fromisoformat(data["cached_at"]) if data.get("cached_at") else None
+                data = json.loads(cached_data)
+                entries = [MACEntry(**entry) for entry in data.get("entries", [])]
+                cached_at = datetime.fromisoformat(data["cached_at"]) if data.get("cached_at") else None
             except Exception as e:
-                logger.warning(f"读取 MAC 缓存失败: {e}")
+                logger.warning(f"解析 MAC 缓存失败: {e}")
 
         return MACTableResponse(
             device_id=device_id,
@@ -180,9 +181,15 @@ class CollectService:
                 error_message=f"设备状态异常 {device.status}",
             )
 
-        # 获取凭据
+        # 如果提供了 OTP，先缓存（用于 OTP_MANUAL 模式）
+        if otp_code and device.dept_id and device.device_group:
+            auth_type = AuthType(device.auth_type) if device.auth_type else AuthType.STATIC
+            if auth_type == AuthType.OTP_MANUAL:
+                await otp_service.cache_otp(device.dept_id, device.device_group, otp_code)
+
+        # 获取凭据（使用 DeviceCredentialMixin 统一方法）
         try:
-            credential = await self._get_device_credential(device, otp_code)
+            credential = await self._get_device_credential(device)
         except OTPRequiredException:
             raise
         except Exception as e:
@@ -203,8 +210,8 @@ class CollectService:
 
         device_config = {
             "host": device.ip_address,
-            "auth_username": credential["username"],
-            "auth_password": credential["password"],
+            "auth_username": credential.username,
+            "auth_password": credential.password,
             "port": device.ssh_port or 22,
             "platform": platform,
             **scrapli_options,
@@ -437,87 +444,8 @@ class CollectService:
 
     # ===== 内部方法 =====
 
-    async def _get_device_credential(self, device: Device, otp_code: str | None = None) -> dict[str, str]:
-        """
-        获取设备连接凭据。
-
-        Returns:
-            dict: {"username": str, "password": str}
-        """
-        auth_type_str = device.auth_type or AuthType.STATIC.value
-        # 将字符串转换为枚 AuthType 枚举
-        try:
-            auth_type = AuthType(auth_type_str)
-        except ValueError:
-            auth_type = AuthType.STATIC
-
-        if auth_type == AuthType.STATIC:
-            # 静态密码
-            if not device.username:
-                raise BadRequestException(message="设备未配置用户名")
-            if not device.password_encrypted:
-                raise BadRequestException(message="设备未配置密码")
-            from app.core.encryption import decrypt_password
-
-            password = decrypt_password(device.password_encrypted)
-            return {"username": device.username, "password": password}
-
-        elif auth_type == AuthType.OTP_SEED:
-            # 自动生成 OTP - 从 DeviceGroupCredential 获取种子
-            if not device.dept_id or not device.device_group:
-                raise BadRequestException(message="OTP_SEED 认证需要配置部门和设备组")
-
-            group_credential = await self.credential_crud.get_by_dept_and_group(
-                self.db, device.dept_id, device.device_group
-            )
-            if not group_credential:
-                raise BadRequestException(message="未找到凭据配置")
-            if not group_credential.username:
-                raise BadRequestException(message="凭据未配置用户名")
-            if not group_credential.otp_seed_encrypted:
-                raise BadRequestException(message="凭据未配置 OTP 种子")
-
-            device_credential = await otp_service.get_credential_for_otp_seed_device(
-                username=group_credential.username,
-                encrypted_seed=group_credential.otp_seed_encrypted,
-            )
-            return {"username": device_credential.username, "password": device_credential.password}
-
-        elif auth_type == AuthType.OTP_MANUAL:
-            # 手动输入 OTP
-            if otp_code and device.dept_id and device.device_group:
-                # 缓存提供的 OTP
-                ttl = await otp_service.cache_otp(device.dept_id, device.device_group, otp_code)
-                if ttl == 0:
-                    raise BadRequestException(message="OTP 缓存失败：Redis 服务未连接，请联系管理员")
-
-            if not device.dept_id or not device.device_group:
-                raise BadRequestException(message="设备未配置部门或设备组")
-
-            group_credential = await self.credential_crud.get_by_dept_and_group(
-                self.db, device.dept_id, device.device_group
-            )
-            if not group_credential:
-                raise BadRequestException(message="未找到凭据配置")
-            if not group_credential.username:
-                raise BadRequestException(message="凭据未配置用户名")
-
-            device_credential = await otp_service.get_credential_for_otp_manual_device(
-                username=group_credential.username,
-                dept_id=device.dept_id,
-                device_group=device.device_group,
-                failed_devices=[str(device.id)],
-            )
-            return {"username": device_credential.username, "password": device_credential.password}
-
-        else:
-            raise BadRequestException(message=f"不支持的认证类型: {auth_type}")
-
     async def _save_arp_cache(self, device_id: UUID, entries: list[dict[str, Any]]) -> None:
-        """保存 ARP 表到 Redis 缓存。"""
-        if not cache_module.redis_client:
-            return
-
+        """保存 ARP 表到 Redis 缓存（使用 CacheMixin）。"""
         cache_key = f"{ARP_CACHE_PREFIX}:{device_id}"
         now = datetime.now()
 
@@ -541,20 +469,10 @@ class CollectService:
             "cached_at": now.isoformat(),
         }
 
-        try:
-            await cache_module.redis_client.setex(
-                cache_key,
-                settings.COLLECT_CACHE_TTL,
-                json.dumps(cache_data),
-            )
-        except Exception as e:
-            logger.warning(f"保存 ARP 缓存失败: {e}")
+        await self._cache_set(cache_key, json.dumps(cache_data), settings.COLLECT_CACHE_TTL)
 
     async def _save_mac_cache(self, device_id: UUID, entries: list[dict[str, Any]]) -> None:
-        """保存 MAC 表到 Redis 缓存。"""
-        if not cache_module.redis_client:
-            return
-
+        """保存 MAC 表到 Redis 缓存（使用 CacheMixin）。"""
         cache_key = f"{MAC_CACHE_PREFIX}:{device_id}"
         now = datetime.now()
 
@@ -577,29 +495,16 @@ class CollectService:
             "cached_at": now.isoformat(),
         }
 
-        try:
-            await cache_module.redis_client.setex(
-                cache_key,
-                settings.COLLECT_CACHE_TTL,
-                json.dumps(cache_data),
-            )
-        except Exception as e:
-            logger.warning(f"保存 MAC 缓存失败: {e}")
+        await self._cache_set(cache_key, json.dumps(cache_data), settings.COLLECT_CACHE_TTL)
 
     async def _update_last_collect_time(self, device_id: UUID) -> None:
-        """更新设备最后采集时间。"""
-        if not cache_module.redis_client:
-            return
-
+        """更新设备最后采集时间（使用 CacheMixin）。"""
         cache_key = f"{COLLECT_LAST_PREFIX}:{device_id}"
-        try:
-            await cache_module.redis_client.setex(
-                cache_key,
-                settings.COLLECT_CACHE_TTL * 2,  # 保留更长时间
-                datetime.now().isoformat(),
-            )
-        except Exception as e:
-            logger.warning(f"更新最后采集时间失败 {e}")
+        await self._cache_set(
+            cache_key,
+            datetime.now().isoformat(),
+            settings.COLLECT_CACHE_TTL * 2,  # 保留更长时间
+        )
 
     # ===== IP/MAC 精准定位 =====
 

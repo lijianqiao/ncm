@@ -132,14 +132,8 @@ async def batch_delete_users(
     Returns:
         ResponseBase[BatchOperationResult]: 批量操作结果（成功数量等）。
     """
-    success_count, failed_ids = await user_service.batch_delete_users(ids=request.ids, hard_delete=request.hard_delete)
-    return ResponseBase(
-        data=BatchOperationResult(
-            success_count=success_count,
-            failed_ids=failed_ids,
-            message=f"成功删除 {success_count} 个用户" if not failed_ids else "部分删除成功",
-        )
-    )
+    result = await user_service.batch_delete_users(ids=request.ids, hard_delete=request.hard_delete)
+    return ResponseBase(data=result)
 
 
 @router.get("/me", response_model=ResponseBase[UserResponse], summary="获取当前用户")
@@ -359,14 +353,8 @@ async def batch_restore_users(
         ResponseBase[BatchOperationResult]: 批量恢复结果。
     """
 
-    success_count, failed_ids = await user_service.batch_restore_users(ids=request.ids)
-    return ResponseBase(
-        data=BatchOperationResult(
-            success_count=success_count,
-            failed_ids=failed_ids,
-            message=f"成功恢复 {success_count} 个用户" if not failed_ids else "部分恢复成功",
-        )
-    )
+    result = await user_service.batch_restore_users(ids=request.ids)
+    return ResponseBase(data=result)
 
 
 @router.post("/{user_id}/restore", response_model=ResponseBase[UserResponse], summary="恢复已删除用户")

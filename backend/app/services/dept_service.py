@@ -14,14 +14,16 @@ from app.core.decorator import transactional
 from app.core.exceptions import BadRequestException, NotFoundException
 from app.crud.crud_dept import CRUDDept
 from app.models.dept import Department
+from app.schemas.common import BatchOperationResult
 from app.schemas.dept import DeptCreate, DeptResponse, DeptUpdate
+from app.services.base import BaseService
 
 
-class DeptService:
+class DeptService(BaseService):
     """部门服务类。"""
 
     def __init__(self, db: AsyncSession, dept_crud: CRUDDept):
-        self.db = db
+        super().__init__(db)
         self.dept_crud = dept_crud
 
     @staticmethod
@@ -280,7 +282,7 @@ class DeptService:
         return self._to_dept_response(dept, children=[])
 
     @transactional()
-    async def batch_delete_depts(self, *, ids: list[UUID], hard_delete: bool = False) -> tuple[int, list[UUID]]:
+    async def batch_delete_depts(self, *, ids: list[UUID], hard_delete: bool = False) -> BatchOperationResult:
         """
         批量删除部门。
 
@@ -289,9 +291,10 @@ class DeptService:
             hard_delete: 是否硬删除
 
         Returns:
-            成功数量和失败 ID 列表
+            BatchOperationResult: 批量操作结果
         """
-        return await self.dept_crud.batch_remove(self.db, ids=ids, hard_delete=hard_delete)
+        success_count, failed_ids = await self.dept_crud.batch_remove(self.db, ids=ids, hard_delete=hard_delete)
+        return self._build_batch_result(success_count, failed_ids, message="删除完成")
 
     @transactional()
     async def restore_dept(self, *, dept_id: UUID) -> DeptResponse:
@@ -307,8 +310,8 @@ class DeptService:
         Raises:
             NotFoundException: 部门不存在时
         """
-        success_count, _ = await self.dept_crud.batch_restore(self.db, ids=[dept_id])
-        if success_count == 0:
+        result = await self.batch_restore_depts(ids=[dept_id])
+        if result.success_count == 0:
             raise NotFoundException(message="部门不存在或未被删除")
         dept = await self.dept_crud.get(self.db, id=dept_id)
         if not dept:
@@ -316,7 +319,7 @@ class DeptService:
         return self._to_dept_response(dept, children=[])
 
     @transactional()
-    async def batch_restore_depts(self, *, ids: list[UUID]) -> tuple[int, list[UUID]]:
+    async def batch_restore_depts(self, *, ids: list[UUID]) -> BatchOperationResult:
         """
         批量恢复部门。
 
@@ -324,9 +327,10 @@ class DeptService:
             ids: 部门 ID 列表
 
         Returns:
-            成功数量和失败 ID 列表
+            BatchOperationResult: 批量操作结果
         """
-        return await self.dept_crud.batch_restore(self.db, ids=ids)
+        success_count, failed_ids = await self.dept_crud.batch_restore(self.db, ids=ids)
+        return self._build_batch_result(success_count, failed_ids, message="恢复完成")
 
     @transactional()
     async def hard_delete_dept(self, *, dept_id: UUID) -> None:
@@ -343,12 +347,12 @@ class DeptService:
         if not deleted_dept:
             raise NotFoundException(message="部门不存在或未被软删除")
 
-        success_count, _ = await self.dept_crud.batch_remove(self.db, ids=[dept_id], hard_delete=True)
-        if success_count == 0:
+        result = await self.batch_hard_delete_depts(ids=[dept_id])
+        if result.success_count == 0:
             raise NotFoundException(message="彻底删除失败")
 
     @transactional()
-    async def batch_hard_delete_depts(self, *, ids: list[UUID]) -> tuple[int, list[UUID]]:
+    async def batch_hard_delete_depts(self, *, ids: list[UUID]) -> BatchOperationResult:
         """
         批量彻底删除部门（硬删除）。
 
@@ -356,6 +360,7 @@ class DeptService:
             ids: 部门 ID 列表
 
         Returns:
-            成功数量和失败 ID 列表
+            BatchOperationResult: 批量操作结果
         """
-        return await self.dept_crud.batch_remove(self.db, ids=ids, hard_delete=True)
+        success_count, failed_ids = await self.dept_crud.batch_remove(self.db, ids=ids, hard_delete=True)
+        return self._build_batch_result(success_count, failed_ids, message="彻底删除完成")

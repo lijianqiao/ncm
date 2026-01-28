@@ -32,13 +32,12 @@ from app.import_export import (
     ImportValidateResponse,
     delete_export_file,
 )
-from app.schemas.common import PaginatedResponse, ResponseBase
+from app.schemas.common import BatchOperationResult, PaginatedResponse, ResponseBase
 from app.schemas.snmp_credential import (
     DeptSnmpCredentialCreate,
     DeptSnmpCredentialResponse,
     DeptSnmpCredentialUpdate,
     SnmpCredentialBatchRequest,
-    SnmpCredentialBatchResult,
 )
 from app.services.snmp_credential_service import SnmpCredentialService
 
@@ -165,7 +164,7 @@ async def delete_snmp_credential(
 
 @router.delete(
     "/batch",
-    response_model=ResponseBase[SnmpCredentialBatchResult],
+    response_model=ResponseBase[BatchOperationResult],
     summary="批量删除 SNMP 凭据",
 )
 async def batch_delete_snmp_credentials(
@@ -182,19 +181,12 @@ async def batch_delete_snmp_credentials(
         current_user (User): 当前登录用户。
 
     Returns:
-        ResponseBase[SnmpCredentialBatchResult]: 批量删除结果。
+        ResponseBase[BatchOperationResult]: 批量删除结果。
     """
     service = _get_service(db)
-    success_count, failed_ids = await service.batch_delete(request.ids)
+    result = await service.batch_delete(request.ids)
     await db.commit()
-    return ResponseBase(
-        data=SnmpCredentialBatchResult(
-            success_count=success_count,
-            failed_count=len(failed_ids),
-            failed_ids=failed_ids,
-        ),
-        message=f"批量删除完成，成功 {success_count} 条",
-    )
+    return ResponseBase(data=result)
 
 
 @router.get(
@@ -271,7 +263,7 @@ async def restore_snmp_credential(
 
 @router.post(
     "/batch/restore",
-    response_model=ResponseBase[SnmpCredentialBatchResult],
+    response_model=ResponseBase[BatchOperationResult],
     summary="批量恢复 SNMP 凭据",
 )
 async def batch_restore_snmp_credentials(
@@ -288,19 +280,12 @@ async def batch_restore_snmp_credentials(
         current_user (User): 当前登录用户。
 
     Returns:
-        ResponseBase[SnmpCredentialBatchResult]: 批量恢复结果。
+        ResponseBase[BatchOperationResult]: 批量恢复结果。
     """
     service = _get_service(db)
-    success_count, failed_ids = await service.batch_restore(request.ids)
+    result = await service.batch_restore(request.ids)
     await db.commit()
-    return ResponseBase(
-        data=SnmpCredentialBatchResult(
-            success_count=success_count,
-            failed_count=len(failed_ids),
-            failed_ids=failed_ids,
-        ),
-        message=f"批量恢复完成，成功 {success_count} 条",
-    )
+    return ResponseBase(data=result)
 
 
 @router.delete(
@@ -326,7 +311,7 @@ async def hard_delete_snmp_credential(
 
 @router.delete(
     "/batch/hard",
-    response_model=ResponseBase[SnmpCredentialBatchResult],
+    response_model=ResponseBase[BatchOperationResult],
     summary="批量彻底删除 SNMP 凭据",
 )
 async def batch_hard_delete_snmp_credentials(
@@ -343,19 +328,12 @@ async def batch_hard_delete_snmp_credentials(
         current_user (User): 当前登录用户。
 
     Returns:
-        ResponseBase[SnmpCredentialBatchResult]: 批量删除结果。
+        ResponseBase[BatchOperationResult]: 批量删除结果。
     """
     service = _get_service(db)
-    success_count, failed_ids = await service.batch_hard_delete(request.ids)
+    result = await service.batch_hard_delete(request.ids)
     await db.commit()
-    return ResponseBase(
-        data=SnmpCredentialBatchResult(
-            success_count=success_count,
-            failed_count=len(failed_ids),
-            failed_ids=failed_ids,
-        ),
-        message=f"批量彻底删除完成，成功 {success_count} 条",
-    )
+    return ResponseBase(data=result)
 
 
 @router.get(

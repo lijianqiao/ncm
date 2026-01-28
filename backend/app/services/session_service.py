@@ -20,12 +20,14 @@ from app.core.token_store import (
     revoke_users_refresh,
 )
 from app.crud.crud_user import CRUDUser
+from app.schemas.common import BatchOperationResult
 from app.schemas.session import OnlineSessionResponse
+from app.services.base import BaseService
 
 
-class SessionService:
+class SessionService(BaseService):
     def __init__(self, db: AsyncSession, user_crud: CRUDUser):
-        self.db = db
+        super().__init__(db)
         self.user_crud = user_crud
 
     async def list_online(
@@ -62,10 +64,11 @@ class SessionService:
         await revoke_user_access_now(user_id=str(user_id))
         await remove_online_session(user_id=str(user_id))
 
-    async def kick_users(self, *, user_ids: list[UUID]) -> tuple[int, list[UUID]]:
+    async def kick_users(self, *, user_ids: list[UUID]) -> BatchOperationResult:
+        """批量强制下线用户。"""
         unique_ids = list(dict.fromkeys(user_ids))
         if not unique_ids:
-            return 0, []
+            return self._build_batch_result(0, [], message="无用户需要下线")
 
         # 仅踢存在的用户（避免把错误 ID 当成功）
         success: list[UUID] = []
@@ -84,4 +87,4 @@ class SessionService:
             await revoke_users_access_now(user_ids=str_ids)
             await remove_online_sessions(user_ids=str_ids)
 
-        return len(success), failed
+        return self._build_batch_result(len(success), failed, message="强制下线完成")

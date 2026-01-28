@@ -22,6 +22,7 @@ from app.crud.crud_template_parameter import CRUDTemplateParameter
 from app.models.template import Template
 from app.models.template_approval import TemplateApprovalStep
 from app.models.template_parameter import TemplateParameter
+from app.schemas.common import BatchOperationResult
 from app.schemas.template import (
     ExtractedVariable,
     TemplateCreate,
@@ -30,9 +31,10 @@ from app.schemas.template import (
     TemplateUpdate,
     TemplateUpdateV2,
 )
+from app.services.base import BaseService
 
 
-class TemplateService:
+class TemplateService(BaseService):
     def __init__(
         self,
         db: AsyncSession,
@@ -40,7 +42,7 @@ class TemplateService:
         template_approval_crud: CRUDTemplateApprovalStep,
         template_parameter_crud: CRUDTemplateParameter | None = None,
     ):
-        self.db = db
+        super().__init__(db)
         self.template_crud = template_crud
         self.template_approval_crud = template_approval_crud
         self.template_parameter_crud = template_parameter_crud
@@ -92,9 +94,10 @@ class TemplateService:
         return template
 
     @transactional()
-    async def batch_delete_templates(self, ids: list[UUID]) -> tuple[int, list[UUID]]:
+    async def batch_delete_templates(self, ids: list[UUID]) -> BatchOperationResult:
         """批量删除模板（软删除）。"""
-        return await self.template_crud.batch_remove(self.db, ids=ids, hard_delete=False)
+        success_count, failed_ids = await self.template_crud.batch_remove(self.db, ids=ids, hard_delete=False)
+        return self._build_batch_result(success_count, failed_ids, message="批量删除完成")
 
     async def get_recycle_bin_paginated(
         self,
@@ -132,9 +135,10 @@ class TemplateService:
         return template
 
     @transactional()
-    async def batch_restore_templates(self, ids: list[UUID]) -> tuple[int, list[UUID]]:
+    async def batch_restore_templates(self, ids: list[UUID]) -> BatchOperationResult:
         """批量恢复已删除的模板。"""
-        return await self.template_crud.batch_restore(self.db, ids=ids)
+        success_count, failed_ids = await self.template_crud.batch_restore(self.db, ids=ids)
+        return self._build_batch_result(success_count, failed_ids, message="批量恢复完成")
 
     @transactional()
     async def hard_delete_template(self, template_id: UUID) -> None:
@@ -148,9 +152,10 @@ class TemplateService:
             raise NotFoundException("彻底删除失败")
 
     @transactional()
-    async def batch_hard_delete_templates(self, ids: list[UUID]) -> tuple[int, list[UUID]]:
+    async def batch_hard_delete_templates(self, ids: list[UUID]) -> BatchOperationResult:
         """批量彻底删除模板（硬删除）。"""
-        return await self.template_crud.batch_remove(self.db, ids=ids, hard_delete=True)
+        success_count, failed_ids = await self.template_crud.batch_remove(self.db, ids=ids, hard_delete=True)
+        return self._build_batch_result(success_count, failed_ids, message="彻底删除完成")
 
     @transactional()
     async def create_template(self, data: TemplateCreate, creator_id: UUID) -> Template:

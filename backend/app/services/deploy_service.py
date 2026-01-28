@@ -23,16 +23,18 @@ from app.crud.crud_task_approval import CRUDTaskApprovalStep
 from app.models.task import Task
 from app.models.task_approval import TaskApprovalStep
 from app.models.template import Template
+from app.schemas.common import BatchOperationResult
 from app.schemas.deploy import (
     DeployCreateRequest,
     DeviceDeployResult,
     RollbackDevicePreview,
     RollbackPreviewResponse,
 )
+from app.services.base import BaseService
 from app.services.render_service import RenderService
 
 
-class DeployService:
+class DeployService(BaseService):
     def __init__(
         self,
         db: AsyncSession,
@@ -41,7 +43,7 @@ class DeployService:
         device_crud: CRUDDevice,
         credential_crud: CRUDCredential,
     ):
-        self.db = db
+        super().__init__(db)
         self.task_crud = task_crud
         self.task_approval_crud = task_approval_crud
         self.device_crud = device_crud
@@ -96,37 +98,39 @@ class DeployService:
         return list(result.scalars().all())
 
     @transactional()
-    async def batch_delete_tasks(self, *, ids: list[UUID], hard_delete: bool = False) -> tuple[int, list[UUID]]:
+    async def batch_delete_tasks(self, *, ids: list[UUID], hard_delete: bool = False) -> BatchOperationResult:
+        """批量删除部署任务。"""
         allowed_ids = await self._get_deploy_task_ids(ids=ids)
         allowed_set = set(allowed_ids)
         success_count, failed_ids = await self.task_crud.batch_remove(self.db, ids=allowed_ids, hard_delete=hard_delete)
         for id_ in ids:
             if id_ not in allowed_set and id_ not in failed_ids:
                 failed_ids.append(id_)
-        return success_count, failed_ids
+        return self._build_batch_result(success_count, failed_ids, message="删除完成")
 
     @transactional()
     async def delete_task(self, *, task_id: UUID) -> Task:
         task = await self.get_task(task_id)
-        success_count, failed_ids = await self.batch_delete_tasks(ids=[task_id], hard_delete=False)
-        if success_count == 0 or failed_ids:
+        result = await self.batch_delete_tasks(ids=[task_id], hard_delete=False)
+        if result.success_count == 0 or result.failed_ids:
             raise NotFoundException("删除失败")
         return task
 
     @transactional()
-    async def batch_restore_tasks(self, *, ids: list[UUID]) -> tuple[int, list[UUID]]:
+    async def batch_restore_tasks(self, *, ids: list[UUID]) -> BatchOperationResult:
+        """批量恢复部署任务。"""
         allowed_ids = await self._get_deploy_task_ids(ids=ids)
         allowed_set = set(allowed_ids)
         success_count, failed_ids = await self.task_crud.batch_restore(self.db, ids=allowed_ids)
         for id_ in ids:
             if id_ not in allowed_set and id_ not in failed_ids:
                 failed_ids.append(id_)
-        return success_count, failed_ids
+        return self._build_batch_result(success_count, failed_ids, message="恢复完成")
 
     @transactional()
     async def restore_task(self, *, task_id: UUID) -> Task:
-        success_count, failed_ids = await self.batch_restore_tasks(ids=[task_id])
-        if success_count == 0 or failed_ids:
+        result = await self.batch_restore_tasks(ids=[task_id])
+        if result.success_count == 0 or result.failed_ids:
             raise NotFoundException("任务不存在或未被删除")
         return await self.get_task(task_id)
 

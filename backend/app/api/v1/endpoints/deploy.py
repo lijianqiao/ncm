@@ -368,14 +368,8 @@ async def batch_delete_deploy_tasks(
     Returns:
         ResponseBase[BatchOperationResult]: 批量操作结果（成功数与失败ID）。
     """
-    success_count, failed_ids = await service.batch_delete_tasks(ids=request.ids, hard_delete=request.hard_delete)
-    return ResponseBase(
-        data=BatchOperationResult(
-            success_count=success_count,
-            failed_ids=failed_ids,
-            message=f"成功删除 {success_count} 个下发任务" if not failed_ids else "部分删除成功",
-        )
-    )
+    result = await service.batch_delete_tasks(ids=request.ids, hard_delete=request.hard_delete)
+    return ResponseBase(data=result)
 
 
 @router.delete(
@@ -425,14 +419,8 @@ async def batch_restore_deploy_tasks(
     Returns:
         ResponseBase[BatchOperationResult]: 批量恢复结果。
     """
-    success_count, failed_ids = await service.batch_restore_tasks(ids=request.ids)
-    return ResponseBase(
-        data=BatchOperationResult(
-            success_count=success_count,
-            failed_ids=failed_ids,
-            message=f"成功恢复 {success_count} 个下发任务" if not failed_ids else "部分恢复成功",
-        )
-    )
+    result = await service.batch_restore_tasks(ids=request.ids)
+    return ResponseBase(data=result)
 
 
 @router.post(
@@ -483,14 +471,8 @@ async def batch_hard_delete_deploy_tasks(
     Returns:
         ResponseBase[BatchOperationResult]: 批量硬删除结果。
     """
-    success_count, failed_ids = await service.batch_delete_tasks(ids=request.ids, hard_delete=True)
-    return ResponseBase(
-        data=BatchOperationResult(
-            success_count=success_count,
-            failed_ids=failed_ids,
-            message=f"成功彻底删除 {success_count} 个下发任务" if not failed_ids else "部分彻底删除成功",
-        )
-    )
+    result = await service.batch_delete_tasks(ids=request.ids, hard_delete=True)
+    return ResponseBase(data=result)
 
 
 @router.delete(

@@ -18,23 +18,21 @@ from app.crud.crud_role import CRUDRole
 from app.crud.crud_user import CRUDUser
 from app.models.rbac import Role
 from app.models.user import User
+from app.schemas.common import BatchOperationResult
 from app.schemas.user import UserCreate, UserMeUpdate, UserUpdate
-from app.services.base import PermissionCacheMixin
+from app.services.base import BaseService, PermissionCacheMixin
 
 
-class UserService(PermissionCacheMixin):
+class UserService(BaseService, PermissionCacheMixin):
     """
     用户服务类。
     通过构造函数注入 CRUDUser 实例，实现解耦。
     """
 
     def __init__(self, db: AsyncSession, user_crud: CRUDUser, role_crud: CRUDRole):
-        self.db = db
+        super().__init__(db)
         self.user_crud = user_crud
         self.role_crud = role_crud
-
-        # transactional() 将在 commit 后执行这些任务（用于缓存失效等）
-        self._post_commit_tasks: list = []
 
     @transactional()
     async def create_user(self, obj_in: UserCreate) -> User:
@@ -249,7 +247,7 @@ class UserService(PermissionCacheMixin):
         return await self.user_crud.update(self.db, db_obj=user, obj_in={"password": new_password})
 
     @transactional()
-    async def batch_delete_users(self, ids: list[UUID], hard_delete: bool = False) -> tuple[int, list[UUID]]:
+    async def batch_delete_users(self, ids: list[UUID], hard_delete: bool = False) -> BatchOperationResult:
         """
         批量删除用户。
 
@@ -258,9 +256,10 @@ class UserService(PermissionCacheMixin):
             hard_delete: 是否硬删除
 
         Returns:
-            (success_count, failed_ids): 成功数量和失败的 ID 列表
+            BatchOperationResult: 批量操作结果
         """
-        return await self.user_crud.batch_remove(self.db, ids=ids, hard_delete=hard_delete)
+        success_count, failed_ids = await self.user_crud.batch_remove(self.db, ids=ids, hard_delete=hard_delete)
+        return self._build_batch_result(success_count, failed_ids, message="删除完成")
 
     @transactional()
     async def restore_user(self, id: UUID) -> User:
@@ -277,6 +276,7 @@ class UserService(PermissionCacheMixin):
         return user
 
     @transactional()
-    async def batch_restore_users(self, ids: list[UUID]) -> tuple[int, list[UUID]]:
+    async def batch_restore_users(self, ids: list[UUID]) -> BatchOperationResult:
         """批量恢复用户。"""
-        return await self.user_crud.batch_restore(self.db, ids=ids)
+        success_count, failed_ids = await self.user_crud.batch_restore(self.db, ids=ids)
+        return self._build_batch_result(success_count, failed_ids, message="恢复完成")

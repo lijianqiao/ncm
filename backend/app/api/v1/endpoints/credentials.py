@@ -33,10 +33,9 @@ from app.import_export import (
     ImportValidateResponse,
     delete_export_file,
 )
-from app.schemas.common import PaginatedResponse, ResponseBase
+from app.schemas.common import BatchOperationResult, PaginatedResponse, ResponseBase
 from app.schemas.credential import (
     CredentialBatchRequest,
-    CredentialBatchResult,
     DeviceGroupCredentialCreate,
     DeviceGroupCredentialResponse,
     DeviceGroupCredentialUpdate,
@@ -279,7 +278,7 @@ async def verify_otp(
 
 @router.delete(
     "/batch",
-    response_model=ResponseBase[CredentialBatchResult],
+    response_model=ResponseBase[BatchOperationResult],
     summary="批量删除凭据",
 )
 async def batch_delete_credentials(
@@ -296,17 +295,10 @@ async def batch_delete_credentials(
         current_user (User): 当前登录用户。
 
     Returns:
-        ResponseBase[CredentialBatchResult]: 批量删除结果。
+        ResponseBase[BatchOperationResult]: 批量删除结果。
     """
-    success_count, failed_ids = await credential_service.batch_delete_credentials(request.ids)
-    return ResponseBase(
-        data=CredentialBatchResult(
-            success_count=success_count,
-            failed_count=len(failed_ids),
-            failed_ids=failed_ids,
-        ),
-        message=f"批量删除完成，成功 {success_count} 条",
-    )
+    result = await credential_service.batch_delete_credentials(request.ids)
+    return ResponseBase(data=result)
 
 
 @router.get(
@@ -381,7 +373,7 @@ async def restore_credential(
 
 @router.post(
     "/batch/restore",
-    response_model=ResponseBase[CredentialBatchResult],
+    response_model=ResponseBase[BatchOperationResult],
     summary="批量恢复凭据",
 )
 async def batch_restore_credentials(
@@ -398,17 +390,10 @@ async def batch_restore_credentials(
         current_user (User): 当前登录用户。
 
     Returns:
-        ResponseBase[CredentialBatchResult]: 批量恢复结果。
+        ResponseBase[BatchOperationResult]: 批量恢复结果。
     """
-    success_count, failed_ids = await credential_service.batch_restore_credentials(request.ids)
-    return ResponseBase(
-        data=CredentialBatchResult(
-            success_count=success_count,
-            failed_count=len(failed_ids),
-            failed_ids=failed_ids,
-        ),
-        message=f"批量恢复完成，成功 {success_count} 条",
-    )
+    result = await credential_service.batch_restore_credentials(request.ids)
+    return ResponseBase(data=result)
 
 
 @router.delete(
@@ -441,7 +426,7 @@ async def hard_delete_credential(
 
 @router.delete(
     "/batch/hard",
-    response_model=ResponseBase[CredentialBatchResult],
+    response_model=ResponseBase[BatchOperationResult],
     summary="批量彻底删除凭据",
 )
 async def batch_hard_delete_credentials(
@@ -458,17 +443,10 @@ async def batch_hard_delete_credentials(
         current_user (User): 当前登录用户。
 
     Returns:
-        ResponseBase[CredentialBatchResult]: 批量彻底删除结果。
+        ResponseBase[BatchOperationResult]: 批量彻底删除结果。
     """
-    success_count, failed_ids = await credential_service.batch_hard_delete_credentials(request.ids)
-    return ResponseBase(
-        data=CredentialBatchResult(
-            success_count=success_count,
-            failed_count=len(failed_ids),
-            failed_ids=failed_ids,
-        ),
-        message=f"批量彻底删除完成，成功 {success_count} 条",
-    )
+    result = await credential_service.batch_hard_delete_credentials(request.ids)
+    return ResponseBase(data=result)
 
 
 @router.get(

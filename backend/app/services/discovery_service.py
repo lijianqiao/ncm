@@ -16,11 +16,13 @@ from app.core.enums import DiscoveryStatus
 from app.core.exceptions import NotFoundException
 from app.crud.crud_discovery import CRUDDiscovery
 from app.models.discovery import Discovery
+from app.schemas.common import BatchOperationResult
+from app.services.base import BaseService
 
 
-class DiscoveryService:
+class DiscoveryService(BaseService):
     def __init__(self, db: AsyncSession, discovery_crud: CRUDDiscovery):
-        self.db = db
+        super().__init__(db)
         self.discovery_crud = discovery_crud
 
     async def get_discoveries_paginated(
@@ -118,8 +120,10 @@ class DiscoveryService:
         return discovery
 
     @transactional()
-    async def batch_delete_discoveries(self, *, ids: list[UUID]) -> tuple[int, list[UUID]]:
-        return await self.discovery_crud.batch_remove(self.db, ids=ids, hard_delete=False)
+    async def batch_delete_discoveries(self, *, ids: list[UUID]) -> BatchOperationResult:
+        """批量删除发现记录（软删除）。"""
+        success_count, failed_ids = await self.discovery_crud.batch_remove(self.db, ids=ids, hard_delete=False)
+        return self._build_batch_result(success_count, failed_ids, message="删除完成")
 
     @transactional()
     async def restore_discovery(self, *, discovery_id: UUID) -> Discovery:
@@ -134,8 +138,10 @@ class DiscoveryService:
         return discovery
 
     @transactional()
-    async def batch_restore_discoveries(self, *, ids: list[UUID]) -> tuple[int, list[UUID]]:
-        return await self.discovery_crud.batch_restore(self.db, ids=ids)
+    async def batch_restore_discoveries(self, *, ids: list[UUID]) -> BatchOperationResult:
+        """批量恢复发现记录。"""
+        success_count, failed_ids = await self.discovery_crud.batch_restore(self.db, ids=ids)
+        return self._build_batch_result(success_count, failed_ids, message="恢复完成")
 
     @transactional()
     async def hard_delete_discovery(self, *, discovery_id: UUID) -> None:
@@ -149,5 +155,7 @@ class DiscoveryService:
             raise NotFoundException(message="彻底删除失败")
 
     @transactional()
-    async def batch_hard_delete_discoveries(self, *, ids: list[UUID]) -> tuple[int, list[UUID]]:
-        return await self.discovery_crud.batch_remove(self.db, ids=ids, hard_delete=True)
+    async def batch_hard_delete_discoveries(self, *, ids: list[UUID]) -> BatchOperationResult:
+        """批量彻底删除发现记录（硬删除）。"""
+        success_count, failed_ids = await self.discovery_crud.batch_remove(self.db, ids=ids, hard_delete=True)
+        return self._build_batch_result(success_count, failed_ids, message="彻底删除完成")

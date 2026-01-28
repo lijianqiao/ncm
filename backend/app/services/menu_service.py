@@ -18,21 +18,19 @@ from app.core.permissions import PermissionCode
 from app.crud.crud_menu import CRUDMenu
 from app.models.rbac import Menu
 from app.models.user import User
+from app.schemas.common import BatchOperationResult
 from app.schemas.menu import MenuCreate, MenuResponse, MenuUpdate
-from app.services.base import PermissionCacheMixin
+from app.services.base import BaseService, PermissionCacheMixin
 
 
-class MenuService(PermissionCacheMixin):
+class MenuService(BaseService, PermissionCacheMixin):
     """
     菜单服务类。
     """
 
     def __init__(self, db: AsyncSession, menu_crud: CRUDMenu):
-        self.db = db
+        super().__init__(db)
         self.menu_crud = menu_crud
-
-        # transactional() 将在 commit 后执行这些任务（用于缓存失效等）
-        self._post_commit_tasks: list = []
 
     @staticmethod
     def _to_menu_response(menu: Menu, *, children: list[MenuResponse] | None = None) -> MenuResponse:
@@ -42,7 +40,7 @@ class MenuService(PermissionCacheMixin):
             id=menu.id,
             title=menu.title,
             name=menu.name,
-            type=menu.type,
+            type=MenuType(menu.type),
             parent_id=menu.parent_id,
             path=menu.path,
             component=menu.component,
@@ -123,7 +121,7 @@ class MenuService(PermissionCacheMixin):
                 id=m.id,
                 title=m.title,
                 name=m.name,
-                type=m.type,
+                type=MenuType(m.type),
                 parent_id=m.parent_id,
                 path=m.path,
                 component=m.component,
@@ -215,7 +213,7 @@ class MenuService(PermissionCacheMixin):
                 id=menu.id,
                 title=menu.title,
                 name=menu.name,
-                type=menu.type,
+                type=MenuType(menu.type),
                 parent_id=menu.parent_id,
                 path=menu.path,
                 component=menu.component,
@@ -301,7 +299,7 @@ class MenuService(PermissionCacheMixin):
             raise NotFoundException(message="菜单不存在")
 
         # 用“更新后的值”做组合校验（支持部分更新）
-        final_type = obj_in.type or menu.type
+        final_type = obj_in.type if obj_in.type else MenuType(menu.type)
         final_path = obj_in.path if obj_in.path is not None else menu.path
         final_permission = obj_in.permission if obj_in.permission is not None else menu.permission
         await self._validate_menu_fields(
@@ -327,7 +325,7 @@ class MenuService(PermissionCacheMixin):
             title=menu.title,
             name=menu.name,
             sort=menu.sort,
-            type=menu.type,
+            type=MenuType(menu.type),
             parent_id=menu.parent_id,
             path=menu.path,
             component=menu.component,
@@ -354,23 +352,19 @@ class MenuService(PermissionCacheMixin):
         return resp
 
     @transactional()
-    async def batch_delete_menus(self, ids: list[UUID], hard_delete: bool = False) -> tuple[int, list[UUID]]:
-        """
-        批量删除菜单。
-        """
+    async def batch_delete_menus(self, ids: list[UUID], hard_delete: bool = False) -> BatchOperationResult:
+        """批量删除菜单。"""
         affected_user_ids = await self.menu_crud.get_affected_user_ids_by_menu_ids(self.db, menu_ids=ids)
-        result = await self.menu_crud.batch_remove(self.db, ids=ids, hard_delete=hard_delete)
+        success_count, failed_ids = await self.menu_crud.batch_remove(self.db, ids=ids, hard_delete=hard_delete)
         self._invalidate_permissions_cache_after_commit(affected_user_ids)
-        return result
+        return self._build_batch_result(success_count, failed_ids, message="删除完成")
 
     @transactional()
     async def restore_menu(self, id: UUID) -> MenuResponse:
-        """
-        恢复已删除菜单。
-        """
+        """恢复已删除菜单。"""
         affected_user_ids = await self.menu_crud.get_affected_user_ids(self.db, menu_id=id)
-        success_count, _ = await self.menu_crud.batch_restore(self.db, ids=[id])
-        if success_count == 0:
+        result = await self.batch_restore_menus(ids=[id])
+        if result.success_count == 0:
             raise NotFoundException(message="菜单不存在")
 
         menu = await self.menu_crud.get(self.db, id=id)
@@ -381,9 +375,9 @@ class MenuService(PermissionCacheMixin):
         return self._to_menu_response(menu, children=[])
 
     @transactional()
-    async def batch_restore_menus(self, ids: list[UUID]) -> tuple[int, list[UUID]]:
+    async def batch_restore_menus(self, ids: list[UUID]) -> BatchOperationResult:
         """批量恢复菜单。"""
         affected_user_ids = await self.menu_crud.get_affected_user_ids_by_menu_ids(self.db, menu_ids=ids)
-        result = await self.menu_crud.batch_restore(self.db, ids=ids)
+        success_count, failed_ids = await self.menu_crud.batch_restore(self.db, ids=ids)
         self._invalidate_permissions_cache_after_commit(affected_user_ids)
-        return result
+        return self._build_batch_result(success_count, failed_ids, message="恢复完成")

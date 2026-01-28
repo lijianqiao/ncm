@@ -106,14 +106,8 @@ async def batch_delete_roles(
     Returns:
         ResponseBase[BatchOperationResult]: 批量操作结果（成功数量等）。
     """
-    success_count, failed_ids = await role_service.batch_delete_roles(ids=request.ids, hard_delete=request.hard_delete)
-    return ResponseBase(
-        data=BatchOperationResult(
-            success_count=success_count,
-            failed_ids=failed_ids,
-            message=f"成功删除 {success_count} 个角色" if not failed_ids else "部分删除成功",
-        )
-    )
+    result = await role_service.batch_delete_roles(ids=request.ids, hard_delete=request.hard_delete)
+    return ResponseBase(data=result)
 
 
 @router.put("/{id}", response_model=ResponseBase[RoleResponse], summary="更新角色")
@@ -230,14 +224,8 @@ async def batch_restore_roles(
         ResponseBase[BatchOperationResult]: 批量恢复结果。
     """
 
-    success_count, failed_ids = await role_service.batch_restore_roles(ids=request.ids)
-    return ResponseBase(
-        data=BatchOperationResult(
-            success_count=success_count,
-            failed_ids=failed_ids,
-            message=f"成功恢复 {success_count} 个角色" if not failed_ids else "部分恢复成功",
-        )
-    )
+    result = await role_service.batch_restore_roles(ids=request.ids)
+    return ResponseBase(data=result)
 
 
 @router.post("/{id}/restore", response_model=ResponseBase[RoleResponse], summary="恢复已删除角色")

@@ -207,14 +207,8 @@ async def batch_delete_depts(
     Returns:
         ResponseBase[BatchOperationResult]: 批量删除结果。
     """
-    success_count, failed_ids = await dept_service.batch_delete_depts(ids=request.ids, hard_delete=request.hard_delete)
-    return ResponseBase(
-        data=BatchOperationResult(
-            success_count=success_count,
-            failed_ids=failed_ids,
-            message=f"成功删除 {success_count} 个部门" if not failed_ids else "部分删除成功",
-        )
-    )
+    result = await dept_service.batch_delete_depts(ids=request.ids, hard_delete=request.hard_delete)
+    return ResponseBase(data=result)
 
 
 @router.delete("/{id}", response_model=ResponseBase[DeptResponse], summary="删除部门")
@@ -257,14 +251,8 @@ async def batch_restore_depts(
     Returns:
         ResponseBase[BatchOperationResult]: 批量恢复结果。
     """
-    success_count, failed_ids = await dept_service.batch_restore_depts(ids=request.ids)
-    return ResponseBase(
-        data=BatchOperationResult(
-            success_count=success_count,
-            failed_ids=failed_ids,
-            message=f"成功恢复 {success_count} 个部门" if not failed_ids else "部分恢复成功",
-        )
-    )
+    result = await dept_service.batch_restore_depts(ids=request.ids)
+    return ResponseBase(data=result)
 
 
 @router.post("/{id}/restore", response_model=ResponseBase[DeptResponse], summary="恢复已删除部门")
@@ -335,11 +323,5 @@ async def batch_hard_delete_depts(
     Returns:
         ResponseBase[BatchOperationResult]: 批量删除结果。
     """
-    success_count, failed_ids = await dept_service.batch_hard_delete_depts(ids=request.ids)
-    return ResponseBase(
-        data=BatchOperationResult(
-            success_count=success_count,
-            failed_ids=failed_ids,
-            message=f"成功彻底删除 {success_count} 个部门" if not failed_ids else "部分彻底删除成功",
-        )
-    )
+    result = await dept_service.batch_hard_delete_depts(ids=request.ids)
+    return ResponseBase(data=result)

@@ -18,6 +18,7 @@ from app.core.exceptions import BadRequestException, NotFoundException
 from app.core.otp_service import otp_service
 from app.crud.crud_credential import CRUDCredential
 from app.models.credential import DeviceGroupCredential
+from app.schemas.common import BatchOperationResult
 from app.schemas.credential import (
     DeviceGroupCredentialCreate,
     DeviceGroupCredentialResponse,
@@ -27,18 +28,18 @@ from app.schemas.credential import (
     OTPVerifyRequest,
     OTPVerifyResponse,
 )
+from app.services.base import BaseService
 
 
-class CredentialService:
+class CredentialService(BaseService):
     """
     凭据服务类。
     通过构造函数注入 CRUD 实例，实现解耦。
     """
 
     def __init__(self, db: AsyncSession, credential_crud: CRUDCredential):
-        self.db = db
+        super().__init__(db)
         self.credential_crud = credential_crud
-        self._post_commit_tasks: list = []
 
     async def get_credentials_paginated(
         self,
@@ -206,7 +207,7 @@ class CredentialService:
         return credential
 
     @transactional()
-    async def batch_delete_credentials(self, ids: list[UUID]) -> tuple[int, list[UUID]]:
+    async def batch_delete_credentials(self, ids: list[UUID]) -> BatchOperationResult:
         """
         批量删除凭据（软删除）。
 
@@ -214,9 +215,10 @@ class CredentialService:
             ids: 凭据ID列表
 
         Returns:
-            (success_count, failed_ids): 成功数量和失败的ID列表
+            BatchOperationResult: 批量操作结果
         """
-        return await self.credential_crud.batch_remove(self.db, ids=ids, hard_delete=False)
+        success_count, failed_ids = await self.credential_crud.batch_remove(self.db, ids=ids, hard_delete=False)
+        return self._build_batch_result(success_count, failed_ids, message="删除完成")
 
     async def get_recycle_bin_paginated(
         self,
@@ -274,7 +276,7 @@ class CredentialService:
         return credential
 
     @transactional()
-    async def batch_restore_credentials(self, ids: list[UUID]) -> tuple[int, list[UUID]]:
+    async def batch_restore_credentials(self, ids: list[UUID]) -> BatchOperationResult:
         """
         批量恢复已删除的凭据。
 
@@ -282,9 +284,10 @@ class CredentialService:
             ids: 凭据ID列表
 
         Returns:
-            (success_count, failed_ids): 成功数量和失败的ID列表
+            BatchOperationResult: 批量操作结果
         """
-        return await self.credential_crud.batch_restore(self.db, ids=ids)
+        success_count, failed_ids = await self.credential_crud.batch_restore(self.db, ids=ids)
+        return self._build_batch_result(success_count, failed_ids, message="恢复完成")
 
     @transactional()
     async def hard_delete_credential(self, credential_id: UUID) -> None:
@@ -306,7 +309,7 @@ class CredentialService:
             raise NotFoundException(message="彻底删除失败")
 
     @transactional()
-    async def batch_hard_delete_credentials(self, ids: list[UUID]) -> tuple[int, list[UUID]]:
+    async def batch_hard_delete_credentials(self, ids: list[UUID]) -> BatchOperationResult:
         """
         批量彻底删除凭据（硬删除）。
 
@@ -314,9 +317,10 @@ class CredentialService:
             ids: 凭据ID列表
 
         Returns:
-            (success_count, failed_ids): 成功数量和失败的ID列表
+            BatchOperationResult: 批量操作结果
         """
-        return await self.credential_crud.batch_remove(self.db, ids=ids, hard_delete=True)
+        success_count, failed_ids = await self.credential_crud.batch_remove(self.db, ids=ids, hard_delete=True)
+        return self._build_batch_result(success_count, failed_ids, message="彻底删除完成")
 
     async def cache_otp(self, request: OTPCacheRequest) -> OTPCacheResponse:
         """

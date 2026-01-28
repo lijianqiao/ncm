@@ -233,7 +233,7 @@ async def list_discoveries(
             first_seen_at=item.first_seen_at,
             last_seen_at=item.last_seen_at,
             offline_days=item.offline_days,
-            status=item.status,
+            status=DiscoveryStatus(item.status),
             matched_device_id=item.matched_device_id,
             scan_source=item.scan_source,
             created_at=item.created_at,
@@ -297,7 +297,7 @@ async def get_discovery(
         first_seen_at=item.first_seen_at,
         last_seen_at=item.last_seen_at,
         offline_days=item.offline_days,
-        status=item.status,
+        status=DiscoveryStatus(item.status),
         matched_device_id=item.matched_device_id,
         scan_source=item.scan_source,
         created_at=item.created_at,
@@ -405,7 +405,7 @@ async def list_discoveries_recycle_bin(
             first_seen_at=item.first_seen_at,
             last_seen_at=item.last_seen_at,
             offline_days=item.offline_days,
-            status=item.status,
+            status=DiscoveryStatus(item.status),
             matched_device_id=item.matched_device_id,
             scan_source=item.scan_source,
             created_at=item.created_at,
@@ -447,14 +447,8 @@ async def batch_delete_discoveries(
     Returns:
         ResponseBase[BatchOperationResult]: 批量操作结果。
     """
-    success_count, failed_ids = await service.batch_delete_discoveries(ids=request.ids)
-    return ResponseBase(
-        data=BatchOperationResult(
-            success_count=success_count,
-            failed_ids=failed_ids,
-            message=f"成功删除 {success_count} 条发现记录" if not failed_ids else "部分删除成功",
-        )
-    )
+    result = await service.batch_delete_discoveries(ids=request.ids)
+    return ResponseBase(data=result)
 
 
 @router.post(
@@ -481,14 +475,8 @@ async def batch_restore_discoveries(
     Returns:
         ResponseBase[BatchOperationResult]: 批量恢复结果。
     """
-    success_count, failed_ids = await service.batch_restore_discoveries(ids=request.ids)
-    return ResponseBase(
-        data=BatchOperationResult(
-            success_count=success_count,
-            failed_ids=failed_ids,
-            message=f"成功恢复 {success_count} 条发现记录" if not failed_ids else "部分恢复成功",
-        )
-    )
+    result = await service.batch_restore_discoveries(ids=request.ids)
+    return ResponseBase(data=result)
 
 
 @router.post(
@@ -535,7 +523,7 @@ async def restore_discovery(
         first_seen_at=item.first_seen_at,
         last_seen_at=item.last_seen_at,
         offline_days=item.offline_days,
-        status=item.status,
+        status=DiscoveryStatus(item.status),
         matched_device_id=item.matched_device_id,
         scan_source=item.scan_source,
         created_at=item.created_at,
@@ -599,14 +587,8 @@ async def batch_hard_delete_discoveries(
     Returns:
         ResponseBase[BatchOperationResult]: 批量删除结果。
     """
-    success_count, failed_ids = await service.batch_hard_delete_discoveries(ids=request.ids)
-    return ResponseBase(
-        data=BatchOperationResult(
-            success_count=success_count,
-            failed_ids=failed_ids,
-            message=f"成功彻底删除 {success_count} 条发现记录" if not failed_ids else "部分彻底删除成功",
-        )
-    )
+    result = await service.batch_hard_delete_discoveries(ids=request.ids)
+    return ResponseBase(data=result)
 
 
 # ===== 设备纳管 =====
@@ -712,7 +694,7 @@ async def list_shadow_assets(
             first_seen_at=item.first_seen_at,
             last_seen_at=item.last_seen_at,
             offline_days=item.offline_days,
-            status=item.status,
+            status=DiscoveryStatus(item.status),
             matched_device_id=item.matched_device_id,
             scan_source=item.scan_source,
             created_at=item.created_at,

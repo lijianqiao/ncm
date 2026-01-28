@@ -163,14 +163,8 @@ async def batch_delete_menus(
     Returns:
         ResponseBase[BatchOperationResult]: 批量操作结果（成功数量等）。
     """
-    success_count, failed_ids = await menu_service.batch_delete_menus(ids=request.ids, hard_delete=request.hard_delete)
-    return ResponseBase(
-        data=BatchOperationResult(
-            success_count=success_count,
-            failed_ids=failed_ids,
-            message=f"成功删除 {success_count} 个菜单" if not failed_ids else "部分删除成功",
-        )
-    )
+    result = await menu_service.batch_delete_menus(ids=request.ids, hard_delete=request.hard_delete)
+    return ResponseBase(data=result)
 
 
 @router.put("/{id}", response_model=ResponseBase[MenuResponse], summary="更新菜单")
@@ -294,14 +288,8 @@ async def batch_restore_menus(
         ResponseBase[BatchOperationResult]: 批量恢复结果。
     """
 
-    success_count, failed_ids = await menu_service.batch_restore_menus(ids=request.ids)
-    return ResponseBase(
-        data=BatchOperationResult(
-            success_count=success_count,
-            failed_ids=failed_ids,
-            message=f"成功恢复 {success_count} 个菜单" if not failed_ids else "部分恢复成功",
-        )
-    )
+    result = await menu_service.batch_restore_menus(ids=request.ids)
+    return ResponseBase(data=result)
 
 
 @router.post("/{id}/restore", response_model=ResponseBase[MenuResponse], summary="恢复已删除菜单")
