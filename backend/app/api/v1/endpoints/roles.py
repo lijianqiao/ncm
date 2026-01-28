@@ -24,6 +24,9 @@ from app.schemas.role import RoleCreate, RoleMenusUpdateRequest, RoleResponse, R
 router = APIRouter()
 
 
+# ===== 列表查询 =====
+
+
 @router.get("/", response_model=ResponseBase[PaginatedResponse[RoleResponse]], summary="获取角色列表")
 async def read_roles(
     role_service: deps.RoleServiceDep,
@@ -60,6 +63,37 @@ async def read_roles(
     )
 
 
+# ===== 详情 =====
+
+
+@router.get("/{id:uuid}", response_model=ResponseBase[RoleResponse], summary="获取角色详情")
+async def get_role(
+    *,
+    id: UUID,
+    current_user: deps.CurrentUser,
+    _: deps.User = Depends(deps.require_permissions([PermissionCode.ROLE_LIST.value])),
+    role_service: deps.RoleServiceDep,
+) -> ResponseBase[RoleResponse]:
+    """
+    获取角色详情。
+
+    根据 ID 获取单个角色的详细信息。
+
+    Args:
+        id (UUID): 角色 ID。
+        current_user (User): 当前登录用户。
+        role_service (RoleService): 角色服务依赖。
+
+    Returns:
+        ResponseBase[RoleResponse]: 角色详细信息。
+    """
+    role = await role_service.get_role(role_id=id)
+    return ResponseBase(data=RoleResponse.model_validate(role))
+
+
+# ===== 创建 =====
+
+
 @router.post("/", response_model=ResponseBase[RoleResponse], summary="创建角色")
 async def create_role(
     *,
@@ -83,6 +117,65 @@ async def create_role(
     """
     role = await role_service.create_role(obj_in=role_in)
     return ResponseBase(data=RoleResponse.model_validate(role))
+
+
+# ===== 更新 =====
+
+
+@router.put("/{id:uuid}", response_model=ResponseBase[RoleResponse], summary="更新角色")
+async def update_role(
+    *,
+    id: UUID,
+    role_in: RoleUpdate,
+    current_user: deps.CurrentUser,
+    _: deps.User = Depends(deps.require_permissions([PermissionCode.ROLE_UPDATE.value])),
+    role_service: deps.RoleServiceDep,
+) -> ResponseBase[RoleResponse]:
+    """
+    更新角色。
+
+    更新指定 ID 的角色信息。
+
+    Args:
+        id (UUID): 角色 ID。
+        role_in (RoleUpdate): 角色更新数据。
+        current_user (User): 当前登录用户。
+        role_service (RoleService): 角色服务依赖。
+
+    Returns:
+        ResponseBase[RoleResponse]: 更新后的角色对象。
+    """
+    role = await role_service.update_role(id=id, obj_in=role_in)
+    return ResponseBase(data=RoleResponse.model_validate(role))
+
+
+# ===== 删除 =====
+
+
+@router.delete("/{id:uuid}", response_model=ResponseBase[RoleResponse], summary="删除角色")
+async def delete_role(
+    *,
+    id: UUID,
+    active_superuser: deps.User = Depends(deps.get_current_active_superuser),
+    _: deps.User = Depends(deps.require_permissions([PermissionCode.ROLE_DELETE.value])),
+    role_service: deps.RoleServiceDep,
+) -> ResponseBase[RoleResponse]:
+    """
+    删除角色 (软删除)。
+
+    Args:
+        id (UUID): 角色 ID。
+        active_superuser (User): 当前登录超级用户。
+        role_service (RoleService): 角色服务依赖。
+
+    Returns:
+        ResponseBase[RoleResponse]: 删除后的角色对象。
+    """
+    role = await role_service.delete_role(id=id)
+    return ResponseBase(data=RoleResponse.model_validate(role))
+
+
+# ===== 批量删除 =====
 
 
 @router.delete("/batch", response_model=ResponseBase[BatchOperationResult], summary="批量删除角色")
@@ -110,31 +203,7 @@ async def batch_delete_roles(
     return ResponseBase(data=result)
 
 
-@router.put("/{id}", response_model=ResponseBase[RoleResponse], summary="更新角色")
-async def update_role(
-    *,
-    id: UUID,
-    role_in: RoleUpdate,
-    current_user: deps.CurrentUser,
-    _: deps.User = Depends(deps.require_permissions([PermissionCode.ROLE_UPDATE.value])),
-    role_service: deps.RoleServiceDep,
-) -> ResponseBase[RoleResponse]:
-    """
-    更新角色。
-
-    更新指定 ID 的角色信息。
-
-    Args:
-        id (UUID): 角色 ID。
-        role_in (RoleUpdate): 角色更新数据。
-        current_user (User): 当前登录用户。
-        role_service (RoleService): 角色服务依赖。
-
-    Returns:
-        ResponseBase[RoleResponse]: 更新后的角色对象。
-    """
-    role = await role_service.update_role(id=id, obj_in=role_in)
-    return ResponseBase(data=RoleResponse.model_validate(role))
+# ===== 回收站 =====
 
 
 @router.get("/recycle-bin", response_model=ResponseBase[PaginatedResponse[RoleResponse]], summary="获取角色回收站列表")
@@ -178,27 +247,7 @@ async def get_recycle_bin(
     )
 
 
-@router.delete("/{id}", response_model=ResponseBase[RoleResponse], summary="删除角色")
-async def delete_role(
-    *,
-    id: UUID,
-    active_superuser: deps.User = Depends(deps.get_current_active_superuser),
-    _: deps.User = Depends(deps.require_permissions([PermissionCode.ROLE_DELETE.value])),
-    role_service: deps.RoleServiceDep,
-) -> ResponseBase[RoleResponse]:
-    """
-    删除角色 (软删除)。
-
-    Args:
-        id (UUID): 角色 ID。
-        active_superuser (User): 当前登录超级用户。
-        role_service (RoleService): 角色服务依赖。
-
-    Returns:
-        ResponseBase[RoleResponse]: 删除后的角色对象。
-    """
-    role = await role_service.delete_role(id=id)
-    return ResponseBase(data=RoleResponse.model_validate(role))
+# ===== 批量恢复 =====
 
 
 @router.post("/batch/restore", response_model=ResponseBase[BatchOperationResult], summary="批量恢复角色")
@@ -228,7 +277,10 @@ async def batch_restore_roles(
     return ResponseBase(data=result)
 
 
-@router.post("/{id}/restore", response_model=ResponseBase[RoleResponse], summary="恢复已删除角色")
+# ===== 单个恢复 =====
+
+
+@router.post("/{id:uuid}/restore", response_model=ResponseBase[RoleResponse], summary="恢复已删除角色")
 async def restore_role(
     *,
     id: UUID,
@@ -260,7 +312,10 @@ async def restore_role(
     return ResponseBase(data=RoleResponse.model_validate(role), message="角色恢复成功")
 
 
-@router.get("/{id}/menus", response_model=ResponseBase[list[UUID]], summary="获取角色菜单")
+# ===== 菜单管理 =====
+
+
+@router.get("/{id:uuid}/menus", response_model=ResponseBase[list[UUID]], summary="获取角色菜单")
 async def get_role_menus(
     *,
     id: UUID,
@@ -285,7 +340,7 @@ async def get_role_menus(
     return ResponseBase(data=menu_ids)
 
 
-@router.put("/{id}/menus", response_model=ResponseBase[list[UUID]], summary="设置角色菜单")
+@router.put("/{id:uuid}/menus", response_model=ResponseBase[list[UUID]], summary="设置角色菜单")
 async def set_role_menus(
     *,
     id: UUID,

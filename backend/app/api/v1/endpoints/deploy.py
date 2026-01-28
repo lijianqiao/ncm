@@ -63,7 +63,7 @@ async def create_deploy_task(
 
 
 @router.post(
-    "/{task_id}/approve",
+    "/{task_id:uuid}/approve",
     response_model=ResponseBase[DeployTaskResponse],
     dependencies=[Depends(require_permissions([PermissionCode.DEPLOY_APPROVE.value]))],
     summary="审批(某一级)",
@@ -99,7 +99,7 @@ async def approve_task(
 
 
 @router.post(
-    "/{task_id}/execute",
+    "/{task_id:uuid}/execute",
     response_model=ResponseBase[DeployTaskResponse],
     dependencies=[Depends(require_permissions([PermissionCode.DEPLOY_EXECUTE.value]))],
     summary="执行下发任务（提交 Celery）",
@@ -135,7 +135,7 @@ async def execute_task(task_id: UUID, service: DeployServiceDep) -> ResponseBase
 
 
 @router.post(
-    "/{task_id}/rollback/preview",
+    "/{task_id:uuid}/rollback/preview",
     response_model=ResponseBase[RollbackPreviewResponse],
     dependencies=[Depends(require_permissions([PermissionCode.DEPLOY_ROLLBACK.value]))],
     summary="回滚预检",
@@ -182,7 +182,7 @@ async def preview_rollback(
 
 
 @router.post(
-    "/{task_id}/rollback",
+    "/{task_id:uuid}/rollback",
     response_model=ResponseBase[DeployRollbackResponse],
     dependencies=[Depends(require_permissions([PermissionCode.DEPLOY_ROLLBACK.value]))],
     summary="触发回滚（Celery）",
@@ -231,7 +231,7 @@ async def rollback_task(
 
 
 @router.post(
-    "/{task_id}/cancel",
+    "/{task_id:uuid}/cancel",
     response_model=ResponseBase[DeployTaskResponse],
     dependencies=[Depends(require_permissions([PermissionCode.DEPLOY_EXECUTE.value]))],
     summary="取消执行中的任务",
@@ -254,7 +254,7 @@ async def cancel_task(task_id: UUID, service: DeployServiceDep) -> ResponseBase[
 
 
 @router.post(
-    "/{task_id}/retry",
+    "/{task_id:uuid}/retry",
     response_model=ResponseBase[DeployTaskResponse],
     dependencies=[Depends(require_permissions([PermissionCode.DEPLOY_EXECUTE.value]))],
     summary="重试失败的设备",
@@ -373,7 +373,7 @@ async def batch_delete_deploy_tasks(
 
 
 @router.delete(
-    "/{task_id}",
+    "/{task_id:uuid}",
     response_model=ResponseBase[DeployTaskResponse],
     dependencies=[Depends(require_permissions([PermissionCode.DEPLOY_DELETE.value]))],
     summary="删除下发任务",
@@ -424,7 +424,7 @@ async def batch_restore_deploy_tasks(
 
 
 @router.post(
-    "/{task_id}/restore",
+    "/{task_id:uuid}/restore",
     response_model=ResponseBase[DeployTaskResponse],
     dependencies=[
         Depends(deps.get_current_active_superuser),
@@ -476,7 +476,7 @@ async def batch_hard_delete_deploy_tasks(
 
 
 @router.delete(
-    "/{task_id}/hard",
+    "/{task_id:uuid}/hard",
     response_model=ResponseBase[dict],
     dependencies=[
         Depends(deps.get_current_active_superuser),
@@ -502,7 +502,7 @@ async def hard_delete_deploy_task(
 
 
 @router.get(
-    "/{task_id}",
+    "/{task_id:uuid}",
     response_model=ResponseBase[DeployTaskResponse],
     dependencies=[Depends(require_permissions([PermissionCode.DEPLOY_VIEW.value]))],
     summary="下发任务详情",

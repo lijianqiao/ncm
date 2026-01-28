@@ -35,6 +35,7 @@ from app.crud.crud_backup import backup as backup_instance
 from app.crud.crud_credential import CRUDCredential
 from app.crud.crud_credential import credential as credential_instance
 from app.crud.crud_dept import CRUDDept
+from app.crud.crud_dept import dept as dept_instance
 from app.crud.crud_device import CRUDDevice
 from app.crud.crud_device import device as device_instance
 from app.crud.crud_discovery import CRUDDiscovery
@@ -44,11 +45,7 @@ from app.crud.crud_inventory_audit import inventory_audit_crud as inventory_audi
 from app.crud.crud_log import (
     CRUDLoginLog,
     CRUDOperationLog,
-)
-from app.crud.crud_log import (
     login_log as login_log_crud_global,
-)
-from app.crud.crud_log import (
     operation_log as operation_log_crud_global,
 )
 from app.crud.crud_menu import CRUDMenu
@@ -73,7 +70,6 @@ from app.crud.crud_topology import CRUDTopology
 from app.crud.crud_topology import topology_crud as topology_instance
 from app.crud.crud_user import CRUDUser
 from app.crud.crud_user import user as user_crud_global
-from app.models.dept import Department
 from app.models.rbac import Role
 from app.models.user import User
 from app.schemas.token import TokenPayload
@@ -329,7 +325,7 @@ def get_credential_crud() -> CRUDCredential:
 
 
 def get_dept_crud() -> CRUDDept:
-    return CRUDDept(Department)
+    return dept_instance
 
 
 def get_device_crud() -> CRUDDevice:

@@ -25,55 +25,7 @@ from app.schemas.menu import MenuCreate, MenuResponse, MenuUpdate
 router = APIRouter()
 
 
-@router.get("/options", response_model=ResponseBase[list[MenuResponse]], summary="获取可分配菜单选项")
-async def get_menu_options(
-    current_user: deps.CurrentUser,
-    menu_service: deps.MenuServiceDep,
-    _: deps.User = Depends(deps.require_permissions([PermissionCode.MENU_OPTIONS_LIST.value])),
-) -> ResponseBase[list[MenuResponse]]:
-    """获取可分配菜单选项（树结构）。
-
-    用于角色创建/编辑时选择可分配菜单（包含隐藏权限点）。
-
-    Args:
-        current_user (User): 当前登录用户。
-        menu_service (MenuService): 菜单服务依赖。
-        _ (User): 权限依赖（需要 menu:options:list）。
-
-    Returns:
-        ResponseBase[list[MenuResponse]]: 菜单选项树。
-
-    Raises:
-        UnauthorizedException: 未登录或令牌无效时。
-        ForbiddenException: 权限不足时。
-    """
-
-    menus = await menu_service.get_menu_options_tree()
-    return ResponseBase(data=menus)
-
-
-@router.get("/me", response_model=ResponseBase[list[MenuResponse]], summary="获取我的菜单")
-async def get_my_menus(
-    current_user: deps.CurrentUser,
-    menu_service: deps.MenuServiceDep,
-) -> ResponseBase[list[MenuResponse]]:
-    """获取当前登录用户可见的导航菜单树。
-
-    不包含隐藏权限点（is_hidden=true 的菜单节点不会返回），但隐藏权限点会影响父级菜单的可见性判定。
-
-    Args:
-        current_user (User): 当前登录用户。
-        menu_service (MenuService): 菜单服务依赖。
-
-    Returns:
-        ResponseBase[list[MenuResponse]]: 当前用户可见的导航菜单树。
-
-    Raises:
-        UnauthorizedException: 未登录或令牌无效时。
-    """
-
-    menus = await menu_service.get_my_menus_tree(current_user)
-    return ResponseBase(data=menus)
+# ===== 列表查询 =====
 
 
 @router.get("/", response_model=ResponseBase[PaginatedResponse[MenuResponse]], summary="获取菜单列表")
@@ -117,6 +69,37 @@ async def read_menus(
     return ResponseBase(data=PaginatedResponse(total=total, page=page, page_size=page_size, items=menus))
 
 
+# ===== 详情 =====
+
+
+@router.get("/{id:uuid}", response_model=ResponseBase[MenuResponse], summary="获取菜单详情")
+async def get_menu(
+    *,
+    id: UUID,
+    current_user: deps.CurrentUser,
+    _: deps.User = Depends(deps.require_permissions([PermissionCode.MENU_LIST.value])),
+    menu_service: deps.MenuServiceDep,
+) -> ResponseBase[MenuResponse]:
+    """
+    获取菜单详情。
+
+    根据 ID 获取单个菜单的详细信息。
+
+    Args:
+        id (UUID): 菜单 ID。
+        current_user (User): 当前登录用户。
+        menu_service (MenuService): 菜单服务依赖。
+
+    Returns:
+        ResponseBase[MenuResponse]: 菜单详细信息。
+    """
+    menu = await menu_service.get_menu(menu_id=id)
+    return ResponseBase(data=menu)
+
+
+# ===== 创建 =====
+
+
 @router.post("/", response_model=ResponseBase[MenuResponse], summary="创建菜单")
 async def create_menu(
     *,
@@ -140,6 +123,67 @@ async def create_menu(
     """
     menu = await menu_service.create_menu(obj_in=menu_in)
     return ResponseBase(data=menu)
+
+
+# ===== 更新 =====
+
+
+@router.put("/{id:uuid}", response_model=ResponseBase[MenuResponse], summary="更新菜单")
+async def update_menu(
+    *,
+    id: UUID,
+    menu_in: MenuUpdate,
+    current_user: deps.CurrentUser,
+    _: deps.User = Depends(deps.require_permissions([PermissionCode.MENU_UPDATE.value])),
+    menu_service: deps.MenuServiceDep,
+) -> ResponseBase[MenuResponse]:
+    """
+    更新菜单。
+
+    更新指定 ID 的菜单信息。
+
+    Args:
+        id (UUID): 菜单 ID。
+        menu_in (MenuUpdate): 菜单更新数据。
+        current_user (User): 当前登录用户。
+        menu_service (MenuService): 菜单服务依赖。
+
+    Returns:
+        ResponseBase[MenuResponse]: 更新后的菜单对象。
+    """
+    menu = await menu_service.update_menu(id=id, obj_in=menu_in)
+    return ResponseBase(data=menu)
+
+
+# ===== 删除 =====
+
+
+@router.delete("/{id:uuid}", response_model=ResponseBase[MenuResponse], summary="删除菜单")
+async def delete_menu(
+    *,
+    id: UUID,
+    current_user: deps.CurrentUser,
+    _: deps.User = Depends(deps.require_permissions([PermissionCode.MENU_DELETE.value])),
+    menu_service: deps.MenuServiceDep,
+) -> ResponseBase[MenuResponse]:
+    """
+    删除菜单。
+
+    删除指定 ID 的菜单。
+
+    Args:
+        id (UUID): 菜单 ID。
+        current_user (User): 当前登录用户。
+        menu_service (MenuService): 菜单服务依赖。
+
+    Returns:
+        ResponseBase[MenuResponse]: 已删除的菜单对象信息。
+    """
+    menu = await menu_service.delete_menu(id=id)
+    return ResponseBase(data=menu)
+
+
+# ===== 批量删除 =====
 
 
 @router.delete("/batch", response_model=ResponseBase[BatchOperationResult], summary="批量删除菜单")
@@ -167,31 +211,7 @@ async def batch_delete_menus(
     return ResponseBase(data=result)
 
 
-@router.put("/{id}", response_model=ResponseBase[MenuResponse], summary="更新菜单")
-async def update_menu(
-    *,
-    id: UUID,
-    menu_in: MenuUpdate,
-    current_user: deps.CurrentUser,
-    _: deps.User = Depends(deps.require_permissions([PermissionCode.MENU_UPDATE.value])),
-    menu_service: deps.MenuServiceDep,
-) -> ResponseBase[MenuResponse]:
-    """
-    更新菜单。
-
-    更新指定 ID 的菜单信息。
-
-    Args:
-        id (UUID): 菜单 ID。
-        menu_in (MenuUpdate): 菜单更新数据。
-        current_user (User): 当前登录用户。
-        menu_service (MenuService): 菜单服务依赖。
-
-    Returns:
-        ResponseBase[MenuResponse]: 更新后的菜单对象。
-    """
-    menu = await menu_service.update_menu(id=id, obj_in=menu_in)
-    return ResponseBase(data=menu)
+# ===== 回收站 =====
 
 
 @router.get("/recycle-bin", response_model=ResponseBase[PaginatedResponse[MenuResponse]], summary="获取菜单回收站列表")
@@ -240,29 +260,7 @@ async def get_recycle_bin(
     return ResponseBase(data=PaginatedResponse(total=total, page=page, page_size=page_size, items=menus))
 
 
-@router.delete("/{id}", response_model=ResponseBase[MenuResponse], summary="删除菜单")
-async def delete_menu(
-    *,
-    id: UUID,
-    current_user: deps.CurrentUser,
-    _: deps.User = Depends(deps.require_permissions([PermissionCode.MENU_DELETE.value])),
-    menu_service: deps.MenuServiceDep,
-) -> ResponseBase[MenuResponse]:
-    """
-    删除菜单。
-
-    删除指定 ID 的菜单。
-
-    Args:
-        id (UUID): 菜单 ID。
-        current_user (User): 当前登录用户。
-        menu_service (MenuService): 菜单服务依赖。
-
-    Returns:
-        ResponseBase[MenuResponse]: 已删除的菜单对象信息。
-    """
-    menu = await menu_service.delete_menu(id=id)
-    return ResponseBase(data=menu)
+# ===== 批量恢复 =====
 
 
 @router.post("/batch/restore", response_model=ResponseBase[BatchOperationResult], summary="批量恢复菜单")
@@ -292,7 +290,10 @@ async def batch_restore_menus(
     return ResponseBase(data=result)
 
 
-@router.post("/{id}/restore", response_model=ResponseBase[MenuResponse], summary="恢复已删除菜单")
+# ===== 单个恢复 =====
+
+
+@router.post("/{id:uuid}/restore", response_model=ResponseBase[MenuResponse], summary="恢复已删除菜单")
 async def restore_menu(
     *,
     id: UUID,
@@ -322,3 +323,60 @@ async def restore_menu(
     """
     menu = await menu_service.restore_menu(id=id)
     return ResponseBase(data=menu, message="菜单恢复成功")
+
+
+# ===== 当前用户相关 =====
+
+
+@router.get("/me", response_model=ResponseBase[list[MenuResponse]], summary="获取我的菜单")
+async def get_my_menus(
+    current_user: deps.CurrentUser,
+    menu_service: deps.MenuServiceDep,
+) -> ResponseBase[list[MenuResponse]]:
+    """获取当前登录用户可见的导航菜单树。
+
+    不包含隐藏权限点（is_hidden=true 的菜单节点不会返回），但隐藏权限点会影响父级菜单的可见性判定。
+
+    Args:
+        current_user (User): 当前登录用户。
+        menu_service (MenuService): 菜单服务依赖。
+
+    Returns:
+        ResponseBase[list[MenuResponse]]: 当前用户可见的导航菜单树。
+
+    Raises:
+        UnauthorizedException: 未登录或令牌无效时。
+    """
+
+    menus = await menu_service.get_my_menus_tree(current_user)
+    return ResponseBase(data=menus)
+
+
+# ===== 选项列表 =====
+
+
+@router.get("/options", response_model=ResponseBase[list[MenuResponse]], summary="获取可分配菜单选项")
+async def get_menu_options(
+    current_user: deps.CurrentUser,
+    menu_service: deps.MenuServiceDep,
+    _: deps.User = Depends(deps.require_permissions([PermissionCode.MENU_OPTIONS_LIST.value])),
+) -> ResponseBase[list[MenuResponse]]:
+    """获取可分配菜单选项（树结构）。
+
+    用于角色创建/编辑时选择可分配菜单（包含隐藏权限点）。
+
+    Args:
+        current_user (User): 当前登录用户。
+        menu_service (MenuService): 菜单服务依赖。
+        _ (User): 权限依赖（需要 menu:options:list）。
+
+    Returns:
+        ResponseBase[list[MenuResponse]]: 菜单选项树。
+
+    Raises:
+        UnauthorizedException: 未登录或令牌无效时。
+        ForbiddenException: 权限不足时。
+    """
+
+    menus = await menu_service.get_menu_options_tree()
+    return ResponseBase(data=menus)

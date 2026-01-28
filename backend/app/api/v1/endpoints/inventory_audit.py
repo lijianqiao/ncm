@@ -171,7 +171,7 @@ async def batch_delete_inventory_audits(
 
 
 @router.delete(
-    "/{audit_id}",
+    "/{audit_id:uuid}",
     response_model=ResponseBase[InventoryAuditResponse],
     summary="删除盘点任务",
 )
@@ -334,7 +334,7 @@ async def export_inventory_audits(
 
 
 @router.get(
-    "/{audit_id}",
+    "/{audit_id:uuid}",
     response_model=ResponseBase[InventoryAuditResponse],
     summary="盘点任务详情",
 )

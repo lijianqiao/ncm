@@ -36,6 +36,13 @@ class RoleService(BaseService, PermissionCacheMixin):
         roles, _ = await self.role_crud.get_multi_paginated(self.db, page=page, page_size=limit)
         return roles
 
+    async def get_role(self, role_id: UUID) -> Role:
+        """获取单个角色详情。"""
+        role = await self.role_crud.get(self.db, id=role_id)
+        if not role:
+            raise NotFoundException(message="角色不存在")
+        return role
+
     async def get_role_menu_ids(self, role_id: UUID) -> list[UUID]:
         """获取角色已分配的菜单ID列表（仅未删除菜单）。"""
 

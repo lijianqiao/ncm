@@ -33,7 +33,7 @@ router = APIRouter(tags=["ARP/MAC采集"])
 
 
 @router.post(
-    "/device/{device_id}",
+    "/device/{device_id:uuid}",
     response_model=ResponseBase[DeviceCollectResult],
     dependencies=[Depends(require_permissions([PermissionCode.COLLECT_EXECUTE.value]))],
     summary="手动采集单设备",

@@ -121,7 +121,7 @@ async def export_alerts(
     )
 
 
-@router.get("/{alert_id}", response_model=ResponseBase[AlertResponse], summary="获取告警详情")
+@router.get("/{alert_id:uuid}", response_model=ResponseBase[AlertResponse], summary="获取告警详情")
 async def read_alert(
     alert_id: UUID,
     alert_service: deps.AlertServiceDep,
@@ -133,7 +133,7 @@ async def read_alert(
     return ResponseBase(data=_build_alert_response(alert))
 
 
-@router.post("/{alert_id}/ack", response_model=ResponseBase[AlertResponse], summary="确认告警")
+@router.post("/{alert_id:uuid}/ack", response_model=ResponseBase[AlertResponse], summary="确认告警")
 async def ack_alert(
     alert_id: UUID,
     alert_service: deps.AlertServiceDep,
@@ -145,7 +145,7 @@ async def ack_alert(
     return ResponseBase(data=_build_alert_response(alert))
 
 
-@router.post("/{alert_id}/close", response_model=ResponseBase[AlertResponse], summary="关闭告警")
+@router.post("/{alert_id:uuid}/close", response_model=ResponseBase[AlertResponse], summary="关闭告警")
 async def close_alert(
     alert_id: UUID,
     alert_service: deps.AlertServiceDep,

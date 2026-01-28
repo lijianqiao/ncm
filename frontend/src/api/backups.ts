@@ -109,11 +109,11 @@ export interface BackupTaskStatus {
 
   // 进度信息
   progress?:
-    | number
-    | {
-        stage: string
-        message: string
-      }
+  | number
+  | {
+    stage: string
+    message: string
+  }
 
   // 进度数值（用于进度条）
   completed?: number // 已完成设备数
@@ -199,8 +199,8 @@ export function deleteBackup(id: string) {
 /** 批量删除备份（软删除） */
 export function batchDeleteBackups(data: BackupBatchDeleteRequest) {
   return request<ResponseBase<BackupBatchDeleteResult>>({
-    url: '/backups/batch-delete',
-    method: 'post',
+    url: '/backups/batch',
+    method: 'delete',
     data,
   })
 }
@@ -208,7 +208,7 @@ export function batchDeleteBackups(data: BackupBatchDeleteRequest) {
 /** 获取回收站备份列表 */
 export function getRecycleBackups(params?: BackupSearchParams) {
   return request<ResponseBase<PaginatedResponse<Backup>>>({
-    url: '/backups/recycle',
+    url: '/backups/recycle-bin',
     method: 'get',
     params,
   })
@@ -225,7 +225,7 @@ export function restoreBackup(id: string) {
 /** 批量恢复备份 */
 export function batchRestoreBackups(data: BackupBatchRestoreRequest) {
   return request<ResponseBase<BackupBatchRestoreResult>>({
-    url: '/backups/batch-restore',
+    url: '/backups/batch/restore',
     method: 'post',
     data,
   })
@@ -242,8 +242,8 @@ export function hardDeleteBackup(id: string) {
 /** 批量硬删除备份 */
 export function batchHardDeleteBackups(data: BackupBatchHardDeleteRequest) {
   return request<ResponseBase<BackupBatchHardDeleteResult>>({
-    url: '/backups/batch-hard-delete',
-    method: 'post',
+    url: '/backups/batch/hard',
+    method: 'delete',
     data,
   })
 }

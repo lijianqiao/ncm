@@ -121,7 +121,7 @@ async def list_topology_links(
 
 
 @router.get(
-    "/device/{device_id}/neighbors",
+    "/device/{device_id:uuid}/neighbors",
     summary="获取设备邻居",
     response_model=ResponseBase[DeviceNeighborsResponse],
     dependencies=[Depends(require_permissions([PermissionCode.TOPOLOGY_VIEW.value]))],
@@ -234,7 +234,7 @@ async def refresh_topology(
 
 
 @router.post(
-    "/device/{device_id}/collect",
+    "/device/{device_id:uuid}/collect",
     summary="采集单设备拓扑",
     response_model=ResponseBase[TopologyTaskResponse],
     dependencies=[Depends(require_permissions([PermissionCode.TOPOLOGY_REFRESH.value]))],
@@ -387,10 +387,10 @@ async def rebuild_topology_cache(
     dependencies=[Depends(require_permissions([PermissionCode.TOPOLOGY_REFRESH.value]))],
 )
 async def reset_topology(
+    current_user: CurrentUser,
+    db: SessionDep,
+    topology_service: TopologyServiceDep,
     hard_delete: bool = Query(default=False, description="是否硬删除（物理删除，不可恢复）"),
-    current_user: CurrentUser = None,
-    db: SessionDep = None,
-    topology_service: TopologyServiceDep = None,
 ) -> ResponseBase[dict]:
     """重置拓扑数据（清除所有链路）。
 

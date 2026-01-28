@@ -16,7 +16,7 @@ from starlette.background import BackgroundTask
 
 from app.api.deps import BackupServiceDep, CurrentUser, SessionDep, require_permissions
 from app.core.config import settings
-from app.core.enums import BackupType
+from app.core.enums import BackupStatus, BackupType
 from app.core.permissions import PermissionCode
 from app.features.import_export.backups import export_backups_df
 from app.import_export import ImportExportService, delete_export_file
@@ -135,8 +135,8 @@ async def get_backups(
         resp = BackupResponse(
             id=backup.id,
             device_id=backup.device_id,
-            backup_type=backup.backup_type,
-            status=backup.status,
+            backup_type=BackupType(backup.backup_type),
+            status=BackupStatus(backup.status),
             content_size=backup.content_size,
             md5_hash=backup.md5_hash,
             error_message=backup.error_message,
@@ -160,7 +160,7 @@ async def get_backups(
 
 
 @router.get(
-    "/recycle",
+    "/recycle-bin",
     response_model=ResponseBase[PaginatedResponse[BackupResponse]],
     dependencies=[Depends(require_permissions([PermissionCode.BACKUP_RECYCLE_LIST.value]))],
     summary="获取回收站备份列表",
@@ -226,8 +226,8 @@ async def get_recycle_backups(
             BackupResponse(
                 id=backup.id,
                 device_id=backup.device_id,
-                backup_type=backup.backup_type,
-                status=backup.status,
+                backup_type=BackupType(backup.backup_type),
+                status=BackupStatus(backup.status),
                 content_size=backup.content_size,
                 md5_hash=backup.md5_hash,
                 error_message=backup.error_message,
@@ -309,8 +309,8 @@ async def get_backup(
         data=BackupResponse(
             id=backup.id,
             device_id=backup.device_id,
-            backup_type=backup.backup_type,
-            status=backup.status,
+            backup_type=BackupType(backup.backup_type),
+            status=BackupStatus(backup.status),
             content_size=backup.content_size,
             md5_hash=backup.md5_hash,
             error_message=backup.error_message,
@@ -402,8 +402,8 @@ async def backup_device(
         data=BackupResponse(
             id=backup.id,
             device_id=backup.device_id,
-            backup_type=backup.backup_type,
-            status=backup.status,
+            backup_type=BackupType(backup.backup_type),
+            status=BackupStatus(backup.status),
             content_size=backup.content_size,
             md5_hash=backup.md5_hash,
             error_message=backup.error_message,
@@ -519,8 +519,8 @@ async def get_device_latest_backup(
         data=BackupResponse(
             id=backup.id,
             device_id=backup.device_id,
-            backup_type=backup.backup_type,
-            status=backup.status,
+            backup_type=BackupType(backup.backup_type),
+            status=BackupStatus(backup.status),
             content_size=backup.content_size,
             md5_hash=backup.md5_hash,
             error_message=backup.error_message,
@@ -571,8 +571,8 @@ async def get_device_backup_history(
         BackupResponse(
             id=backup.id,
             device_id=backup.device_id,
-            backup_type=backup.backup_type,
-            status=backup.status,
+            backup_type=BackupType(backup.backup_type),
+            status=BackupStatus(backup.status),
             content_size=backup.content_size,
             md5_hash=backup.md5_hash,
             error_message=backup.error_message,
@@ -674,8 +674,8 @@ async def delete_backup(
     )
 
 
-@router.post(
-    "/batch-delete",
+@router.delete(
+    "/batch",
     response_model=ResponseBase[BackupBatchDeleteResult],
     dependencies=[Depends(require_permissions([PermissionCode.BACKUP_BATCH_DELETE.value]))],
     summary="批量删除备份",
@@ -705,7 +705,7 @@ async def delete_backups_batch(
 
 
 @router.post(
-    "/batch-restore",
+    "/batch/restore",
     response_model=ResponseBase[BackupBatchRestoreResult],
     dependencies=[Depends(require_permissions([PermissionCode.BACKUP_BATCH_RESTORE.value]))],
     summary="批量恢复备份",
@@ -733,8 +733,8 @@ async def restore_backups_batch(
     )
 
 
-@router.post(
-    "/batch-hard-delete",
+@router.delete(
+    "/batch/hard",
     response_model=ResponseBase[BackupBatchDeleteResult],
     dependencies=[Depends(require_permissions([PermissionCode.BACKUP_BATCH_HARD_DELETE.value]))],
     summary="批量硬删除备份",

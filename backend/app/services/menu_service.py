@@ -108,6 +108,13 @@ class MenuService(BaseService, PermissionCacheMixin):
         menus, _ = await self.menu_crud.get_multi_paginated(self.db, page=1, page_size=100)
         return menus
 
+    async def get_menu(self, menu_id: UUID) -> MenuResponse:
+        """获取单个菜单详情。"""
+        menu = await self.menu_crud.get(self.db, id=menu_id)
+        if not menu:
+            raise NotFoundException(message="菜单不存在")
+        return self._to_menu_response(menu, children=[])
+
     async def get_menu_options_tree(self) -> list[MenuResponse]:
         """获取可分配菜单 options 树（用于角色创建/编辑时选择菜单）。"""
 

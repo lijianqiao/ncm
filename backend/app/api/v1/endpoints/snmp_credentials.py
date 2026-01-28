@@ -106,6 +106,32 @@ async def create_snmp_credential(
     return ResponseBase[DeptSnmpCredentialResponse](data=resp)
 
 
+@router.get(
+    "/{snmp_cred_id}",
+    response_model=ResponseBase[DeptSnmpCredentialResponse],
+    summary="获取部门 SNMP 凭据详情",
+)
+async def get_snmp_credential(
+    db: deps.SessionDep,
+    snmp_cred_id: UUID,
+    current_user: deps.CurrentUser,
+    _: deps.User = Depends(deps.require_permissions([PermissionCode.SNMP_CRED_LIST.value])),
+) -> ResponseBase[DeptSnmpCredentialResponse]:
+    """获取单个部门 SNMP 凭据详情。
+
+    Args:
+        db (Session): 数据库会话。
+        snmp_cred_id (UUID): 凭据 ID。
+        current_user (User): 当前登录用户。
+
+    Returns:
+        ResponseBase[DeptSnmpCredentialResponse]: 凭据详情。
+    """
+    service = _get_service(db)
+    resp = await service.get(snmp_cred_id=snmp_cred_id)
+    return ResponseBase(data=resp)
+
+
 @router.put(
     "/{snmp_cred_id}",
     response_model=ResponseBase[DeptSnmpCredentialResponse],
