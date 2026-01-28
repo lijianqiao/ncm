@@ -11,7 +11,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Optional
 
 from sqlalchemy import DateTime, ForeignKey, String, Text
-from sqlalchemy.dialects.postgresql import JSON
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.enums import InventoryAuditStatus
@@ -27,7 +27,7 @@ class InventoryAudit(AuditableModel):
     __tablename__ = "ncm_inventory_audit"
 
     name: Mapped[str] = mapped_column(String(200), nullable=False, comment="盘点任务名称")
-    scope: Mapped[dict] = mapped_column(JSON, nullable=False, comment="盘点范围(JSON)")
+    scope: Mapped[dict] = mapped_column(JSONB, nullable=False, comment="盘点范围(JSONB)")
     status: Mapped[str] = mapped_column(
         String(20),
         default=InventoryAuditStatus.PENDING.value,
@@ -35,7 +35,7 @@ class InventoryAudit(AuditableModel):
         index=True,
         comment="盘点状态",
     )
-    result: Mapped[dict | None] = mapped_column(JSON, nullable=True, comment="盘点结果(JSON)")
+    result: Mapped[dict | None] = mapped_column(JSONB, nullable=True, comment="盘点结果(JSONB)")
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True, comment="错误信息")
 
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, comment="开始时间")
@@ -50,3 +50,5 @@ class InventoryAudit(AuditableModel):
 
     celery_task_id: Mapped[str | None] = mapped_column(String(100), nullable=True, index=True, comment="Celery任务ID")
 
+    def __repr__(self) -> str:
+        return f"<InventoryAudit(name={self.name}, status={self.status})>"

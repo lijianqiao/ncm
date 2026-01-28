@@ -12,7 +12,7 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING, Optional
 
-from sqlalchemy import DateTime, ForeignKey, Index, String, Text, text
+from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Index, String, Text, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import AuditableModel
@@ -33,6 +33,11 @@ class TopologyLink(AuditableModel):
             unique=True,
             postgresql_where=text("is_deleted = false"),
         ),
+        CheckConstraint(
+            "link_type IN ('lldp', 'cdp', 'manual')",
+            name="ck_ncm_topology_link_type",
+        ),
+        {"comment": "网络拓扑链路表"},
     )
 
     # 源设备（本地设备）

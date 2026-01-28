@@ -13,7 +13,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Optional
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text
-from sqlalchemy.dialects.postgresql import JSON
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.enums import DiscoveryStatus
@@ -41,7 +41,7 @@ class Discovery(AuditableModel):
     serial_number: Mapped[str | None] = mapped_column(String(200), nullable=True, comment="序列号")
 
     # 端口信息
-    open_ports: Mapped[dict | None] = mapped_column(JSON, nullable=True, comment="开放端口列表(JSON: {port: service})")
+    open_ports: Mapped[dict | None] = mapped_column(JSONB, nullable=True, comment="开放端口列表(JSONB: {port: service})")
 
     # SSH Banner 信息
     ssh_banner: Mapped[str | None] = mapped_column(Text, nullable=True, comment="SSH Banner")

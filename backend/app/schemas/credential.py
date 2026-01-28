@@ -32,6 +32,7 @@ class DeviceCredential(BaseModel):
 
 
 def _extract_value(v):
+    """从复杂结构中提取值（支持字典、列表等前端传入格式）。"""
     if isinstance(v, dict):
         for key in ("value", "id", "dept_id", "key", "label"):
             if key in v:
@@ -42,8 +43,19 @@ def _extract_value(v):
     return v
 
 
-class OTPCacheRequest(BaseModel):
-    """OTP 缓存请求（用户手动输入 OTP 时）。"""
+# 设备分组中文映射
+_DEVICE_GROUP_MAPPING: dict[str, str] = {
+    "核心层": "core",
+    "汇聚层": "distribution",
+    "接入层": "access",
+    "核心": "core",
+    "汇聚": "distribution",
+    "接入": "access",
+}
+
+
+class OTPRequestBase(BaseModel):
+    """OTP 请求基类，统一验证逻辑。"""
 
     dept_id: UUID = Field(..., description="部门ID")
     device_group: DeviceGroup = Field(..., description="设备分组")
@@ -52,24 +64,24 @@ class OTPCacheRequest(BaseModel):
     @field_validator("dept_id", mode="before")
     @classmethod
     def _normalize_dept_id(cls, v):
+        """从复杂结构中提取部门ID。"""
         return _extract_value(v)
 
     @field_validator("device_group", mode="before")
     @classmethod
     def _normalize_device_group(cls, v):
+        """规范化设备分组（支持中文转换）。"""
         v = _extract_value(v)
         if isinstance(v, str):
             value = v.strip().lower()
-            mapping = {
-                "核心层": "core",
-                "汇聚层": "distribution",
-                "接入层": "access",
-                "核心": "core",
-                "汇聚": "distribution",
-                "接入": "access",
-            }
-            return mapping.get(value, value)
+            return _DEVICE_GROUP_MAPPING.get(value, value)
         return v
+
+
+class OTPCacheRequest(OTPRequestBase):
+    """OTP 缓存请求（用户手动输入 OTP 时）。"""
+
+    pass
 
 
 class OTPCacheResponse(BaseModel):
@@ -80,34 +92,10 @@ class OTPCacheResponse(BaseModel):
     expires_in: int = Field(..., description="剩余有效期（秒）")
 
 
-class OTPVerifyRequest(BaseModel):
+class OTPVerifyRequest(OTPRequestBase):
     """OTP 验证请求（验证 + 缓存）。"""
 
-    dept_id: UUID = Field(..., description="部门ID")
-    device_group: DeviceGroup = Field(..., description="设备分组")
-    otp_code: str = Field(..., min_length=6, max_length=8, description="OTP 验证码")
-
-    @field_validator("dept_id", mode="before")
-    @classmethod
-    def _normalize_dept_id(cls, v):
-        return _extract_value(v)
-
-    @field_validator("device_group", mode="before")
-    @classmethod
-    def _normalize_device_group(cls, v):
-        v = _extract_value(v)
-        if isinstance(v, str):
-            value = v.strip().lower()
-            mapping = {
-                "核心层": "core",
-                "汇聚层": "distribution",
-                "接入层": "access",
-                "核心": "core",
-                "汇聚": "distribution",
-                "接入": "access",
-            }
-            return mapping.get(value, value)
-        return v
+    pass
 
 
 class OTPVerifyResponse(BaseModel):
@@ -145,15 +133,15 @@ class DeviceGroupCredentialResponse(BaseModel):
     id: UUID = Field(..., description="凭据ID")
     dept_id: UUID = Field(..., description="部门ID")
     dept_name: str | None = Field(None, description="部门名称")
-    device_group: str = Field(..., description="设备分组")
+    device_group: DeviceGroup = Field(..., description="设备分组")
     username: str = Field(..., description="SSH 账号")
-    auth_type: str = Field(..., description="认证类型")
+    auth_type: AuthType = Field(..., description="认证类型")
     description: str | None = Field(None, description="凭据描述")
     has_otp_seed: bool = Field(..., description="是否配置了 OTP 种子")
     created_at: datetime = Field(..., description="创建时间")
     updated_at: datetime | None = Field(None, description="更新时间")
 
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(from_attributes=True, use_enum_values=True)
 
 
 class CredentialBatchRequest(BaseModel):

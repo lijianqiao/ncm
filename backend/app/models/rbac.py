@@ -9,7 +9,7 @@
 import uuid
 from typing import TYPE_CHECKING, Optional
 
-from sqlalchemy import Boolean, ForeignKey, Integer, String
+from sqlalchemy import Boolean, ForeignKey, Integer, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.enums import DataScope, MenuType
@@ -20,18 +20,16 @@ if TYPE_CHECKING:
 
 
 class Role(AuditableModel):
-    """
-    角色模型。
-    """
+    """角色模型。"""
 
     __tablename__ = "sys_role"
 
     name: Mapped[str] = mapped_column(String(50), unique=True, nullable=False, comment="角色名称")
     code: Mapped[str] = mapped_column(String(50), unique=True, index=True, nullable=False, comment="角色编码")
     description: Mapped[str | None] = mapped_column(String(255), nullable=True, comment="描述")
-    sort: Mapped[int] = mapped_column(Integer, default=0, comment="排序")
-    data_scope: Mapped[DataScope] = mapped_column(
-        String(30), default=DataScope.SELF, server_default=DataScope.SELF.value, nullable=False, comment="数据权限范围"
+    sort: Mapped[int] = mapped_column(Integer, default=0, nullable=False, comment="排序权重")
+    data_scope: Mapped[str] = mapped_column(
+        String(30), default=DataScope.SELF.value, server_default=DataScope.SELF.value, nullable=False, comment="数据权限范围"
     )
 
     # Relationships
@@ -40,11 +38,12 @@ class Role(AuditableModel):
         "Menu", secondary="sys_role_menu", back_populates="roles", lazy="selectin"
     )
 
+    def __repr__(self) -> str:
+        return f"<Role(code={self.code}, name={self.name})>"
+
 
 class Menu(AuditableModel):
-    """
-    菜单/权限模型。
-    """
+    """菜单/权限模型。"""
 
     __tablename__ = "sys_menu"
 
@@ -56,8 +55,8 @@ class Menu(AuditableModel):
     path: Mapped[str | None] = mapped_column(String(255), nullable=True, comment="路由路径")
     component: Mapped[str | None] = mapped_column(String(255), nullable=True, comment="前端组件路径")
     icon: Mapped[str | None] = mapped_column(String(100), nullable=True, comment="菜单图标")
-    sort: Mapped[int] = mapped_column(Integer, default=0, comment="排序")
-    type: Mapped[MenuType] = mapped_column(String(20), default=MenuType.MENU, nullable=False, comment="菜单类型")
+    sort: Mapped[int] = mapped_column(Integer, default=0, nullable=False, comment="排序权重")
+    type: Mapped[str] = mapped_column(String(20), default=MenuType.MENU.value, nullable=False, comment="菜单类型")
     is_hidden: Mapped[bool] = mapped_column(Boolean, default=False, comment="是否隐藏")
     permission: Mapped[str | None] = mapped_column(String(100), nullable=True, comment="权限标识 (如 user:list)")
 
@@ -68,36 +67,39 @@ class Menu(AuditableModel):
 
     roles: Mapped[list["Role"]] = relationship("Role", secondary="sys_role_menu", back_populates="menus")
 
+    def __repr__(self) -> str:
+        return f"<Menu(name={self.name}, title={self.title})>"
+
 
 class UserRole(Base, UUIDMixin, TimestampMixin):
-    """
-    用户-角色关联表。
-
-    说明：关联表不需要软删除和乐观锁，简化为基础 Mixin。
-    """
+    """用户-角色关联表。"""
 
     __tablename__ = "sys_user_role"
+    __table_args__ = (
+        UniqueConstraint("user_id", "role_id", name="uq_sys_user_role"),
+        {"comment": "用户角色关联表"},
+    )
 
     user_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("sys_user.id", ondelete="CASCADE"), nullable=False, index=True
+        ForeignKey("sys_user.id", ondelete="CASCADE"), nullable=False, index=True, comment="用户ID"
     )
     role_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("sys_role.id", ondelete="CASCADE"), nullable=False, index=True
+        ForeignKey("sys_role.id", ondelete="CASCADE"), nullable=False, index=True, comment="角色ID"
     )
 
 
 class RoleMenu(Base, UUIDMixin, TimestampMixin):
-    """
-    角色-菜单关联表。
-
-    说明：关联表不需要软删除和乐观锁，简化为基础 Mixin。
-    """
+    """角色-菜单关联表。"""
 
     __tablename__ = "sys_role_menu"
+    __table_args__ = (
+        UniqueConstraint("role_id", "menu_id", name="uq_sys_role_menu"),
+        {"comment": "角色菜单关联表"},
+    )
 
     role_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("sys_role.id", ondelete="CASCADE"), nullable=False, index=True
+        ForeignKey("sys_role.id", ondelete="CASCADE"), nullable=False, index=True, comment="角色ID"
     )
     menu_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("sys_menu.id", ondelete="CASCADE"), nullable=False, index=True
+        ForeignKey("sys_menu.id", ondelete="CASCADE"), nullable=False, index=True, comment="菜单ID"
     )

@@ -12,7 +12,21 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.core.enums import DiscoveryStatus
+from app.schemas.common import PaginatedQuery
 from app.utils.validators import validate_ip_address, validate_mac_address
+
+# ===== 扫描类型验证 =====
+
+_VALID_SCAN_TYPES = frozenset({"auto", "nmap", "masscan"})
+
+
+def _validate_scan_type(v: str) -> str:
+    """验证并规范化扫描类型。"""
+    v = (v or "").strip().lower()
+    if v in _VALID_SCAN_TYPES:
+        return v
+    raise ValueError(f"scan_type 仅支持 {', '.join(sorted(_VALID_SCAN_TYPES))}")
+
 
 # ===== 扫描请求 =====
 
@@ -29,10 +43,7 @@ class ScanRequest(BaseModel):
     @field_validator("scan_type")
     @classmethod
     def validate_scan_type(cls, v: str) -> str:
-        v = (v or "").strip().lower()
-        if v in {"auto", "nmap", "masscan"}:
-            return v
-        raise ValueError("scan_type 仅支持 auto/nmap/masscan")
+        return _validate_scan_type(v)
 
 
 class ScanSubnetRequest(BaseModel):
@@ -45,10 +56,7 @@ class ScanSubnetRequest(BaseModel):
     @field_validator("scan_type")
     @classmethod
     def validate_scan_type(cls, v: str) -> str:
-        v = (v or "").strip().lower()
-        if v in {"auto", "nmap", "masscan"}:
-            return v
-        raise ValueError("scan_type 仅支持 auto/nmap/masscan")
+        return _validate_scan_type(v)
 
 
 # ===== 扫描结果 =====
@@ -205,7 +213,7 @@ class DiscoveryResponse(DiscoveryBase):
     first_seen_at: datetime
     last_seen_at: datetime
     offline_days: int
-    status: str
+    status: DiscoveryStatus
     matched_device_id: UUID | None = None
     scan_source: str | None = None
     created_at: datetime
@@ -215,14 +223,12 @@ class DiscoveryResponse(DiscoveryBase):
     matched_device_name: str | None = Field(default=None, description="匹配设备名称")
     matched_device_ip: str | None = Field(default=None, description="匹配设备IP")
 
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(from_attributes=True, use_enum_values=True)
 
 
-class DiscoveryListQuery(BaseModel):
+class DiscoveryListQuery(PaginatedQuery):
     """发现记录列表查询参数。"""
 
-    page: int = Field(default=1, ge=1, description="页码")
-    page_size: int = Field(default=20, ge=1, le=500, description="每页数量")
     status: DiscoveryStatus | None = Field(default=None, description="状态筛选")
     keyword: str | None = Field(default=None, description="关键词搜索 (IP/主机名)")
     scan_source: str | None = Field(default=None, description="扫描来源筛选")

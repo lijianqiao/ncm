@@ -11,7 +11,8 @@
 import uuid
 from typing import TYPE_CHECKING
 
-from sqlalchemy import JSON, Boolean, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.enums import ParamType
@@ -25,6 +26,10 @@ class TemplateParameter(AuditableModel):
     """模板参数定义（表单化）。"""
 
     __tablename__ = "ncm_template_parameter"
+    __table_args__ = (
+        UniqueConstraint("template_id", "name", name="uq_ncm_template_parameter_name"),
+        {"comment": "模板参数定义表"},
+    )
 
     # 关联模板
     template_id: Mapped[uuid.UUID] = mapped_column(
@@ -48,7 +53,7 @@ class TemplateParameter(AuditableModel):
 
     # 类型相关约束
     options: Mapped[list[str] | None] = mapped_column(
-        JSON, nullable=True, comment="下拉选项（select 类型时使用）"
+        JSONB, nullable=True, comment="下拉选项（select 类型时使用）"
     )
     min_value: Mapped[int | None] = mapped_column(Integer, nullable=True, comment="最小值（数值类型）")
     max_value: Mapped[int | None] = mapped_column(Integer, nullable=True, comment="最大值（数值类型）")

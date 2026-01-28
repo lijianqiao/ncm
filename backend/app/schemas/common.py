@@ -25,13 +25,18 @@ class TimestampSchema(BaseModel):
 
 
 class ResponseBase[T](BaseModel):
-    """
-    统一响应格式。
-    """
+    """统一响应格式。"""
 
-    code: int = 200
-    message: str = "Success"
-    data: T | None = None
+    code: int = Field(default=200, description="响应状态码")
+    message: str = Field(default="Success", description="响应消息")
+    data: T | None = Field(default=None, description="响应数据")
+
+
+class PaginatedQuery(BaseModel):
+    """分页查询基类。"""
+
+    page: int = Field(default=1, ge=1, description="页码")
+    page_size: int = Field(default=20, ge=1, le=500, description="每页数量")
 
 
 class PaginatedResponse[T](BaseModel):

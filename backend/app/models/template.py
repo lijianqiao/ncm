@@ -11,7 +11,8 @@
 import uuid
 from typing import TYPE_CHECKING, Optional
 
-from sqlalchemy import JSON, Boolean, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, ForeignKey, Integer, String, Text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.enums import ApprovalStatus, DeviceType, TemplateStatus, TemplateType
@@ -41,7 +42,7 @@ class Template(AuditableModel):
 
     # 适用厂商（支持多选）
     vendors: Mapped[list[str]] = mapped_column(
-        JSON, nullable=False, default=list, comment="适用厂商列表(h3c/huawei/cisco/other)"
+        JSONB, nullable=False, default=list, comment="适用厂商列表(h3c/huawei/cisco/other)"
     )
 
     # 适用设备类型

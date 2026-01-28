@@ -12,6 +12,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.core.enums import AlertSeverity, AlertStatus, AlertType
+from app.schemas.common import PaginatedQuery
 
 
 class AlertCreate(BaseModel):
@@ -46,9 +47,9 @@ class AlertResponse(BaseModel):
     """告警响应。"""
 
     id: UUID
-    alert_type: str
-    severity: str
-    status: str
+    alert_type: AlertType
+    severity: AlertSeverity
+    status: AlertStatus
     title: str
     message: str | None = None
     details: dict | None = None
@@ -76,14 +77,12 @@ class AlertResponse(BaseModel):
     closed_by_display: str | None = None
     closed_at: datetime | None = None
 
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(from_attributes=True, use_enum_values=True)
 
 
-class AlertListQuery(BaseModel):
+class AlertListQuery(PaginatedQuery):
     """告警列表查询。"""
 
-    page: int = Field(default=1, ge=1, description="页码")
-    page_size: int = Field(default=20, ge=1, le=500, description="每页数量")
     keyword: str | None = Field(default=None, description="关键词(标题/正文)")
     alert_type: AlertType | None = Field(default=None, description="类型筛选")
     severity: AlertSeverity | None = Field(default=None, description="级别筛选")

@@ -19,8 +19,13 @@ if TYPE_CHECKING:
 
 
 class DeptSnmpCredential(AuditableModel):
+    """部门 SNMP 凭据模型。"""
+
     __tablename__ = "ncm_dept_snmp_credential"
-    __table_args__ = (UniqueConstraint("dept_id", name="uq_dept_snmp_credential_dept_id"),)
+    __table_args__ = (
+        UniqueConstraint("dept_id", name="uq_dept_snmp_credential_dept_id"),
+        {"comment": "部门 SNMP 凭据表"},
+    )
 
     dept_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("sys_dept.id", ondelete="CASCADE"),

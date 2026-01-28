@@ -13,7 +13,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Optional
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, Text
-from sqlalchemy.dialects.postgresql import JSON
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.enums import ApprovalStatus, TaskStatus
@@ -52,7 +52,7 @@ class Task(AuditableModel):
 
     # 目标设备
     target_devices: Mapped[dict | None] = mapped_column(
-        JSON, nullable=True, comment="目标设备列表(JSON: {device_ids: [...]})"
+        JSONB, nullable=True, comment="目标设备列表(JSONB: {device_ids: [...]})"
     )
     total_devices: Mapped[int] = mapped_column(Integer, default=0, nullable=False, comment="设备总数")
     success_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False, comment="成功数")
@@ -60,7 +60,7 @@ class Task(AuditableModel):
 
     # 执行结果
     result: Mapped[dict | None] = mapped_column(
-        JSON, nullable=True, comment="执行结果(JSON: {success: [...], failed: [...]})"
+        JSONB, nullable=True, comment="执行结果(JSONB: {success: [...], failed: [...]})"
     )
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True, comment="错误信息")
 
@@ -70,7 +70,7 @@ class Task(AuditableModel):
         nullable=True,
         comment="模板ID",
     )
-    template_params: Mapped[dict | None] = mapped_column(JSON, nullable=True, comment="模板参数(JSON)")
+    template_params: Mapped[dict | None] = mapped_column(JSONB, nullable=True, comment="模板参数(JSONB)")
 
     template: Mapped[Optional["Template"]] = relationship("Template", foreign_keys=[template_id], lazy="selectin")
 
@@ -106,8 +106,8 @@ class Task(AuditableModel):
         Integer, default=0, nullable=False, comment="当前已通过的审批级别(0-3)"
     )
 
-    # 下发计划/灰度参数（JSON）
-    deploy_plan: Mapped[dict | None] = mapped_column(JSON, nullable=True, comment="下发计划(JSON)")
+    # 下发计划/灰度参数（JSONB）
+    deploy_plan: Mapped[dict | None] = mapped_column(JSONB, nullable=True, comment="下发计划(JSONB)")
 
     # 执行时间
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, comment="开始执行时间")

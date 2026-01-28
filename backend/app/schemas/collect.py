@@ -6,7 +6,7 @@
 @Docs: ARP/MAC 采集 Pydantic Schema 定义。
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator
@@ -25,7 +25,7 @@ class ARPEntry(BaseModel):
     interface: str | None = Field(default=None, description="接口名称")
     age: str | None = Field(default=None, description="老化时间")
     entry_type: str | None = Field(default=None, description="条目类型 (Dynamic/Static)")
-    updated_at: datetime = Field(default_factory=datetime.now, description="更新时间")
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), description="更新时间(UTC)")
 
     @field_validator("ip_address")
     @classmethod
@@ -61,7 +61,7 @@ class MACEntry(BaseModel):
     interface: str | None = Field(default=None, description="接口名称")
     entry_type: str | None = Field(default=None, description="条目类型 (Learned/Config/Static)")
     state: str | None = Field(default=None, description="状态")
-    updated_at: datetime = Field(default_factory=datetime.now, description="更新时间")
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), description="更新时间(UTC)")
 
     @field_validator("mac_address")
     @classmethod

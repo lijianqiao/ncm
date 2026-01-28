@@ -9,7 +9,7 @@
 import uuid
 from typing import TYPE_CHECKING, Optional
 
-from sqlalchemy import BigInteger, ForeignKey, Index, String, Text
+from sqlalchemy import BigInteger, CheckConstraint, ForeignKey, Index, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.enums import BackupStatus, BackupType
@@ -26,6 +26,10 @@ class Backup(AuditableModel):
     __tablename__ = "ncm_backup"
     __table_args__ = (
         Index("ix_ncm_backup_device_time", "device_id", "created_at"),
+        CheckConstraint(
+            "content IS NOT NULL OR content_path IS NOT NULL",
+            name="ck_ncm_backup_content",
+        ),
         {"comment": "配置备份表"},
     )
 

@@ -12,6 +12,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, computed_field
 
 from app.core.enums import BackupStatus, BackupType, DeviceGroup
+from app.schemas.common import PaginatedQuery
 from app.schemas.device import DeviceResponse
 
 
@@ -39,8 +40,8 @@ class BackupResponse(BaseModel):
 
     id: UUID
     device_id: UUID
-    backup_type: str
-    status: str
+    backup_type: BackupType
+    status: BackupStatus
     content_size: int
     md5_hash: str | None = None
     error_message: str | None = None
@@ -61,7 +62,7 @@ class BackupResponse(BaseModel):
         """是否有配置内容（不直接返回内容，需要单独接口获取）。"""
         return bool(self.content or self.content_path)
 
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(from_attributes=True, use_enum_values=True)
 
 
 class BackupContentResponse(BaseModel):
@@ -74,11 +75,9 @@ class BackupContentResponse(BaseModel):
     md5_hash: str | None = None
 
 
-class BackupListQuery(BaseModel):
+class BackupListQuery(PaginatedQuery):
     """备份列表查询参数。"""
 
-    page: int = Field(default=1, ge=1, description="页码")
-    page_size: int = Field(default=20, ge=1, le=500, description="每页数量")
     device_id: UUID | None = Field(default=None, description="设备ID筛选")
     backup_type: BackupType | None = Field(default=None, description="备份类型筛选")
     status: BackupStatus | None = Field(default=None, description="备份状态筛选")

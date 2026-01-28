@@ -31,20 +31,31 @@ class Base(DeclarativeBase):
 
 
 class TimestampMixin:
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=sql_func.now(), nullable=False)
+    """提供创建时间和更新时间字段的 Mixin。"""
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=sql_func.now(), nullable=False, comment="创建时间"
+    )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=sql_func.now(),
         onupdate=sql_func.now(),
         nullable=False,
+        comment="更新时间",
     )
 
 
 class SoftDeleteMixin:
-    is_deleted: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false", nullable=False)
+    """提供软删除标志的 Mixin。"""
+
+    is_deleted: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false", nullable=False, comment="是否已删除"
+    )
 
 
 class UUIDMixin:
+    """提供 UUIDv7 主键的 Mixin。"""
+
     id: Mapped[uuid.UUID] = mapped_column(
         types.Uuid,
         primary_key=True,
@@ -52,12 +63,19 @@ class UUIDMixin:
         unique=True,
         index=True,
         nullable=False,
+        comment="主键ID(UUIDv7)",
     )
 
 
 class VersionMixin:
+    """提供乐观锁版本控制的 Mixin。"""
+
     version_id: Mapped[str] = mapped_column(
-        String, default=lambda: uuid.uuid4().hex, onupdate=lambda: uuid.uuid4().hex, nullable=False
+        String(32),  # 明确长度为 32 字符（UUID hex）
+        default=lambda: uuid.uuid4().hex,
+        onupdate=lambda: uuid.uuid4().hex,
+        nullable=False,
+        comment="乐观锁版本号",
     )
 
     # 启用 SQLAlchemy 的乐观锁功能
@@ -69,7 +87,7 @@ class VersionMixin:
 
 class AuditableModel(Base, UUIDMixin, TimestampMixin, SoftDeleteMixin, VersionMixin):
     """
-    抽象基础模型包括：
+    抽象基础模型，组合以下功能：
     - UUIDv7 主键
     - 创建/更新时间戳
     - 软删除标志
@@ -78,4 +96,6 @@ class AuditableModel(Base, UUIDMixin, TimestampMixin, SoftDeleteMixin, VersionMi
 
     __abstract__ = True
 
-    is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true", nullable=False)
+    is_active: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default="true", nullable=False, comment="是否启用"
+    )

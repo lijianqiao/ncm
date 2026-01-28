@@ -12,17 +12,18 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.core.enums import ApprovalStatus, DeviceType, DeviceVendor, ParamType, TemplateStatus, TemplateType
+from app.schemas.common import PaginatedQuery
 
 
 class TemplateApprovalRecord(BaseModel):
     """模板审批记录（单级）。"""
 
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(from_attributes=True, use_enum_values=True)
 
     level: int
     approver_id: UUID | None = None
     approver_name: str | None = None
-    status: str = ApprovalStatus.PENDING.value
+    status: ApprovalStatus = ApprovalStatus.PENDING
     comment: str | None = None
     approved_at: datetime | None = None
 
@@ -61,35 +62,33 @@ class TemplateUpdate(BaseModel):
 class TemplateResponse(BaseModel):
     """模板响应体。"""
 
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(from_attributes=True, use_enum_values=True)
 
     id: UUID
     name: str
     description: str | None = None
-    template_type: str
+    template_type: TemplateType
     content: str
-    vendors: list[str]
-    device_type: str
+    vendors: list[DeviceVendor]
+    device_type: DeviceType
     parameters: str | None = None
     version: int
     parent_id: UUID | None = None
-    status: str
+    status: TemplateStatus
     creator_id: UUID | None = None
     created_by: UUID | None = None
     created_by_name: str | None = None
     usage_count: int
-    approval_status: str | None = None
+    approval_status: ApprovalStatus | None = None
     current_approval_level: int | None = None
     approvals: list[TemplateApprovalRecord] = Field(default_factory=list)
     created_at: datetime
     updated_at: datetime
 
 
-class TemplateListQuery(BaseModel):
+class TemplateListQuery(PaginatedQuery):
     """模板列表查询参数。"""
 
-    page: int = Field(default=1, ge=1)
-    page_size: int = Field(default=20, ge=1, le=500)
     vendor: DeviceVendor | None = None
     template_type: TemplateType | None = None
     status: TemplateStatus | None = None
@@ -175,13 +174,13 @@ class TemplateParameterUpdate(BaseModel):
 class TemplateParameterResponse(BaseModel):
     """模板参数响应体。"""
 
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(from_attributes=True, use_enum_values=True)
 
     id: UUID
     template_id: UUID
     name: str
     label: str
-    param_type: str
+    param_type: ParamType
     required: bool
     default_value: str | None = None
     description: str | None = None
@@ -224,25 +223,25 @@ class TemplateUpdateV2(BaseModel):
 class TemplateResponseV2(BaseModel):
     """模板响应体（V2 - 包含表单化参数）。"""
 
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(from_attributes=True, use_enum_values=True)
 
     id: UUID
     name: str
     description: str | None = None
-    template_type: str
+    template_type: TemplateType
     content: str
-    vendors: list[str]
-    device_type: str
+    vendors: list[DeviceVendor]
+    device_type: DeviceType
     parameters: str | None = None
     parameters_list: list[TemplateParameterResponse] = Field(default_factory=list, description="表单化参数列表")
     version: int
     parent_id: UUID | None = None
-    status: str
+    status: TemplateStatus
     creator_id: UUID | None = None
     created_by: UUID | None = None
     created_by_name: str | None = None
     usage_count: int
-    approval_status: str | None = None
+    approval_status: ApprovalStatus | None = None
     current_approval_level: int | None = None
     approvals: list[TemplateApprovalRecord] = Field(default_factory=list)
     created_at: datetime

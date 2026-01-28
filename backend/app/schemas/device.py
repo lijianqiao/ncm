@@ -12,7 +12,9 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.core.enums import AuthType, DeviceGroup, DeviceStatus, DeviceVendor
+from app.schemas.common import PaginatedQuery
 from app.schemas.dept import DeptSimpleResponse
+from app.utils.validators import validate_ip_address
 
 
 class DeviceBase(BaseModel):
@@ -35,13 +37,7 @@ class DeviceBase(BaseModel):
     @classmethod
     def validate_ip(cls, v: str) -> str:
         """验证 IP 地址格式。"""
-        import ipaddress
-
-        try:
-            ipaddress.ip_address(v)
-        except ValueError as e:
-            raise ValueError(f"无效的 IP 地址格式: {v}") from e
-        return v
+        return validate_ip_address(v)
 
 
 class DeviceCreate(DeviceBase):
@@ -87,13 +83,7 @@ class DeviceUpdate(BaseModel):
         """验证 IP 地址格式。"""
         if v is None:
             return v
-        import ipaddress
-
-        try:
-            ipaddress.ip_address(v)
-        except ValueError as e:
-            raise ValueError(f"无效的 IP 地址格式: {v}") from e
-        return v
+        return validate_ip_address(v)
 
 
 class DeviceResponse(BaseModel):
@@ -102,16 +92,16 @@ class DeviceResponse(BaseModel):
     id: UUID
     name: str
     ip_address: str
-    vendor: str
+    vendor: DeviceVendor
     model: str | None = None
     platform: str | None = None
     location: str | None = None
     description: str | None = None
     ssh_port: int
-    auth_type: str
+    auth_type: AuthType
     dept_id: UUID | None = None
-    device_group: str
-    status: str
+    device_group: DeviceGroup
+    status: DeviceStatus
     serial_number: str | None = None
     os_version: str | None = None
     stock_in_at: datetime | None = None
@@ -126,14 +116,12 @@ class DeviceResponse(BaseModel):
     # 关联部门（使用简要响应，避免嵌套加载 children 导致 MissingGreenlet）
     dept: DeptSimpleResponse | None = None
 
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(from_attributes=True, use_enum_values=True)
 
 
-class DeviceListQuery(BaseModel):
+class DeviceListQuery(PaginatedQuery):
     """设备列表查询参数。"""
 
-    page: int = Field(default=1, ge=1, description="页码")
-    page_size: int = Field(default=20, ge=1, le=500, description="每页数量")
     keyword: str | None = Field(default=None, max_length=100, description="搜索关键词(名称/IP)")
     vendor: DeviceVendor | None = Field(default=None, description="厂商筛选")
     status: DeviceStatus | None = Field(default=None, description="状态筛选")
