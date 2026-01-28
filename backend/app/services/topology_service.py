@@ -39,6 +39,7 @@ from app.schemas.topology import (
     TopologyStats,
 )
 from app.services.base import DeviceCredentialMixin
+from app.network.platform_config import get_scrapli_platform
 
 # 拓扑缓存键
 TOPOLOGY_CACHE_KEY = "ncm:topology:data"
@@ -155,7 +156,7 @@ class TopologyService(DeviceCredentialMixin):
                         "port": device.ssh_port or 22,
                         "username": credential.username,
                         "password": credential.password,
-                        "platform": self._get_platform(device.vendor),
+                        "platform": get_scrapli_platform(device.vendor),
                     }
                     hosts_data.append(host_data)
                     # 使用 device.name 作为 key，与 Nornir host_name 保持一致
@@ -349,8 +350,19 @@ class TopologyService(DeviceCredentialMixin):
             # OTP 异常直接抛出，让任务失败并被 API 捕获
             raise
         except Exception as e:
-            logger.error("LLDP 采集失败", error=str(e))
+            # 记录错误并设置结果，避免静默失败
+            logger.error("LLDP 采集失败", error=str(e), exc_info=True)
+            celery_details_logger.error(
+                "LLDP 采集异常",
+                error=str(e),
+                error_type=type(e).__name__,
+                total_devices=result.total_devices,
+                success_count=result.success_count,
+                failed_count=result.failed_count,
+            )
             result.completed_at = datetime.now()
+            # 重新抛出异常，让调用方知道发生了错误
+            raise
 
         return result
 
@@ -364,12 +376,9 @@ class TopologyService(DeviceCredentialMixin):
         Returns:
             平台标识
         """
-        platform_map = {
-            "h3c": "hp_comware",
-            "huawei": "huawei_vrp",
-            "cisco": "cisco_ios",
-        }
-        return platform_map.get(vendor or "", "cisco_ios")
+        from app.network.platform_config import get_scrapli_platform
+
+        return get_scrapli_platform(vendor)
 
     def _convert_lldp_results(self, results) -> dict[str, Any]:
         """

@@ -62,7 +62,7 @@ async def _process_offline_devices(
         query = query.order_by(Discovery.id).limit(BATCH_SIZE)
 
         rs = await db.execute(query)
-        items = list(rs.scalars().all())
+        items = rs.scalars().all()
         if not items:
             break
 
@@ -135,7 +135,7 @@ async def _process_shadow_assets(
         query = query.order_by(Discovery.id).limit(BATCH_SIZE)
 
         rs = await db.execute(query)
-        items = list(rs.scalars().all())
+        items = rs.scalars().all()
         if not items:
             break
 
@@ -203,7 +203,7 @@ async def _auto_close_recovered_offline_alerts(
         query = query.order_by(Discovery.id).limit(BATCH_SIZE)
 
         rs = await db.execute(query)
-        items = list(rs.scalars().all())
+        items = rs.scalars().all()
         if not items:
             break
 
@@ -241,7 +241,7 @@ async def _auto_close_matched_shadow_alerts(
         query = query.order_by(Discovery.id).limit(BATCH_SIZE)
 
         rs = await db.execute(query)
-        items = list(rs.scalars().all())
+        items = rs.scalars().all()
         if not items:
             break
 

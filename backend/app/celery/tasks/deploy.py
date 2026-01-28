@@ -141,34 +141,47 @@ def _check_otp_exception_in_results(results) -> OTPRequiredException | None:
 
 
 async def _get_device_credential(db, device: Device, failed_devices: list[str] | None = None):
+    """获取设备凭据（使用 match-case 进行认证类型匹配）。"""
     auth_type = AuthType(device.auth_type)
 
-    if auth_type == AuthType.STATIC:
-        if not device.username or not device.password_encrypted:
-            raise ValueError("设备缺少用户名或密码配置")
-        return await otp_service.get_credential_for_static_device(device.username, device.password_encrypted)
+    match auth_type:
+        case AuthType.STATIC:
+            if not device.username or not device.password_encrypted:
+                raise ValueError("设备缺少用户名或密码配置")
+            return await otp_service.get_credential_for_static_device(
+                device.username, device.password_encrypted
+            )
 
-    if not device.dept_id:
-        raise ValueError("设备缺少部门关联")
+        case AuthType.OTP_SEED:
+            # OTP 种子类型
+            if not device.dept_id:
+                raise ValueError("设备缺少部门关联")
+            credential = await credential_crud.get_by_dept_and_group(
+                db, device.dept_id, device.device_group
+            )
+            if not credential:
+                raise ValueError("设备组凭据未配置")
+            if not credential.otp_seed_encrypted:
+                raise ValueError("设备组 OTP 种子未配置")
+            return await otp_service.get_credential_for_otp_seed_device(
+                credential.username, credential.otp_seed_encrypted
+            )
 
-    credential = await credential_crud.get_by_dept_and_group(db, device.dept_id, device.device_group)
-    if not credential:
-        raise ValueError("设备组凭据未配置")
-
-    if auth_type == AuthType.OTP_SEED:
-        if not credential.otp_seed_encrypted:
-            raise ValueError("设备组 OTP 种子未配置")
-        return await otp_service.get_credential_for_otp_seed_device(credential.username, credential.otp_seed_encrypted)
-
-    if auth_type == AuthType.OTP_MANUAL:
-        return await otp_service.get_credential_for_otp_manual_device(
-            username=credential.username,
-            dept_id=device.dept_id,
-            device_group=device.device_group,
-            failed_devices=failed_devices,
-        )
-
-    raise ValueError(f"不支持的认证类型: {auth_type}")
+        case AuthType.OTP_MANUAL:
+            # OTP 手动输入类型
+            if not device.dept_id:
+                raise ValueError("设备缺少部门关联")
+            credential = await credential_crud.get_by_dept_and_group(
+                db, device.dept_id, device.device_group
+            )
+            if not credential:
+                raise ValueError("设备组凭据未配置")
+            return await otp_service.get_credential_for_otp_manual_device(
+                username=credential.username,
+                dept_id=device.dept_id,
+                device_group=device.device_group,
+                failed_devices=failed_devices,
+            )
 
 
 async def _save_pre_change_backup(db, device: Device, config_content: str) -> Backup:

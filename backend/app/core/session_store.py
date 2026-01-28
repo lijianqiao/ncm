@@ -254,28 +254,35 @@ class RedisSessionStore(SessionStore):
 
         zkey = _online_zset_key()
 
-        # 全量扫描并去重：保证同一 user_id 只返回一条，并顺手清理脏数据
+        # 使用游标分页扫描，限制最大扫描数量避免阻塞 Redis
+        MAX_SCAN_ITERATIONS = 50  # 最大扫描迭代次数
+        SCAN_BATCH_SIZE = 200  # 每次扫描数量
+
         sessions_by_user: dict[str, OnlineSession] = {}
         cursor = 0
+        iterations = 0
+        cleanup_tasks: list[str] = []  # 收集需要清理的成员，批量处理
+
         try:
-            while True:
-                cursor, pairs = await cache_module.redis_client.zscan(zkey, cursor=cursor, count=500)
+            while iterations < MAX_SCAN_ITERATIONS:
+                iterations += 1
+                cursor, pairs = await cache_module.redis_client.zscan(
+                    zkey, cursor=cursor, count=SCAN_BATCH_SIZE
+                )
+
                 for member, _score in pairs:
                     mid = str(member)
                     session = await self.get_session(mid)
 
                     if session is None:
-                        # member 对应的 session key 已过期不存在：清理 zset 成员
-                        try:
-                            await cache_module.redis_client.zrem(zkey, mid)
-                        except Exception:
-                            pass
+                        # member 对应的 session key 已过期不存在：标记清理
+                        cleanup_tasks.append(mid)
                         continue
 
                     # 兼容历史数据：member 可能不是 user_id（例：session_id）
                     if mid != str(session.user_id):
                         try:
-                            # 迁移为规范member=user_id
+                            # 迁移为规范 member=user_id
                             await cache_module.redis_client.zadd(
                                 zkey, {str(session.user_id): float(session.last_seen_at)}
                             )
@@ -284,8 +291,7 @@ class RedisSessionStore(SessionStore):
                                 max(1, int(_default_online_ttl_seconds())),
                                 json.dumps(asdict(session), ensure_ascii=False),
                             )
-                            await cache_module.redis_client.zrem(zkey, mid)
-                            await cache_module.redis_client.delete(_session_key(mid))
+                            cleanup_tasks.append(mid)
                         except Exception:
                             pass
 
@@ -296,6 +302,18 @@ class RedisSessionStore(SessionStore):
 
                 if cursor == 0:
                     break
+
+            # 批量清理无效成员（使用 Pipeline 减少网络往返）
+            if cleanup_tasks:
+                try:
+                    async with cache_module.redis_client.pipeline() as pipe:
+                        for mid in cleanup_tasks:
+                            pipe.zrem(zkey, mid)
+                            pipe.delete(_session_key(mid))
+                        await pipe.execute()
+                except Exception:
+                    pass
+
         except Exception as e:
             logger.warning(f"在线会话列表扫描失败(REDIS): {e}")
             return [], 0

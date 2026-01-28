@@ -112,7 +112,10 @@ def encrypt_credential(plaintext: str, key: str) -> str:
     except EncryptionError:
         raise
     except Exception as e:
-        raise EncryptionError(f"加密失败: {e!s}") from e
+        # 仅在日志中记录详细错误，避免向用户泄露敏感信息
+        from app.core.logger import logger
+        logger.error("加密操作失败", exc_info=True)
+        raise EncryptionError("加密失败，请检查密钥配置") from e
 
 
 def decrypt_credential(ciphertext: str, key: str) -> str:
@@ -158,7 +161,10 @@ def decrypt_credential(ciphertext: str, key: str) -> str:
     except EncryptionError as e:
         raise DecryptionError("密钥格式无效") from e
     except Exception as e:
-        raise DecryptionError(f"解密失败: {e!s}") from e
+        # 仅在日志中记录详细错误，避免向用户泄露敏感信息
+        from app.core.logger import logger
+        logger.error("解密操作失败", exc_info=True)
+        raise DecryptionError("解密失败，请检查密钥配置或密文完整性") from e
 
 
 # ===== 便捷函数：静态密码加密 =====

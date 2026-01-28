@@ -67,9 +67,6 @@ async def get_user_dept_ids(
             # 仅本人 - 返回空列表表示只能看自己创建的
             return []
 
-        case _:
-            return []
-
 
 def apply_dept_filter(
     stmt: Select,

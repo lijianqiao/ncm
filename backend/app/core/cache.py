@@ -69,14 +69,14 @@ async def close_redis() -> None:
 def _generate_cache_key(prefix: str, func: Callable, args: tuple, kwargs: dict) -> str:
     """
     根据函数名和参数生成缓存 Key。
-    使用 orjson 提高序列化性能。
+    使用 orjson 提高序列化性能，SHA256 提高哈希安全性和减少碰撞风险。
     """
     # 排除 self 参数
     key_args = args[1:] if args and hasattr(args[0], "__class__") else args
     key_data = {"args": str(key_args), "kwargs": str(sorted(kwargs.items()))}
-    # 使用 orjson 序列化 + md5 哈希
+    # 使用 orjson 序列化 + SHA256 哈希（取前 32 位，降低碰撞风险）
     key_bytes = orjson.dumps(key_data, option=orjson.OPT_SORT_KEYS)
-    key_hash = hashlib.md5(key_bytes).hexdigest()[:16]
+    key_hash = hashlib.sha256(key_bytes).hexdigest()[:32]
     return f"{prefix}:{func.__module__}.{func.__qualname__}:{key_hash}"
 
 

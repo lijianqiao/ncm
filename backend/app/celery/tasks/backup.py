@@ -42,26 +42,19 @@ from app.utils.validators import (
     should_skip_backup_save_due_to_unchanged_md5,
 )
 
-# 备份类型与保留数量的映射（懒加载，避免模块导入时 settings 未初始化）
-_BACKUP_RETENTION_MAP: dict[BackupType, str] | None = None
-
-
 def _get_keep_count(bt: BackupType) -> int:
-    """根据备份类型获取保留数量（使用字典映射替代 if-elif）。"""
-    global _BACKUP_RETENTION_MAP
-    if _BACKUP_RETENTION_MAP is None:
-        _BACKUP_RETENTION_MAP = {
-            BackupType.SCHEDULED: "BACKUP_RETENTION_SCHEDULED_KEEP",
-            BackupType.MANUAL: "BACKUP_RETENTION_MANUAL_KEEP",
-            BackupType.PRE_CHANGE: "BACKUP_RETENTION_PRE_CHANGE_KEEP",
-            BackupType.POST_CHANGE: "BACKUP_RETENTION_POST_CHANGE_KEEP",
-            BackupType.INCREMENTAL: "BACKUP_RETENTION_INCREMENTAL_KEEP",
-        }
-
-    attr_name = _BACKUP_RETENTION_MAP.get(bt)
-    if attr_name is None:
-        return 0
-    return getattr(settings, attr_name, 0)
+    """根据备份类型获取保留数量（使用 match-case 进行模式匹配）。"""
+    match bt:
+        case BackupType.SCHEDULED:
+            return getattr(settings, "BACKUP_RETENTION_SCHEDULED_KEEP", 0)
+        case BackupType.MANUAL:
+            return getattr(settings, "BACKUP_RETENTION_MANUAL_KEEP", 0)
+        case BackupType.PRE_CHANGE:
+            return getattr(settings, "BACKUP_RETENTION_PRE_CHANGE_KEEP", 0)
+        case BackupType.POST_CHANGE:
+            return getattr(settings, "BACKUP_RETENTION_POST_CHANGE_KEEP", 0)
+        case BackupType.INCREMENTAL:
+            return getattr(settings, "BACKUP_RETENTION_INCREMENTAL_KEEP", 0)
 
 
 async def _enforce_retention_for_device(db: Any, device_id: str) -> None:
@@ -365,7 +358,8 @@ async def _save_backup_results(
 
             if config_content:
                 content_size = len(config_content.encode("utf-8"))
-                md5_hash = compute_text_md5(config_content)
+                # 使用异步 MD5 计算，避免阻塞事件循环
+                md5_hash = await compute_text_md5_async(config_content)
 
                 # md5 去重：仅对 pre/post 变更备份生效
                 if bt in {BackupType.PRE_CHANGE, BackupType.POST_CHANGE}:

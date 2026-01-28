@@ -244,6 +244,10 @@ _VENDOR_PLATFORM_ALIASES: dict[str, str] = {
 }
 
 
+# 默认平台（当无法识别厂商时使用）
+DEFAULT_PLATFORM = "hp_comware"
+
+
 def get_platform_for_vendor(vendor: str) -> str:
     """
     根据厂商获取 Scrapli 平台标识。
@@ -253,6 +257,9 @@ def get_platform_for_vendor(vendor: str) -> str:
 
     Returns:
         str: Scrapli 平台标识 (hp_comware, huawei_vrp, cisco_iosxe 等)
+
+    Raises:
+        ValueError: 不支持的平台/厂商
     """
     v = (vendor or "").strip().lower().replace("-", "_").replace(" ", "_")
 
@@ -264,6 +271,28 @@ def get_platform_for_vendor(vendor: str) -> str:
     if v in VENDOR_PLATFORM_MAP:
         return VENDOR_PLATFORM_MAP[v]
     raise ValueError(f"不支持的平台/厂商: {vendor}")
+
+
+def get_scrapli_platform(vendor: str | None, default: str | None = None) -> str:
+    """
+    根据厂商名称获取 Scrapli 平台标识（带默认值，不抛异常）。
+
+    这是 get_platform_for_vendor 的安全版本，当厂商无法识别时返回默认值而不是抛出异常。
+
+    Args:
+        vendor: 厂商名称（不区分大小写）
+        default: 自定义默认值，为 None 时使用 DEFAULT_PLATFORM
+
+    Returns:
+        Scrapli 平台标识
+    """
+    if not vendor:
+        return default if default is not None else DEFAULT_PLATFORM
+
+    try:
+        return get_platform_for_vendor(vendor)
+    except ValueError:
+        return default if default is not None else DEFAULT_PLATFORM
 
 
 def get_ntc_platform(scrapli_platform: str) -> str:
