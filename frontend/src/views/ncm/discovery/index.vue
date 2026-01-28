@@ -9,6 +9,7 @@ import {
   NInput,
   NSelect,
   NInputNumber,
+  NIcon,
   useDialog,
   type DataTableColumns,
   NTag,
@@ -20,6 +21,7 @@ import {
   NTable,
   type DropdownOption,
 } from 'naive-ui'
+import { CopyOutline } from '@vicons/ionicons5'
 import { $alert } from '@/utils/alert'
 import {
   getDiscoveryRecords,
@@ -779,6 +781,13 @@ watch(activeTab, (val) => {
   }
 })
 
+// ==================== 工具方法 ====================
+
+const copyToClipboard = (text: string, label = '已复制') => {
+  navigator.clipboard.writeText(text)
+  $alert.success(label)
+}
+
 // ==================== CMDB 比对 ====================
 
 const handleCompareCMDB = () => {
@@ -849,9 +858,36 @@ const handleCompareCMDB = () => {
             </thead>
             <tbody>
               <tr v-for="item in shadowAssets" :key="item.id">
-                <td>{{ item.ip_address }}</td>
-                <td>{{ item.mac_address || '-' }}</td>
-                <td>{{ item.vendor || '-' }}</td>
+                <td>
+                  <span
+                    v-if="item.ip_address"
+                    class="ip-cell"
+                    title="点击复制"
+                    @click="copyToClipboard(item.ip_address, 'IP 已复制')"
+                  >
+                    {{ item.ip_address }}
+                    <n-icon :size="12" style="opacity: 0.5"><CopyOutline /></n-icon>
+                  </span>
+                  <span v-else class="text-gray">-</span>
+                </td>
+                <td>
+                  <code
+                    v-if="item.mac_address"
+                    class="mac-cell"
+                    title="点击复制"
+                    @click="copyToClipboard(item.mac_address, 'MAC 已复制')"
+                  >
+                    {{ item.mac_address }}
+                    <n-icon :size="12" style="opacity: 0.5"><CopyOutline /></n-icon>
+                  </code>
+                  <span v-else class="text-gray">-</span>
+                </td>
+                <td>
+                  <n-tag v-if="item.vendor" type="info" :bordered="false" size="small">
+                    {{ item.vendor }}
+                  </n-tag>
+                  <span v-else class="text-gray">-</span>
+                </td>
                 <td>{{ item.hostname || '-' }}</td>
                 <td>{{ formatDateTime(item.first_seen_at) }}</td>
               </tr>
@@ -882,7 +918,18 @@ const handleCompareCMDB = () => {
             <tbody>
               <tr v-for="item in offlineDevices" :key="item.device_id">
                 <td>{{ item.device_name }}</td>
-                <td>{{ item.ip_address }}</td>
+                <td>
+                  <span
+                    v-if="item.ip_address"
+                    class="ip-cell"
+                    title="点击复制"
+                    @click="copyToClipboard(item.ip_address, 'IP 已复制')"
+                  >
+                    {{ item.ip_address }}
+                    <n-icon :size="12" style="opacity: 0.5"><CopyOutline /></n-icon>
+                  </span>
+                  <span v-else class="text-gray">-</span>
+                </td>
                 <td>{{ formatDateTime(item.last_seen_at) }}</td>
                 <td>
                   <n-tag :type="item.offline_days > 30 ? 'error' : 'warning'" size="small">
@@ -969,5 +1016,45 @@ const handleCompareCMDB = () => {
 
 .p-4 {
   padding: 16px;
+}
+
+/* IP 地址单元格样式 */
+.ip-cell {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 13px;
+  background-color: rgba(0, 0, 0, 0.04);
+  padding: 2px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.ip-cell:hover {
+  background-color: rgba(0, 0, 0, 0.08);
+}
+
+/* MAC 地址单元格样式 */
+.mac-cell {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+  background-color: rgba(64, 158, 255, 0.1);
+  padding: 2px 6px;
+  border-radius: 4px;
+  color: #476582;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.mac-cell:hover {
+  background-color: rgba(64, 158, 255, 0.2);
+}
+
+/* 灰色文本 */
+.text-gray {
+  color: #999;
 }
 </style>
