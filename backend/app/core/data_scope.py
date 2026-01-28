@@ -135,7 +135,7 @@ def get_user_effective_data_scope(user: User) -> DataScope:
         return DataScope.SELF
 
     # 权限优先级：ALL > CUSTOM > DEPT_AND_CHILDREN > DEPT > SELF
-    priority = {
+    priority: dict[DataScope, int] = {
         DataScope.ALL: 5,
         DataScope.CUSTOM: 4,
         DataScope.DEPT_AND_CHILDREN: 3,
@@ -148,9 +148,11 @@ def get_user_effective_data_scope(user: User) -> DataScope:
 
     for role in user.roles:
         if role.is_active and not role.is_deleted:
-            scope_priority = priority.get(role.data_scope, 1)
+            # 确保 role.data_scope 转换为 DataScope 枚举
+            role_scope = DataScope(role.data_scope) if isinstance(role.data_scope, str) else role.data_scope
+            scope_priority = priority.get(role_scope, 1)
             if scope_priority > max_priority:
                 max_priority = scope_priority
-                max_scope = role.data_scope
+                max_scope = role_scope
 
     return max_scope
