@@ -4,6 +4,21 @@
 @FileName: users.py
 @DateTime: 2025-12-30 11:55:00
 @Docs: 用户 API 接口 (Users API).
+
+路由顺序规则（重要）：
+====================
+FastAPI 路由按定义顺序匹配，静态路由必须在动态路由之前定义，
+否则动态路由会优先匹配，导致静态路由无法访问。
+
+本文件路由顺序：
+1. 根路由 `/` (GET 列表, POST 创建)
+2. 静态路由：
+   - /me (GET, PUT) - 当前用户
+   - /me/password (PUT) - 当前用户密码
+   - /batch (DELETE) - 批量删除
+   - /recycle-bin (GET) - 回收站
+   - /batch/restore (POST) - 批量恢复
+3. 动态路由 `/{user_id:uuid}` 及其子路由
 """
 
 from typing import Any
@@ -34,7 +49,9 @@ from app.schemas.user import (
 router = APIRouter()
 
 
-# ===== 列表查询 =====
+# =============================================================================
+# 根路由 /
+# =============================================================================
 
 
 @router.get("/", response_model=ResponseBase[PaginatedResponse[UserResponse]], summary="获取用户列表")
@@ -87,34 +104,6 @@ async def read_users(
     )
 
 
-# ===== 详情 =====
-
-
-@router.get("/{user_id:uuid}", response_model=ResponseBase[UserResponse], summary="获取特定用户信息")
-async def read_user_by_id(
-    *,
-    user_id: UUID,
-    _: deps.User = Depends(deps.require_permissions([PermissionCode.USER_LIST.value])),
-    user_service: deps.UserServiceDep,
-) -> ResponseBase[UserResponse]:
-    """
-    获取特定用户的详细信息 (管理员)。
-
-    Args:
-        user_id (UUID): 目标用户 ID。
-        _ (User): 权限依赖（需要 user:list）。
-        user_service (UserService): 用户服务依赖。
-
-    Returns:
-        ResponseBase[UserResponse]: 用户详细信息。
-    """
-    user = await user_service.get_user(user_id=user_id)
-    return ResponseBase(data=UserResponse.model_validate(user))
-
-
-# ===== 创建 =====
-
-
 @router.post("/", response_model=ResponseBase[UserResponse], summary="创建用户")
 async def create_user(
     *,
@@ -141,179 +130,9 @@ async def create_user(
     return ResponseBase(data=UserResponse.model_validate(user))
 
 
-# ===== 更新 =====
-
-
-@router.put("/{user_id:uuid}", response_model=ResponseBase[UserResponse], summary="更新用户信息 (管理员)")
-async def update_user(
-    *,
-    user_id: UUID,
-    user_in: UserUpdate,
-    _: deps.User = Depends(deps.require_permissions([PermissionCode.USER_UPDATE.value])),
-    user_service: deps.UserServiceDep,
-) -> ResponseBase[UserResponse]:
-    """
-    管理员更新用户信息。
-
-    允许具备权限的管理员修改任意用户的资料 (昵称、手机号、邮箱、状态等)。
-    不包含密码修改 (请使用重置密码接口)。
-
-    Args:
-        user_id (UUID): 目标用户 ID。
-        user_in (UserUpdate): 更新的用户数据。
-        _ (User): 权限依赖（需要 user:update）。
-        user_service (UserService): 用户服务依赖。
-
-    Returns:
-        ResponseBase[UserResponse]: 更新后的用户信息。
-    """
-    user = await user_service.update_user(user_id=user_id, obj_in=user_in)
-    return ResponseBase(data=UserResponse.model_validate(user), message="用户信息更新成功")
-
-
-# ===== 批量删除 =====
-
-
-@router.delete("/batch", response_model=ResponseBase[BatchOperationResult], summary="批量删除用户")
-async def batch_delete_users(
-    *,
-    request: BatchDeleteRequest,
-    current_user: deps.CurrentUser,
-    _: deps.User = Depends(deps.require_permissions([PermissionCode.USER_DELETE.value])),
-    user_service: deps.UserServiceDep,
-) -> ResponseBase[BatchOperationResult]:
-    """
-    批量删除用户。
-
-    支持软删除和硬删除。需要用户-删除权限。
-
-    Args:
-        request (BatchDeleteRequest): 批量删除请求体 (包含 ID 列表和硬删除标志)。
-        current_user (User): 当前登录用户。
-        _ (User): 权限依赖（需要 user:delete）。
-        user_service (UserService): 用户服务依赖。
-
-    Returns:
-        ResponseBase[BatchOperationResult]: 批量操作结果（成功数量等）。
-    """
-    result = await user_service.batch_delete_users(ids=request.ids, hard_delete=request.hard_delete)
-    return ResponseBase(data=result)
-
-
-# ===== 回收站 =====
-
-
-@router.get("/recycle-bin", response_model=ResponseBase[PaginatedResponse[UserResponse]], summary="获取用户回收站列表")
-async def get_recycle_bin(
-    *,
-    page: int = 1,
-    page_size: int = 20,
-    _: deps.User = Depends(deps.require_permissions([PermissionCode.USER_RECYCLE.value])),
-    user_service: deps.UserServiceDep,
-    keyword: str | None = None,
-    is_superuser: bool | None = None,
-    is_active: bool | None = None,
-) -> ResponseBase[PaginatedResponse[UserResponse]]:
-    """
-    获取已删除的用户列表 (回收站)。
-    需要用户-回收站权限。
-
-    Args:
-        page (int, optional): 页码. Defaults to 1.
-        page_size (int, optional): 每页数量. Defaults to 20.
-        _ (User): 权限依赖（需要 user:recycle）。
-        user_service (UserService): 用户服务依赖。
-        keyword (str | None, optional): 关键词过滤. Defaults to None.
-        is_superuser (bool | None, optional): 是否超级管理员过滤. Defaults to None.
-        is_active (bool | None, optional): 是否启用过滤. Defaults to None.
-
-    Returns:
-        ResponseBase[PaginatedResponse[UserResponse]]: 分页后的用户列表。
-    """
-    users, total = await user_service.get_deleted_users(
-        page=page,
-        page_size=page_size,
-        keyword=keyword,
-        is_superuser=is_superuser,
-        is_active=is_active,
-    )
-
-    items = [
-        UserResponse.model_validate(u).model_copy(update={"dept_name": u.dept.name if u.dept else None}) for u in users
-    ]
-    return ResponseBase(
-        data=PaginatedResponse(
-            total=total,
-            page=page,
-            page_size=page_size,
-            items=items,
-        )
-    )
-
-
-# ===== 批量恢复 =====
-
-
-@router.post("/batch/restore", response_model=ResponseBase[BatchOperationResult], summary="批量恢复用户")
-async def batch_restore_users(
-    *,
-    request: BatchRestoreRequest,
-    current_user: deps.CurrentUser,
-    _: deps.User = Depends(deps.require_permissions([PermissionCode.USER_RESTORE.value])),
-    user_service: deps.UserServiceDep,
-) -> ResponseBase[BatchOperationResult]:
-    """批量恢复用户。
-
-    从回收站中批量恢复软删除用户。
-
-    Args:
-        request (BatchRestoreRequest): 批量恢复请求体 (包含 ID 列表)。
-        current_user (User): 当前登录用户。
-        _ (User): 权限依赖（需要 user:restore）。
-        user_service (UserService): 用户服务依赖。
-
-    Returns:
-        ResponseBase[BatchOperationResult]: 批量恢复结果。
-    """
-
-    result = await user_service.batch_restore_users(ids=request.ids)
-    return ResponseBase(data=result)
-
-
-# ===== 单个恢复 =====
-
-
-@router.post("/{user_id:uuid}/restore", response_model=ResponseBase[UserResponse], summary="恢复已删除用户")
-async def restore_user(
-    *,
-    user_id: UUID,
-    _: deps.User = Depends(deps.require_permissions([PermissionCode.USER_RESTORE.value])),
-    user_service: deps.UserServiceDep,
-) -> ResponseBase[UserResponse]:
-    """
-    恢复已删除用户。
-
-    从回收站中恢复指定用户。
-    需要用户-恢复权限。
-
-    Args:
-        user_id (UUID): 目标用户 ID。
-        _ (User): 权限依赖（需要 user:restore）。
-        user_service (UserService): 用户服务依赖。
-
-    Returns:
-        ResponseBase[UserResponse]: 恢复后的用户信息。
-
-    Raises:
-        UnauthorizedException: 未登录或令牌无效时。
-        ForbiddenException: 权限不足时。
-        NotFoundException: 用户不存在时。
-    """
-    user = await user_service.restore_user(id=user_id)
-    return ResponseBase(data=UserResponse.model_validate(user), message="用户恢复成功")
-
-
-# ===== 当前用户相关操作 =====
+# =============================================================================
+# 静态路由 - 当前用户 /me
+# =============================================================================
 
 
 @router.get("/me", response_model=ResponseBase[UserResponse], summary="获取当前用户")
@@ -386,7 +205,198 @@ async def change_password_me(
     return ResponseBase(data=UserResponse.model_validate(user), message="密码修改成功")
 
 
-# ===== 密码管理 =====
+# =============================================================================
+# 静态路由 - 批量操作 /batch
+# =============================================================================
+
+
+@router.delete("/batch", response_model=ResponseBase[BatchOperationResult], summary="批量删除用户")
+async def batch_delete_users(
+    *,
+    request: BatchDeleteRequest,
+    current_user: deps.CurrentUser,
+    _: deps.User = Depends(deps.require_permissions([PermissionCode.USER_DELETE.value])),
+    user_service: deps.UserServiceDep,
+) -> ResponseBase[BatchOperationResult]:
+    """
+    批量删除用户。
+
+    支持软删除和硬删除。需要用户-删除权限。
+
+    Args:
+        request (BatchDeleteRequest): 批量删除请求体 (包含 ID 列表和硬删除标志)。
+        current_user (User): 当前登录用户。
+        _ (User): 权限依赖（需要 user:delete）。
+        user_service (UserService): 用户服务依赖。
+
+    Returns:
+        ResponseBase[BatchOperationResult]: 批量操作结果（成功数量等）。
+    """
+    result = await user_service.batch_delete_users(ids=request.ids, hard_delete=request.hard_delete)
+    return ResponseBase(data=result)
+
+
+@router.post("/batch/restore", response_model=ResponseBase[BatchOperationResult], summary="批量恢复用户")
+async def batch_restore_users(
+    *,
+    request: BatchRestoreRequest,
+    current_user: deps.CurrentUser,
+    _: deps.User = Depends(deps.require_permissions([PermissionCode.USER_RESTORE.value])),
+    user_service: deps.UserServiceDep,
+) -> ResponseBase[BatchOperationResult]:
+    """批量恢复用户。
+
+    从回收站中批量恢复软删除用户。
+
+    Args:
+        request (BatchRestoreRequest): 批量恢复请求体 (包含 ID 列表)。
+        current_user (User): 当前登录用户。
+        _ (User): 权限依赖（需要 user:restore）。
+        user_service (UserService): 用户服务依赖。
+
+    Returns:
+        ResponseBase[BatchOperationResult]: 批量恢复结果。
+    """
+
+    result = await user_service.batch_restore_users(ids=request.ids)
+    return ResponseBase(data=result)
+
+
+# =============================================================================
+# 静态路由 - 回收站 /recycle-bin
+# =============================================================================
+
+
+@router.get("/recycle-bin", response_model=ResponseBase[PaginatedResponse[UserResponse]], summary="获取用户回收站列表")
+async def get_recycle_bin(
+    *,
+    page: int = 1,
+    page_size: int = 20,
+    _: deps.User = Depends(deps.require_permissions([PermissionCode.USER_RECYCLE.value])),
+    user_service: deps.UserServiceDep,
+    keyword: str | None = None,
+    is_superuser: bool | None = None,
+    is_active: bool | None = None,
+) -> ResponseBase[PaginatedResponse[UserResponse]]:
+    """
+    获取已删除的用户列表 (回收站)。
+    需要用户-回收站权限。
+
+    Args:
+        page (int, optional): 页码. Defaults to 1.
+        page_size (int, optional): 每页数量. Defaults to 20.
+        _ (User): 权限依赖（需要 user:recycle）。
+        user_service (UserService): 用户服务依赖。
+        keyword (str | None, optional): 关键词过滤. Defaults to None.
+        is_superuser (bool | None, optional): 是否超级管理员过滤. Defaults to None.
+        is_active (bool | None, optional): 是否启用过滤. Defaults to None.
+
+    Returns:
+        ResponseBase[PaginatedResponse[UserResponse]]: 分页后的用户列表。
+    """
+    users, total = await user_service.get_deleted_users(
+        page=page,
+        page_size=page_size,
+        keyword=keyword,
+        is_superuser=is_superuser,
+        is_active=is_active,
+    )
+
+    items = [
+        UserResponse.model_validate(u).model_copy(update={"dept_name": u.dept.name if u.dept else None}) for u in users
+    ]
+    return ResponseBase(
+        data=PaginatedResponse(
+            total=total,
+            page=page,
+            page_size=page_size,
+            items=items,
+        )
+    )
+
+
+# =============================================================================
+# 动态路由 /{user_id:uuid}
+# =============================================================================
+
+
+@router.get("/{user_id:uuid}", response_model=ResponseBase[UserResponse], summary="获取特定用户信息")
+async def read_user_by_id(
+    *,
+    user_id: UUID,
+    _: deps.User = Depends(deps.require_permissions([PermissionCode.USER_LIST.value])),
+    user_service: deps.UserServiceDep,
+) -> ResponseBase[UserResponse]:
+    """
+    获取特定用户的详细信息 (管理员)。
+
+    Args:
+        user_id (UUID): 目标用户 ID。
+        _ (User): 权限依赖（需要 user:list）。
+        user_service (UserService): 用户服务依赖。
+
+    Returns:
+        ResponseBase[UserResponse]: 用户详细信息。
+    """
+    user = await user_service.get_user(user_id=user_id)
+    return ResponseBase(data=UserResponse.model_validate(user))
+
+
+@router.put("/{user_id:uuid}", response_model=ResponseBase[UserResponse], summary="更新用户信息 (管理员)")
+async def update_user(
+    *,
+    user_id: UUID,
+    user_in: UserUpdate,
+    _: deps.User = Depends(deps.require_permissions([PermissionCode.USER_UPDATE.value])),
+    user_service: deps.UserServiceDep,
+) -> ResponseBase[UserResponse]:
+    """
+    管理员更新用户信息。
+
+    允许具备权限的管理员修改任意用户的资料 (昵称、手机号、邮箱、状态等)。
+    不包含密码修改 (请使用重置密码接口)。
+
+    Args:
+        user_id (UUID): 目标用户 ID。
+        user_in (UserUpdate): 更新的用户数据。
+        _ (User): 权限依赖（需要 user:update）。
+        user_service (UserService): 用户服务依赖。
+
+    Returns:
+        ResponseBase[UserResponse]: 更新后的用户信息。
+    """
+    user = await user_service.update_user(user_id=user_id, obj_in=user_in)
+    return ResponseBase(data=UserResponse.model_validate(user), message="用户信息更新成功")
+
+
+@router.post("/{user_id:uuid}/restore", response_model=ResponseBase[UserResponse], summary="恢复已删除用户")
+async def restore_user(
+    *,
+    user_id: UUID,
+    _: deps.User = Depends(deps.require_permissions([PermissionCode.USER_RESTORE.value])),
+    user_service: deps.UserServiceDep,
+) -> ResponseBase[UserResponse]:
+    """
+    恢复已删除用户。
+
+    从回收站中恢复指定用户。
+    需要用户-恢复权限。
+
+    Args:
+        user_id (UUID): 目标用户 ID。
+        _ (User): 权限依赖（需要 user:restore）。
+        user_service (UserService): 用户服务依赖。
+
+    Returns:
+        ResponseBase[UserResponse]: 恢复后的用户信息。
+
+    Raises:
+        UnauthorizedException: 未登录或令牌无效时。
+        ForbiddenException: 权限不足时。
+        NotFoundException: 用户不存在时。
+    """
+    user = await user_service.restore_user(id=user_id)
+    return ResponseBase(data=UserResponse.model_validate(user), message="用户恢复成功")
 
 
 @router.put("/{user_id:uuid}/password", response_model=ResponseBase[UserResponse], summary="重置密码 (管理员)")
@@ -415,9 +425,6 @@ async def reset_user_password(
     """
     user = await user_service.reset_password(user_id=user_id, new_password=password_data.new_password)
     return ResponseBase(data=UserResponse.model_validate(user), message="密码重置成功")
-
-
-# ===== 角色管理 =====
 
 
 @router.get("/{user_id:uuid}/roles", response_model=ResponseBase[list[RoleResponse]], summary="获取用户角色")

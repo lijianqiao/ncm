@@ -4,6 +4,22 @@
 @FileName: devices.py
 @DateTime: 2026-01-09 19:30:00
 @Docs: 设备 API 接口 (Devices API).
+
+路由顺序规则（Route Ordering Rules）:
+=================================
+FastAPI 按照路由定义的顺序进行匹配，因此必须遵循以下顺序：
+
+1. 根路由 `/`（GET 列表, POST 创建）
+2. 静态路由（按功能分组）：
+   - `/recycle-bin` - 回收站
+   - `/batch` - 批量操作（创建、删除）
+   - `/batch/restore`, `/batch/hard` - 批量恢复、批量硬删除
+   - `/status/transition/batch` - 批量状态流转
+   - `/lifecycle/stats` - 生命周期统计
+   - `/export`, `/import/*` - 导入导出相关
+3. 动态路由 `/{device_id:uuid}` 及其子路由（必须放在最后）
+
+⚠️ 注意：动态路由必须放在静态路由之后，否则静态路径会被动态参数错误匹配！
 """
 
 from typing import Any
@@ -40,6 +56,11 @@ from app.schemas.device import (
 )
 
 router = APIRouter()
+
+
+# ==============================================================================
+# 1. 根路由 (Root Routes)
+# ==============================================================================
 
 
 @router.get("/", response_model=ResponseBase[DeviceListResponse], summary="获取设备列表")
@@ -98,6 +119,32 @@ async def read_devices(
     )
 
 
+@router.post("/", response_model=ResponseBase[DeviceResponse], summary="创建设备")
+async def create_device(
+    obj_in: DeviceCreate,
+    device_service: deps.DeviceServiceDep,
+    current_user: deps.CurrentUser,
+    _: deps.User = Depends(deps.require_permissions([PermissionCode.DEVICE_CREATE.value])),
+) -> Any:
+    """添加单一新设备。
+
+    Args:
+        obj_in (DeviceCreate): 设备属性数据。
+        device_service (DeviceService): 设备服务依赖。
+        current_user (User): 当前登录用户。
+
+    Returns:
+        ResponseBase[DeviceResponse]: 创建成功后的设备详情。
+    """
+    device = await device_service.create_device(obj_in)
+    return ResponseBase(data=DeviceResponse.model_validate(device), message="设备创建成功")
+
+
+# ==============================================================================
+# 2. 静态路由 - 回收站 (Recycle Bin)
+# ==============================================================================
+
+
 @router.get("/recycle-bin", response_model=ResponseBase[PaginatedResponse[DeviceResponse]], summary="获取回收站设备")
 async def read_recycle_bin(
     device_service: deps.DeviceServiceDep,
@@ -130,46 +177,9 @@ async def read_recycle_bin(
     )
 
 
-@router.get("/{device_id:uuid}", response_model=ResponseBase[DeviceResponse], summary="获取设备详情")
-async def read_device(
-    device_id: UUID,
-    device_service: deps.DeviceServiceDep,
-    current_user: deps.CurrentUser,
-    _: deps.User = Depends(deps.require_permissions([PermissionCode.DEVICE_LIST.value])),
-) -> Any:
-    """根据 ID 获取设备详情。
-
-    Args:
-        device_id (UUID): 设备的主键 ID。
-        device_service (DeviceService): 设备服务依赖。
-        current_user (User): 当前登录用户。
-
-    Returns:
-        ResponseBase[DeviceResponse]: 设备详情数据。
-    """
-    device = await device_service.get_device(device_id)
-    return ResponseBase(data=DeviceResponse.model_validate(device))
-
-
-@router.post("/", response_model=ResponseBase[DeviceResponse], summary="创建设备")
-async def create_device(
-    obj_in: DeviceCreate,
-    device_service: deps.DeviceServiceDep,
-    current_user: deps.CurrentUser,
-    _: deps.User = Depends(deps.require_permissions([PermissionCode.DEVICE_CREATE.value])),
-) -> Any:
-    """添加单一新设备。
-
-    Args:
-        obj_in (DeviceCreate): 设备属性数据。
-        device_service (DeviceService): 设备服务依赖。
-        current_user (User): 当前登录用户。
-
-    Returns:
-        ResponseBase[DeviceResponse]: 创建成功后的设备详情。
-    """
-    device = await device_service.create_device(obj_in)
-    return ResponseBase(data=DeviceResponse.model_validate(device), message="设备创建成功")
+# ==============================================================================
+# 2. 静态路由 - 批量操作 (Batch Operations)
+# ==============================================================================
 
 
 @router.post("/batch", response_model=ResponseBase[DeviceBatchResult], summary="批量创建设备")
@@ -222,52 +232,6 @@ async def batch_delete_devices(
     )
 
 
-@router.put("/{device_id:uuid}", response_model=ResponseBase[DeviceResponse], summary="更新设备")
-async def update_device(
-    device_id: UUID,
-    obj_in: DeviceUpdate,
-    device_service: deps.DeviceServiceDep,
-    current_user: deps.CurrentUser,
-    _: deps.User = Depends(deps.require_permissions([PermissionCode.DEVICE_UPDATE.value])),
-) -> Any:
-    """更新指定设备的信息。
-
-    Args:
-        device_id (UUID): 设备 ID。
-        obj_in (DeviceUpdate): 更新字段。
-        device_service (DeviceService): 设备服务依赖。
-        current_user (User): 当前登录用户。
-
-    Returns:
-        ResponseBase[DeviceResponse]: 更新后的设备详情。
-    """
-    device = await device_service.update_device(device_id, obj_in)
-    return ResponseBase(data=DeviceResponse.model_validate(device), message="设备更新成功")
-
-
-@router.delete("/{device_id:uuid}", response_model=ResponseBase[DeviceResponse], summary="删除设备")
-async def delete_device(
-    device_id: UUID,
-    device_service: deps.DeviceServiceDep,
-    current_user: deps.CurrentUser,
-    _: deps.User = Depends(deps.require_permissions([PermissionCode.DEVICE_DELETE.value])),
-) -> Any:
-    """删除设备（软删除）。
-
-    设备将被移至回收站，不会从数据库物理删除。
-
-    Args:
-        device_id (UUID): 设备 ID。
-        device_service (DeviceService): 设备服务依赖。
-        current_user (User): 当前登录用户。
-
-    Returns:
-        ResponseBase[DeviceResponse]: 被删除设备的简要数据。
-    """
-    device = await device_service.delete_device(device_id)
-    return ResponseBase(data=DeviceResponse.model_validate(device), message="设备已移至回收站")
-
-
 @router.post("/batch/restore", response_model=ResponseBase[DeviceBatchResult], summary="批量恢复设备")
 async def batch_restore_devices(
     obj_in: DeviceBatchDeleteRequest,
@@ -289,51 +253,6 @@ async def batch_restore_devices(
     return ResponseBase(
         data=result,
         message=f"批量恢复完成：成功 {result.success_count}，失败 {result.failed_count}",
-    )
-
-
-@router.post("/{device_id:uuid}/restore", response_model=ResponseBase[DeviceResponse], summary="恢复设备")
-async def restore_device(
-    device_id: UUID,
-    device_service: deps.DeviceServiceDep,
-    current_user: deps.CurrentUser,
-    _: deps.User = Depends(deps.require_permissions([PermissionCode.DEVICE_RESTORE.value])),
-) -> Any:
-    """从回收站中恢复设备到正常状态。
-
-    Args:
-        device_id (UUID): 设备 ID。
-        device_service (DeviceService): 设备服务依赖。
-        current_user (User): 当前登录用户。
-
-    Returns:
-        ResponseBase[DeviceResponse]: 恢复后的设备详情。
-    """
-    device = await device_service.restore_device(device_id)
-    return ResponseBase(data=DeviceResponse.model_validate(device), message="设备恢复成功")
-
-
-@router.delete("/{device_id:uuid}/hard", response_model=ResponseBase[dict], summary="彻底删除设备")
-async def hard_delete_device(
-    device_id: UUID,
-    device_service: deps.DeviceServiceDep,
-    current_user: deps.CurrentUser,
-    _: deps.User = Depends(deps.require_permissions([PermissionCode.DEVICE_DELETE.value])),
-) -> Any:
-    """彻底删除设备（硬删除，不可恢复）。
-
-    Args:
-        device_id (UUID): 设备 ID。
-        device_service (DeviceService): 设备服务依赖。
-        current_user (User): 当前登录用户。
-
-    Returns:
-        ResponseBase[dict]: 删除结果。
-    """
-    await device_service.hard_delete_device(device_id)
-    return ResponseBase(
-        data={"message": "设备已彻底删除"},
-        message="设备已彻底删除",
     )
 
 
@@ -361,38 +280,9 @@ async def batch_hard_delete_devices(
     )
 
 
-@router.post(
-    "/{device_id:uuid}/status/transition",
-    response_model=ResponseBase[DeviceResponse],
-    summary="设备状态流转",
-)
-async def transition_device_status(
-    device_id: UUID,
-    body: DeviceStatusTransitionRequest,
-    device_service: deps.DeviceServiceDep,
-    current_user: deps.CurrentUser,
-    _: deps.User = Depends(deps.require_permissions([PermissionCode.DEVICE_STATUS_TRANSITION.value])),
-) -> Any:
-    """显式执行设备状态变更。
-
-    用于记录设备在资产生命周期中的状态变化（如：入库 -> 在运行 -> 报废）。
-
-    Args:
-        device_id (UUID): 设备 ID。
-        body (DeviceStatusTransitionRequest): 包含目标状态及变更原因。
-        device_service (DeviceService): 设备服务依赖。
-        current_user (User): 当前操作人。
-
-    Returns:
-        ResponseBase[DeviceResponse]: 状态变更后的设备对象。
-    """
-    device = await device_service.transition_status(
-        device_id,
-        to_status=body.to_status,
-        reason=body.reason,
-        operator_id=current_user.id,
-    )
-    return ResponseBase(data=DeviceResponse.model_validate(device), message="状态流转成功")
+# ==============================================================================
+# 2. 静态路由 - 状态流转 (Status Transition)
+# ==============================================================================
 
 
 @router.post(
@@ -432,6 +322,11 @@ async def batch_transition_device_status(
     )
 
 
+# ==============================================================================
+# 2. 静态路由 - 统计 (Statistics)
+# ==============================================================================
+
+
 @router.get(
     "/lifecycle/stats",
     response_model=ResponseBase[DeviceLifecycleStatsResponse],
@@ -459,6 +354,11 @@ async def lifecycle_stats(
     """
     data = await device_service.get_lifecycle_stats(dept_id=dept_id, vendor=vendor.value if vendor else None)
     return ResponseBase(data=DeviceLifecycleStatsResponse(**data))
+
+
+# ==============================================================================
+# 2. 静态路由 - 导入导出 (Import/Export)
+# ==============================================================================
 
 
 @router.get(
@@ -598,3 +498,154 @@ async def commit_device_import(
     """
     resp = await import_export_service.commit_device_import(body=body)
     return ResponseBase(data=resp)
+
+
+# ==============================================================================
+# 3. 动态路由 (Dynamic Routes) - /{device_id:uuid} 及其子路由
+# ==============================================================================
+
+
+@router.get("/{device_id:uuid}", response_model=ResponseBase[DeviceResponse], summary="获取设备详情")
+async def read_device(
+    device_id: UUID,
+    device_service: deps.DeviceServiceDep,
+    current_user: deps.CurrentUser,
+    _: deps.User = Depends(deps.require_permissions([PermissionCode.DEVICE_LIST.value])),
+) -> Any:
+    """根据 ID 获取设备详情。
+
+    Args:
+        device_id (UUID): 设备的主键 ID。
+        device_service (DeviceService): 设备服务依赖。
+        current_user (User): 当前登录用户。
+
+    Returns:
+        ResponseBase[DeviceResponse]: 设备详情数据。
+    """
+    device = await device_service.get_device(device_id)
+    return ResponseBase(data=DeviceResponse.model_validate(device))
+
+
+@router.put("/{device_id:uuid}", response_model=ResponseBase[DeviceResponse], summary="更新设备")
+async def update_device(
+    device_id: UUID,
+    obj_in: DeviceUpdate,
+    device_service: deps.DeviceServiceDep,
+    current_user: deps.CurrentUser,
+    _: deps.User = Depends(deps.require_permissions([PermissionCode.DEVICE_UPDATE.value])),
+) -> Any:
+    """更新指定设备的信息。
+
+    Args:
+        device_id (UUID): 设备 ID。
+        obj_in (DeviceUpdate): 更新字段。
+        device_service (DeviceService): 设备服务依赖。
+        current_user (User): 当前登录用户。
+
+    Returns:
+        ResponseBase[DeviceResponse]: 更新后的设备详情。
+    """
+    device = await device_service.update_device(device_id, obj_in)
+    return ResponseBase(data=DeviceResponse.model_validate(device), message="设备更新成功")
+
+
+@router.delete("/{device_id:uuid}", response_model=ResponseBase[DeviceResponse], summary="删除设备")
+async def delete_device(
+    device_id: UUID,
+    device_service: deps.DeviceServiceDep,
+    current_user: deps.CurrentUser,
+    _: deps.User = Depends(deps.require_permissions([PermissionCode.DEVICE_DELETE.value])),
+) -> Any:
+    """删除设备（软删除）。
+
+    设备将被移至回收站，不会从数据库物理删除。
+
+    Args:
+        device_id (UUID): 设备 ID。
+        device_service (DeviceService): 设备服务依赖。
+        current_user (User): 当前登录用户。
+
+    Returns:
+        ResponseBase[DeviceResponse]: 被删除设备的简要数据。
+    """
+    device = await device_service.delete_device(device_id)
+    return ResponseBase(data=DeviceResponse.model_validate(device), message="设备已移至回收站")
+
+
+@router.post("/{device_id:uuid}/restore", response_model=ResponseBase[DeviceResponse], summary="恢复设备")
+async def restore_device(
+    device_id: UUID,
+    device_service: deps.DeviceServiceDep,
+    current_user: deps.CurrentUser,
+    _: deps.User = Depends(deps.require_permissions([PermissionCode.DEVICE_RESTORE.value])),
+) -> Any:
+    """从回收站中恢复设备到正常状态。
+
+    Args:
+        device_id (UUID): 设备 ID。
+        device_service (DeviceService): 设备服务依赖。
+        current_user (User): 当前登录用户。
+
+    Returns:
+        ResponseBase[DeviceResponse]: 恢复后的设备详情。
+    """
+    device = await device_service.restore_device(device_id)
+    return ResponseBase(data=DeviceResponse.model_validate(device), message="设备恢复成功")
+
+
+@router.delete("/{device_id:uuid}/hard", response_model=ResponseBase[dict], summary="彻底删除设备")
+async def hard_delete_device(
+    device_id: UUID,
+    device_service: deps.DeviceServiceDep,
+    current_user: deps.CurrentUser,
+    _: deps.User = Depends(deps.require_permissions([PermissionCode.DEVICE_DELETE.value])),
+) -> Any:
+    """彻底删除设备（硬删除，不可恢复）。
+
+    Args:
+        device_id (UUID): 设备 ID。
+        device_service (DeviceService): 设备服务依赖。
+        current_user (User): 当前登录用户。
+
+    Returns:
+        ResponseBase[dict]: 删除结果。
+    """
+    await device_service.hard_delete_device(device_id)
+    return ResponseBase(
+        data={"message": "设备已彻底删除"},
+        message="设备已彻底删除",
+    )
+
+
+@router.post(
+    "/{device_id:uuid}/status/transition",
+    response_model=ResponseBase[DeviceResponse],
+    summary="设备状态流转",
+)
+async def transition_device_status(
+    device_id: UUID,
+    body: DeviceStatusTransitionRequest,
+    device_service: deps.DeviceServiceDep,
+    current_user: deps.CurrentUser,
+    _: deps.User = Depends(deps.require_permissions([PermissionCode.DEVICE_STATUS_TRANSITION.value])),
+) -> Any:
+    """显式执行设备状态变更。
+
+    用于记录设备在资产生命周期中的状态变化（如：入库 -> 在运行 -> 报废）。
+
+    Args:
+        device_id (UUID): 设备 ID。
+        body (DeviceStatusTransitionRequest): 包含目标状态及变更原因。
+        device_service (DeviceService): 设备服务依赖。
+        current_user (User): 当前操作人。
+
+    Returns:
+        ResponseBase[DeviceResponse]: 状态变更后的设备对象。
+    """
+    device = await device_service.transition_status(
+        device_id,
+        to_status=body.to_status,
+        reason=body.reason,
+        operator_id=current_user.id,
+    )
+    return ResponseBase(data=DeviceResponse.model_validate(device), message="状态流转成功")

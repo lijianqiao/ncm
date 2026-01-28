@@ -6,6 +6,16 @@
 @Docs: 设备发现 API 端点 (Discovery Endpoints).
 
 提供网络扫描、发现记录管理、CMDB 比对等功能。
+
+路由顺序规则 (Route Ordering Rules):
+=====================================
+FastAPI 按定义顺序匹配路由，静态路由必须在动态路由之前定义，否则会被动态路由捕获。
+
+本文件路由顺序:
+1. 扫描相关: /scan, /scan/task/{task_id}
+2. 根路由: /
+3. 静态路由: /recycle-bin, /batch, /batch/restore, /batch/hard, /shadow, /offline, /compare, /export
+4. 动态路由: /{discovery_id:uuid} 及其子路由 (/restore, /hard, /adopt)
 """
 
 from typing import Any, cast
@@ -165,7 +175,7 @@ async def get_scan_task_status(task_id: str) -> ResponseBase[ScanTaskStatus]:
     return ResponseBase(data=status)
 
 
-# ===== 发现记录管理 =====
+# ===== 发现记录管理 - 根路由 =====
 
 
 @router.get(
@@ -257,83 +267,7 @@ async def list_discoveries(
     )
 
 
-@router.get(
-    "/{discovery_id:uuid}",
-    summary="获取发现记录详情",
-    response_model=ResponseBase[DiscoveryResponse],
-    dependencies=[Depends(require_permissions([PermissionCode.DISCOVERY_LIST.value]))],
-)
-async def get_discovery(
-    discovery_id: UUID,
-    service: DiscoveryServiceDep,
-) -> ResponseBase[DiscoveryResponse]:
-    """获取单个扫描发现记录的完整属性。
-
-    Args:
-        discovery_id (UUID): 扫描结果主键 ID。
-        service (DiscoveryService): 发现服务依赖。
-
-    Returns:
-        ResponseBase[DiscoveryResponse]: 发现资产及 CMDB 匹配关联信息。
-    """
-    item = await service.get_discovery(discovery_id=discovery_id)
-
-    response = DiscoveryResponse(
-        id=item.id,
-        ip_address=item.ip_address,
-        mac_address=item.mac_address,
-        vendor=item.vendor,
-        device_type=item.device_type,
-        hostname=(getattr(item, "snmp_sysname", None) or item.hostname),
-        os_info=item.os_info,
-        serial_number=getattr(item, "serial_number", None),
-        open_ports=item.open_ports,
-        ssh_banner=item.ssh_banner,
-        dept_id=getattr(item, "dept_id", None),
-        snmp_sysname=getattr(item, "snmp_sysname", None),
-        snmp_sysdescr=getattr(item, "snmp_sysdescr", None),
-        snmp_ok=getattr(item, "snmp_ok", None),
-        snmp_error=getattr(item, "snmp_error", None),
-        first_seen_at=item.first_seen_at,
-        last_seen_at=item.last_seen_at,
-        offline_days=item.offline_days,
-        status=DiscoveryStatus(item.status),
-        matched_device_id=item.matched_device_id,
-        scan_source=item.scan_source,
-        created_at=item.created_at,
-        updated_at=item.updated_at,
-    )
-
-    if item.matched_device:
-        response.matched_device_name = item.matched_device.name
-        response.matched_device_ip = item.matched_device.ip_address
-
-    return ResponseBase(data=response)
-
-
-@router.delete(
-    "/{discovery_id:uuid}",
-    summary="删除发现记录",
-    response_model=ResponseBase[DeleteResponse],
-    dependencies=[Depends(require_permissions([PermissionCode.DISCOVERY_DELETE.value]))],
-)
-async def delete_discovery(
-    discovery_id: UUID,
-    current_user: CurrentUser,
-    service: DiscoveryServiceDep,
-) -> ResponseBase[DeleteResponse]:
-    """物理删除或隐藏特定的扫描发现结果。
-
-    Args:
-        discovery_id (UUID): 扫描记录 ID。
-        current_user (CurrentUser): 当前执行操作的用户。
-        service (DiscoveryService): 发现服务依赖。
-
-    Returns:
-        ResponseBase[DeleteResponse]: 确认删除的消息。
-    """
-    await service.delete_discovery(discovery_id=discovery_id)
-    return ResponseBase(data=DeleteResponse(message="删除成功"))
+# ===== 发现记录管理 - 静态路由 =====
 
 
 @router.get(
@@ -479,90 +413,6 @@ async def batch_restore_discoveries(
     return ResponseBase(data=result)
 
 
-@router.post(
-    "/{discovery_id:uuid}/restore",
-    summary="恢复已删除发现记录",
-    response_model=ResponseBase[DiscoveryResponse],
-    dependencies=[
-        Depends(get_current_active_superuser),
-        Depends(require_permissions([PermissionCode.DISCOVERY_RESTORE.value])),
-    ],
-)
-async def restore_discovery(
-    discovery_id: UUID,
-    service: DiscoveryServiceDep,
-) -> ResponseBase[DiscoveryResponse]:
-    """恢复已删除的发现记录。
-
-    仅限超级管理员访问。
-
-    Args:
-        discovery_id (UUID): 发现记录 ID。
-        service (DiscoveryService): 发现服务依赖。
-
-    Returns:
-        ResponseBase[DiscoveryResponse]: 恢复后的发现记录详情。
-    """
-    item = await service.restore_discovery(discovery_id=discovery_id)
-    response = DiscoveryResponse(
-        id=item.id,
-        ip_address=item.ip_address,
-        mac_address=item.mac_address,
-        vendor=item.vendor,
-        device_type=item.device_type,
-        hostname=(getattr(item, "snmp_sysname", None) or item.hostname),
-        os_info=item.os_info,
-        serial_number=getattr(item, "serial_number", None),
-        open_ports=item.open_ports,
-        ssh_banner=item.ssh_banner,
-        dept_id=getattr(item, "dept_id", None),
-        snmp_sysname=getattr(item, "snmp_sysname", None),
-        snmp_sysdescr=getattr(item, "snmp_sysdescr", None),
-        snmp_ok=getattr(item, "snmp_ok", None),
-        snmp_error=getattr(item, "snmp_error", None),
-        first_seen_at=item.first_seen_at,
-        last_seen_at=item.last_seen_at,
-        offline_days=item.offline_days,
-        status=DiscoveryStatus(item.status),
-        matched_device_id=item.matched_device_id,
-        scan_source=item.scan_source,
-        created_at=item.created_at,
-        updated_at=item.updated_at,
-    )
-    if item.matched_device:
-        response.matched_device_name = item.matched_device.name
-        response.matched_device_ip = item.matched_device.ip_address
-    return ResponseBase(data=response, message="恢复成功")
-
-
-@router.delete(
-    "/{discovery_id:uuid}/hard",
-    summary="彻底删除发现记录",
-    response_model=ResponseBase[dict],
-    dependencies=[
-        Depends(get_current_active_superuser),
-        Depends(require_permissions([PermissionCode.DISCOVERY_DELETE.value])),
-    ],
-)
-async def hard_delete_discovery(
-    discovery_id: UUID,
-    service: DiscoveryServiceDep,
-) -> ResponseBase[dict]:
-    """彻底删除发现记录（硬删除，不可恢复）。
-
-    仅限超级管理员访问。
-
-    Args:
-        discovery_id (UUID): 发现记录 ID。
-        service (DiscoveryService): 发现服务依赖。
-
-    Returns:
-        ResponseBase[dict]: 删除结果。
-    """
-    await service.hard_delete_discovery(discovery_id=discovery_id)
-    return ResponseBase(data={"message": "发现记录已彻底删除"}, message="发现记录已彻底删除")
-
-
 @router.delete(
     "/batch/hard",
     summary="批量彻底删除发现记录",
@@ -591,62 +441,7 @@ async def batch_hard_delete_discoveries(
     return ResponseBase(data=result)
 
 
-# ===== 设备纳管 =====
-
-
-@router.post(
-    "/{discovery_id:uuid}/adopt",
-    summary="纳管设备",
-    response_model=ResponseBase[AdoptResponse],
-    dependencies=[Depends(require_permissions([PermissionCode.DISCOVERY_ADOPT.value]))],
-)
-async def adopt_device(
-    db: SessionDep,
-    discovery_id: UUID,
-    request: AdoptDeviceRequest,
-    current_user: CurrentUser,
-    scan_service: ScanService = Depends(get_scan_service),
-) -> ResponseBase[AdoptResponse]:
-    """将扫描结果中的在线资产直接录入为系统正式管理的设备。
-
-    录入过程会预填发现的 IP、MAC、厂商等信息，并根据请求配置所属部门和凭据。
-
-    Args:
-        db (Session): 数据库会话。
-        discovery_id (UUID): 发现记录关联 ID。
-        request (AdoptDeviceRequest): 纳管配置，包含名称、分组、凭据等。
-        current_user (CurrentUser): 当前操作人。
-        scan_service (ScanService): 扫描资产服务。
-
-    Returns:
-        ResponseBase[AdoptResponse]: 包含新设备 ID 的确认响应。
-    """
-    device = await scan_service.adopt_device(
-        db,
-        discovery_id=discovery_id,
-        name=request.name,
-        vendor=request.vendor,
-        device_group=request.device_group,
-        dept_id=request.dept_id,
-        username=request.username,
-        password=request.password,
-    )
-
-    if not device:
-        raise NotFoundException(message="发现记录不存在")
-
-    await db.commit()
-
-    return ResponseBase(
-        data=AdoptResponse(
-            message="设备纳管成功",
-            device_id=str(device.id),
-            device_name=device.name,
-        )
-    )
-
-
-# ===== 影子资产和离线设备 =====
+# ===== 影子资产和离线设备 - 静态路由 =====
 
 
 @router.get(
@@ -740,7 +535,7 @@ async def list_offline_devices(
     return ResponseBase(data=devices)
 
 
-# ===== CMDB 比对 =====
+# ===== CMDB 比对 - 静态路由 =====
 
 
 @router.post(
@@ -811,4 +606,225 @@ async def export_discovery(
         filename=result.filename,
         media_type=result.media_type,
         background=BackgroundTask(delete_export_file, str(result.path)),
+    )
+
+
+# ===== 发现记录管理 - 动态路由 =====
+
+
+@router.get(
+    "/{discovery_id:uuid}",
+    summary="获取发现记录详情",
+    response_model=ResponseBase[DiscoveryResponse],
+    dependencies=[Depends(require_permissions([PermissionCode.DISCOVERY_LIST.value]))],
+)
+async def get_discovery(
+    discovery_id: UUID,
+    service: DiscoveryServiceDep,
+) -> ResponseBase[DiscoveryResponse]:
+    """获取单个扫描发现记录的完整属性。
+
+    Args:
+        discovery_id (UUID): 扫描结果主键 ID。
+        service (DiscoveryService): 发现服务依赖。
+
+    Returns:
+        ResponseBase[DiscoveryResponse]: 发现资产及 CMDB 匹配关联信息。
+    """
+    item = await service.get_discovery(discovery_id=discovery_id)
+
+    response = DiscoveryResponse(
+        id=item.id,
+        ip_address=item.ip_address,
+        mac_address=item.mac_address,
+        vendor=item.vendor,
+        device_type=item.device_type,
+        hostname=(getattr(item, "snmp_sysname", None) or item.hostname),
+        os_info=item.os_info,
+        serial_number=getattr(item, "serial_number", None),
+        open_ports=item.open_ports,
+        ssh_banner=item.ssh_banner,
+        dept_id=getattr(item, "dept_id", None),
+        snmp_sysname=getattr(item, "snmp_sysname", None),
+        snmp_sysdescr=getattr(item, "snmp_sysdescr", None),
+        snmp_ok=getattr(item, "snmp_ok", None),
+        snmp_error=getattr(item, "snmp_error", None),
+        first_seen_at=item.first_seen_at,
+        last_seen_at=item.last_seen_at,
+        offline_days=item.offline_days,
+        status=DiscoveryStatus(item.status),
+        matched_device_id=item.matched_device_id,
+        scan_source=item.scan_source,
+        created_at=item.created_at,
+        updated_at=item.updated_at,
+    )
+
+    if item.matched_device:
+        response.matched_device_name = item.matched_device.name
+        response.matched_device_ip = item.matched_device.ip_address
+
+    return ResponseBase(data=response)
+
+
+@router.delete(
+    "/{discovery_id:uuid}",
+    summary="删除发现记录",
+    response_model=ResponseBase[DeleteResponse],
+    dependencies=[Depends(require_permissions([PermissionCode.DISCOVERY_DELETE.value]))],
+)
+async def delete_discovery(
+    discovery_id: UUID,
+    current_user: CurrentUser,
+    service: DiscoveryServiceDep,
+) -> ResponseBase[DeleteResponse]:
+    """物理删除或隐藏特定的扫描发现结果。
+
+    Args:
+        discovery_id (UUID): 扫描记录 ID。
+        current_user (CurrentUser): 当前执行操作的用户。
+        service (DiscoveryService): 发现服务依赖。
+
+    Returns:
+        ResponseBase[DeleteResponse]: 确认删除的消息。
+    """
+    await service.delete_discovery(discovery_id=discovery_id)
+    return ResponseBase(data=DeleteResponse(message="删除成功"))
+
+
+@router.post(
+    "/{discovery_id:uuid}/restore",
+    summary="恢复已删除发现记录",
+    response_model=ResponseBase[DiscoveryResponse],
+    dependencies=[
+        Depends(get_current_active_superuser),
+        Depends(require_permissions([PermissionCode.DISCOVERY_RESTORE.value])),
+    ],
+)
+async def restore_discovery(
+    discovery_id: UUID,
+    service: DiscoveryServiceDep,
+) -> ResponseBase[DiscoveryResponse]:
+    """恢复已删除的发现记录。
+
+    仅限超级管理员访问。
+
+    Args:
+        discovery_id (UUID): 发现记录 ID。
+        service (DiscoveryService): 发现服务依赖。
+
+    Returns:
+        ResponseBase[DiscoveryResponse]: 恢复后的发现记录详情。
+    """
+    item = await service.restore_discovery(discovery_id=discovery_id)
+    response = DiscoveryResponse(
+        id=item.id,
+        ip_address=item.ip_address,
+        mac_address=item.mac_address,
+        vendor=item.vendor,
+        device_type=item.device_type,
+        hostname=(getattr(item, "snmp_sysname", None) or item.hostname),
+        os_info=item.os_info,
+        serial_number=getattr(item, "serial_number", None),
+        open_ports=item.open_ports,
+        ssh_banner=item.ssh_banner,
+        dept_id=getattr(item, "dept_id", None),
+        snmp_sysname=getattr(item, "snmp_sysname", None),
+        snmp_sysdescr=getattr(item, "snmp_sysdescr", None),
+        snmp_ok=getattr(item, "snmp_ok", None),
+        snmp_error=getattr(item, "snmp_error", None),
+        first_seen_at=item.first_seen_at,
+        last_seen_at=item.last_seen_at,
+        offline_days=item.offline_days,
+        status=DiscoveryStatus(item.status),
+        matched_device_id=item.matched_device_id,
+        scan_source=item.scan_source,
+        created_at=item.created_at,
+        updated_at=item.updated_at,
+    )
+    if item.matched_device:
+        response.matched_device_name = item.matched_device.name
+        response.matched_device_ip = item.matched_device.ip_address
+    return ResponseBase(data=response, message="恢复成功")
+
+
+@router.delete(
+    "/{discovery_id:uuid}/hard",
+    summary="彻底删除发现记录",
+    response_model=ResponseBase[dict],
+    dependencies=[
+        Depends(get_current_active_superuser),
+        Depends(require_permissions([PermissionCode.DISCOVERY_DELETE.value])),
+    ],
+)
+async def hard_delete_discovery(
+    discovery_id: UUID,
+    service: DiscoveryServiceDep,
+) -> ResponseBase[dict]:
+    """彻底删除发现记录（硬删除，不可恢复）。
+
+    仅限超级管理员访问。
+
+    Args:
+        discovery_id (UUID): 发现记录 ID。
+        service (DiscoveryService): 发现服务依赖。
+
+    Returns:
+        ResponseBase[dict]: 删除结果。
+    """
+    await service.hard_delete_discovery(discovery_id=discovery_id)
+    return ResponseBase(data={"message": "发现记录已彻底删除"}, message="发现记录已彻底删除")
+
+
+# ===== 设备纳管 - 动态路由 =====
+
+
+@router.post(
+    "/{discovery_id:uuid}/adopt",
+    summary="纳管设备",
+    response_model=ResponseBase[AdoptResponse],
+    dependencies=[Depends(require_permissions([PermissionCode.DISCOVERY_ADOPT.value]))],
+)
+async def adopt_device(
+    db: SessionDep,
+    discovery_id: UUID,
+    request: AdoptDeviceRequest,
+    current_user: CurrentUser,
+    scan_service: ScanService = Depends(get_scan_service),
+) -> ResponseBase[AdoptResponse]:
+    """将扫描结果中的在线资产直接录入为系统正式管理的设备。
+
+    录入过程会预填发现的 IP、MAC、厂商等信息，并根据请求配置所属部门和凭据。
+
+    Args:
+        db (Session): 数据库会话。
+        discovery_id (UUID): 发现记录关联 ID。
+        request (AdoptDeviceRequest): 纳管配置，包含名称、分组、凭据等。
+        current_user (CurrentUser): 当前操作人。
+        scan_service (ScanService): 扫描资产服务。
+
+    Returns:
+        ResponseBase[AdoptResponse]: 包含新设备 ID 的确认响应。
+    """
+    device = await scan_service.adopt_device(
+        db,
+        discovery_id=discovery_id,
+        name=request.name,
+        vendor=request.vendor,
+        device_group=request.device_group,
+        dept_id=request.dept_id,
+        username=request.username,
+        password=request.password,
+    )
+
+    if not device:
+        raise NotFoundException(message="发现记录不存在")
+
+    await db.commit()
+
+    return ResponseBase(
+        data=AdoptResponse(
+            message="设备纳管成功",
+            device_id=str(device.id),
+            device_name=device.name,
+        )
     )

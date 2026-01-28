@@ -4,6 +4,14 @@
 @FileName: tasks.py
 @DateTime: 2026-01-09 12:00:00
 @Docs: 任务管理 API (Celery Task Management API).
+
+路由顺序规则：
+    1. 根路由 `/` - 最先定义
+    2. 静态路由 - 固定路径如 `/workers/stats`
+    3. 动态路由 - 带路径参数如 `/{task_id}` 及其子路由
+
+    原因：FastAPI 按定义顺序匹配路由，静态路由必须在动态路由之前，
+    否则 `/workers/stats` 会被 `/{task_id}` 错误捕获（task_id="workers"）。
 """
 
 from typing import Annotated, Any
@@ -40,7 +48,51 @@ class TaskTriggerRequest(BaseModel):
     kwargs: dict[str, Any] = {}
 
 
-# ==================== 任务查询 ====================
+class RevokeResponse(BaseModel):
+    """任务撤销响应。"""
+
+    message: str = Field(..., description="操作结果消息")
+
+
+class WorkerStatsResponse(BaseModel):
+    """Worker 统计响应。"""
+
+    workers: list[str] = Field(default_factory=list, description="Worker 列表")
+    active_tasks: dict[str, int] = Field(default_factory=dict, description="各 Worker 活跃任务数")
+    stats: dict[str, Any] = Field(default_factory=dict, description="详细统计信息")
+
+
+# ==================== 静态路由 (Static Routes) ====================
+
+
+@router.get("/workers/stats", response_model=ResponseBase[WorkerStatsResponse])
+async def get_worker_stats(_: SuperuserDep) -> ResponseBase[WorkerStatsResponse]:
+    """实时获取当前已注册的所有 Celery Worker 节点的统计状态。
+
+    仅限超级管理员访问。返回包括并发设置、已完成任务数、运行中的任务等。
+
+    Args:
+        _ (User): 超级管理员权限验证。
+
+    Returns:
+        ResponseBase[WorkerStatsResponse]: 包含 workers 列表、stats 统计和活动任务详情。
+    """
+    inspect = celery_app.control.inspect()
+
+    # 获取活跃的 Workers
+    active_workers = inspect.active() or {}
+    stats = inspect.stats() or {}
+
+    return ResponseBase(
+        data=WorkerStatsResponse(
+            workers=list(active_workers.keys()),
+            active_tasks={worker: len(tasks) for worker, tasks in active_workers.items()},
+            stats=stats,
+        )
+    )
+
+
+# ==================== 动态路由 (Dynamic Routes) ====================
 
 
 @router.get("/{task_id}", response_model=ResponseBase[TaskResponse])
@@ -74,12 +126,6 @@ async def get_task_status(task_id: str, _: SuperuserDep) -> ResponseBase[TaskRes
     return ResponseBase(data=response)
 
 
-class RevokeResponse(BaseModel):
-    """任务撤销响应。"""
-
-    message: str = Field(..., description="操作结果消息")
-
-
 @router.delete("/{task_id}", response_model=ResponseBase[RevokeResponse])
 async def revoke_task(task_id: str, _: SuperuserDep) -> ResponseBase[RevokeResponse]:
     """撤销或强制终止正在执行的任务。
@@ -95,41 +141,3 @@ async def revoke_task(task_id: str, _: SuperuserDep) -> ResponseBase[RevokeRespo
     """
     celery_app.control.revoke(task_id, terminate=True)
     return ResponseBase(data=RevokeResponse(message=f"任务 {task_id} 已被撤销"))
-
-
-# ==================== Worker 状态 ====================
-
-
-class WorkerStatsResponse(BaseModel):
-    """Worker 统计响应。"""
-
-    workers: list[str] = Field(default_factory=list, description="Worker 列表")
-    active_tasks: dict[str, int] = Field(default_factory=dict, description="各 Worker 活跃任务数")
-    stats: dict[str, Any] = Field(default_factory=dict, description="详细统计信息")
-
-
-@router.get("/workers/stats", response_model=ResponseBase[WorkerStatsResponse])
-async def get_worker_stats(_: SuperuserDep) -> ResponseBase[WorkerStatsResponse]:
-    """实时获取当前已注册的所有 Celery Worker 节点的统计状态。
-
-    仅限超级管理员访问。返回包括并发设置、已完成任务数、运行中的任务等。
-
-    Args:
-        _ (User): 超级管理员权限验证。
-
-    Returns:
-        ResponseBase[WorkerStatsResponse]: 包含 workers 列表、stats 统计和活动任务详情。
-    """
-    inspect = celery_app.control.inspect()
-
-    # 获取活跃的 Workers
-    active_workers = inspect.active() or {}
-    stats = inspect.stats() or {}
-
-    return ResponseBase(
-        data=WorkerStatsResponse(
-            workers=list(active_workers.keys()),
-            active_tasks={worker: len(tasks) for worker, tasks in active_workers.items()},
-            stats=stats,
-        )
-    )

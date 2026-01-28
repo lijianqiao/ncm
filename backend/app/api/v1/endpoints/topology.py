@@ -6,6 +6,14 @@
 @Docs: 网络拓扑 API 端点 (Topology Endpoints).
 
 提供 LLDP 拓扑采集、拓扑数据查询、vis.js 格式输出等功能。
+
+路由顺序规则:
+    FastAPI 按定义顺序匹配路由，静态路由必须在动态路由之前定义，否则动态路由可能会错误匹配静态路径。
+    当前文件路由顺序:
+    1. 根路由: /
+    2. 静态路由: /links, /export, /refresh, /cache/rebuild, /reset
+    3. 带有 /device/ 前缀的动态路由
+    4. 带有 /task/ 前缀的动态路由
 """
 
 from typing import Any, cast
@@ -42,7 +50,9 @@ from app.schemas.topology import (
 router = APIRouter(tags=["网络拓扑"])
 
 
-# ===== 拓扑数据查询 =====
+# =============================================================================
+# 1. 根路由
+# =============================================================================
 
 
 @router.get(
@@ -66,6 +76,11 @@ async def get_topology(
     """
     data = await topology_service.build_topology(db)
     return ResponseBase(data=data)
+
+
+# =============================================================================
+# 2. 静态路由: /links, /export, /refresh, /cache/rebuild, /reset
+# =============================================================================
 
 
 @router.get(
@@ -121,31 +136,6 @@ async def list_topology_links(
 
 
 @router.get(
-    "/device/{device_id:uuid}/neighbors",
-    summary="获取设备邻居",
-    response_model=ResponseBase[DeviceNeighborsResponse],
-    dependencies=[Depends(require_permissions([PermissionCode.TOPOLOGY_VIEW.value]))],
-)
-async def get_device_neighbors(
-    db: SessionDep,
-    device_id: UUID,
-    topology_service: TopologyServiceDep,
-) -> ResponseBase[DeviceNeighborsResponse]:
-    """获取指定设备的所有直接连接的邻居链路。
-
-    Args:
-        db (Session): 数据库会话。
-        device_id (UUID): 设备 ID。
-        topology_service (TopologyService): 拓扑服务依赖。
-
-    Returns:
-        ResponseBase[DeviceNeighborsResponse]: 邻居链路列表。
-    """
-    data = await topology_service.get_device_neighbors(db, device_id=device_id)
-    return ResponseBase(data=data)
-
-
-@router.get(
     "/export",
     summary="导出拓扑数据",
     dependencies=[Depends(require_permissions([PermissionCode.TOPOLOGY_VIEW.value]))],
@@ -171,9 +161,6 @@ async def export_topology(
             "Content-Disposition": "attachment; filename=topology_export.json",
         },
     )
-
-
-# ===== 拓扑采集 =====
 
 
 @router.post(
@@ -234,6 +221,99 @@ async def refresh_topology(
 
 
 @router.post(
+    "/cache/rebuild",
+    summary="重建拓扑缓存",
+    response_model=ResponseBase[TopologyTaskResponse],
+    dependencies=[Depends(require_permissions([PermissionCode.TOPOLOGY_REFRESH.value]))],
+)
+async def rebuild_topology_cache(
+    current_user: CurrentUser,
+) -> ResponseBase[TopologyTaskResponse]:
+    """强制重新从数据库构建拓扑缓存并更新到 Redis。
+
+    Args:
+        current_user (User): 当前用户。
+
+    Returns:
+        ResponseBase[TopologyTaskResponse]: 任务 ID 信息。
+    """
+    task = cast(Any, build_topology_cache).delay()
+    return ResponseBase(
+        data=TopologyTaskResponse(
+            task_id=task.id,
+            status="pending",
+            message="拓扑缓存重建任务已提交",
+        )
+    )
+
+
+@router.delete(
+    "/reset",
+    summary="重置拓扑数据",
+    response_model=ResponseBase[dict],
+    dependencies=[Depends(require_permissions([PermissionCode.TOPOLOGY_REFRESH.value]))],
+)
+async def reset_topology(
+    current_user: CurrentUser,
+    db: SessionDep,
+    topology_service: TopologyServiceDep,
+    hard_delete: bool = Query(default=False, description="是否硬删除（物理删除，不可恢复）"),
+) -> ResponseBase[dict]:
+    """重置拓扑数据（清除所有链路）。
+
+    此操作会删除所有拓扑链路数据，通常在以下情况使用：
+    - 设备大规模变更后需要重建拓扑
+    - 拓扑数据累积过多需要清理
+    - 切换网络环境后需要重新采集
+
+    操作步骤：
+    1. 调用此接口清除所有链路
+    2. 调用 POST /topology/refresh 重新采集拓扑
+
+    Args:
+        hard_delete: 是否硬删除（物理删除）。默认为软删除。
+        current_user: 当前用户。
+        db: 数据库会话。
+        topology_service: 拓扑服务依赖。
+
+    Returns:
+        删除统计信息。
+    """
+    result = await topology_service.reset_topology(db, hard_delete=hard_delete)
+    return ResponseBase(data=result)
+
+
+# =============================================================================
+# 3. 带有 /device/ 前缀的动态路由
+# =============================================================================
+
+
+@router.get(
+    "/device/{device_id:uuid}/neighbors",
+    summary="获取设备邻居",
+    response_model=ResponseBase[DeviceNeighborsResponse],
+    dependencies=[Depends(require_permissions([PermissionCode.TOPOLOGY_VIEW.value]))],
+)
+async def get_device_neighbors(
+    db: SessionDep,
+    device_id: UUID,
+    topology_service: TopologyServiceDep,
+) -> ResponseBase[DeviceNeighborsResponse]:
+    """获取指定设备的所有直接连接的邻居链路。
+
+    Args:
+        db (Session): 数据库会话。
+        device_id (UUID): 设备 ID。
+        topology_service (TopologyService): 拓扑服务依赖。
+
+    Returns:
+        ResponseBase[DeviceNeighborsResponse]: 邻居链路列表。
+    """
+    data = await topology_service.get_device_neighbors(db, device_id=device_id)
+    return ResponseBase(data=data)
+
+
+@router.post(
     "/device/{device_id:uuid}/collect",
     summary="采集单设备拓扑",
     response_model=ResponseBase[TopologyTaskResponse],
@@ -285,6 +365,11 @@ async def collect_single_device_topology(
                 message="同步设备拓扑采集完成",
             )
         )
+
+
+# =============================================================================
+# 4. 带有 /task/ 前缀的动态路由
+# =============================================================================
 
 
 @router.get(
@@ -351,66 +436,3 @@ async def get_topology_task_status(task_id: str) -> ResponseBase[TopologyTaskSta
             status.error = str(result.result)
 
     return ResponseBase(data=status)
-
-
-@router.post(
-    "/cache/rebuild",
-    summary="重建拓扑缓存",
-    response_model=ResponseBase[TopologyTaskResponse],
-    dependencies=[Depends(require_permissions([PermissionCode.TOPOLOGY_REFRESH.value]))],
-)
-async def rebuild_topology_cache(
-    current_user: CurrentUser,
-) -> ResponseBase[TopologyTaskResponse]:
-    """强制重新从数据库构建拓扑缓存并更新到 Redis。
-
-    Args:
-        current_user (User): 当前用户。
-
-    Returns:
-        ResponseBase[TopologyTaskResponse]: 任务 ID 信息。
-    """
-    task = cast(Any, build_topology_cache).delay()
-    return ResponseBase(
-        data=TopologyTaskResponse(
-            task_id=task.id,
-            status="pending",
-            message="拓扑缓存重建任务已提交",
-        )
-    )
-
-
-@router.delete(
-    "/reset",
-    summary="重置拓扑数据",
-    response_model=ResponseBase[dict],
-    dependencies=[Depends(require_permissions([PermissionCode.TOPOLOGY_REFRESH.value]))],
-)
-async def reset_topology(
-    current_user: CurrentUser,
-    db: SessionDep,
-    topology_service: TopologyServiceDep,
-    hard_delete: bool = Query(default=False, description="是否硬删除（物理删除，不可恢复）"),
-) -> ResponseBase[dict]:
-    """重置拓扑数据（清除所有链路）。
-
-    此操作会删除所有拓扑链路数据，通常在以下情况使用：
-    - 设备大规模变更后需要重建拓扑
-    - 拓扑数据累积过多需要清理
-    - 切换网络环境后需要重新采集
-
-    操作步骤：
-    1. 调用此接口清除所有链路
-    2. 调用 POST /topology/refresh 重新采集拓扑
-
-    Args:
-        hard_delete: 是否硬删除（物理删除）。默认为软删除。
-        current_user: 当前用户。
-        db: 数据库会话。
-        topology_service: 拓扑服务依赖。
-
-    Returns:
-        删除统计信息。
-    """
-    result = await topology_service.reset_topology(db, hard_delete=hard_delete)
-    return ResponseBase(data=result)

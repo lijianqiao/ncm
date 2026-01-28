@@ -4,6 +4,11 @@
 @FileName: sessions.py
 @DateTime: 2026-01-07 00:00:00
 @Docs: 在线会话 API（在线用户/强制下线/踢人）。
+
+路由顺序规则：
+1. 静态路由必须在动态路由之前，防止动态路由错误匹配静态路径
+2. 更具体的路由在前，更通用的路由在后
+3. 同一路径前缀下：完全静态 > 带路径参数
 """
 
 from typing import Any
@@ -84,33 +89,6 @@ async def kick_users(
     return ResponseBase(data=result)
 
 
-@router.post("/kick/{user_id}", response_model=ResponseBase[None], summary="强制下线(踢人)")
-async def kick_user(
-    user_id: UUID,
-    session_service: deps.SessionServiceDep,
-    current_user: deps.CurrentUser,
-    _: deps.User = Depends(deps.require_permissions([PermissionCode.SESSION_KICK.value])),
-) -> Any:
-    """
-    强制下线指定用户。
-    需要 SESSION_KICK 权限。
-
-    Args:
-        user_id (UUID): 要强制下线的用户ID。
-        session_service (SessionService): 在线会话服务依赖。
-        current_user (User): 当前登录用户。
-
-    Returns:
-        ResponseBase[None]: 空响应对象，表示操作成功。
-
-    Raises:
-        CustomException: 当用户没有权限或用户不存在时抛出相应错误。
-
-    """
-    await session_service.kick_user(user_id=user_id)
-    return ResponseBase(data=None, message="已强制下线")
-
-
 @router.get(
     "/export",
     summary="导出在线会话",
@@ -139,3 +117,30 @@ async def export_sessions(
         media_type=result.media_type,
         background=BackgroundTask(delete_export_file, str(result.path)),
     )
+
+
+@router.post("/kick/{user_id}", response_model=ResponseBase[None], summary="强制下线(踢人)")
+async def kick_user(
+    user_id: UUID,
+    session_service: deps.SessionServiceDep,
+    current_user: deps.CurrentUser,
+    _: deps.User = Depends(deps.require_permissions([PermissionCode.SESSION_KICK.value])),
+) -> Any:
+    """
+    强制下线指定用户。
+    需要 SESSION_KICK 权限。
+
+    Args:
+        user_id (UUID): 要强制下线的用户ID。
+        session_service (SessionService): 在线会话服务依赖。
+        current_user (User): 当前登录用户。
+
+    Returns:
+        ResponseBase[None]: 空响应对象，表示操作成功。
+
+    Raises:
+        CustomException: 当用户没有权限或用户不存在时抛出相应错误。
+
+    """
+    await session_service.kick_user(user_id=user_id)
+    return ResponseBase(data=None, message="已强制下线")

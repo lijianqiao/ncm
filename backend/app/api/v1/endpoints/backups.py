@@ -641,39 +641,6 @@ async def download_backup_content(
     )
 
 
-# ===== 删除备份 =====
-
-
-@router.delete(
-    "/{backup_id}",
-    response_model=ResponseBase[dict],
-    dependencies=[Depends(require_permissions([PermissionCode.BACKUP_DELETE.value]))],
-    summary="删除备份",
-    description="软删除指定的备份记录。",
-)
-async def delete_backup(
-    backup_id: UUID,
-    service: BackupServiceDep,
-    current_user: CurrentUser,
-) -> ResponseBase[dict]:
-    """标记删除指定的备份记录。
-
-    Args:
-        backup_id (UUID): 备份记录 ID。
-        service (BackupService): 备份服务依赖。
-        current_user (User): 操作者。
-
-    Returns:
-        ResponseBase[dict]: 包含被删除 ID 的确认对象。
-    """
-    await service.delete_backup(backup_id)
-
-    return ResponseBase(
-        data={"id": str(backup_id), "deleted": True},
-        message="备份已删除",
-    )
-
-
 @router.delete(
     "/batch",
     response_model=ResponseBase[BackupBatchDeleteResult],
@@ -759,6 +726,39 @@ async def hard_delete_backups_batch(
     return ResponseBase(
         data=result,
         message=f"批量硬删除完成: 成功 {result.success_count}, 失败 {len(result.failed_ids)}",
+    )
+
+
+# ===== 单条记录操作（动态路由） =====
+
+
+@router.delete(
+    "/{backup_id}",
+    response_model=ResponseBase[dict],
+    dependencies=[Depends(require_permissions([PermissionCode.BACKUP_DELETE.value]))],
+    summary="删除备份",
+    description="软删除指定的备份记录。",
+)
+async def delete_backup(
+    backup_id: UUID,
+    service: BackupServiceDep,
+    current_user: CurrentUser,
+) -> ResponseBase[dict]:
+    """标记删除指定的备份记录。
+
+    Args:
+        backup_id (UUID): 备份记录 ID。
+        service (BackupService): 备份服务依赖。
+        current_user (User): 操作者。
+
+    Returns:
+        ResponseBase[dict]: 包含被删除 ID 的确认对象。
+    """
+    await service.delete_backup(backup_id)
+
+    return ResponseBase(
+        data={"id": str(backup_id), "deleted": True},
+        message="备份已删除",
     )
 
 

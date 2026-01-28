@@ -4,6 +4,17 @@
 @FileName: snmp_credentials.py
 @DateTime: 2026-01-14
 @Docs: 部门 SNMP 凭据 API 端点。
+
+路由顺序规则（重要）:
+====================
+FastAPI 按路由定义顺序匹配，静态路由必须在动态路由之前定义，否则动态路由会先匹配。
+例如：如果 /{id} 在 /batch 之前定义，请求 /batch 会被 /{id} 捕获，导致 404 或参数错误。
+
+路由定义顺序：
+1. 根路由: /
+2. 静态路由: /batch, /recycle-bin, /batch/restore, /batch/hard,
+             /export, /import/template, /import/upload, /import/preview, /import/commit
+3. 动态路由: /{snmp_cred_id} 及其子路由 (/{snmp_cred_id}/restore, /{snmp_cred_id}/hard)
 """
 
 from typing import Any
@@ -46,6 +57,11 @@ router = APIRouter()
 
 def _get_service(db: deps.SessionDep) -> SnmpCredentialService:
     return SnmpCredentialService(db, snmp_cred_crud)
+
+
+# =============================================================================
+# 1. 根路由 (/)
+# =============================================================================
 
 
 @router.get(
@@ -106,86 +122,9 @@ async def create_snmp_credential(
     return ResponseBase[DeptSnmpCredentialResponse](data=resp)
 
 
-@router.get(
-    "/{snmp_cred_id}",
-    response_model=ResponseBase[DeptSnmpCredentialResponse],
-    summary="获取部门 SNMP 凭据详情",
-)
-async def get_snmp_credential(
-    db: deps.SessionDep,
-    snmp_cred_id: UUID,
-    current_user: deps.CurrentUser,
-    _: deps.User = Depends(deps.require_permissions([PermissionCode.SNMP_CRED_LIST.value])),
-) -> ResponseBase[DeptSnmpCredentialResponse]:
-    """获取单个部门 SNMP 凭据详情。
-
-    Args:
-        db (Session): 数据库会话。
-        snmp_cred_id (UUID): 凭据 ID。
-        current_user (User): 当前登录用户。
-
-    Returns:
-        ResponseBase[DeptSnmpCredentialResponse]: 凭据详情。
-    """
-    service = _get_service(db)
-    resp = await service.get(snmp_cred_id=snmp_cred_id)
-    return ResponseBase(data=resp)
-
-
-@router.put(
-    "/{snmp_cred_id}",
-    response_model=ResponseBase[DeptSnmpCredentialResponse],
-    summary="更新部门 SNMP 凭据",
-)
-async def update_snmp_credential(
-    db: deps.SessionDep,
-    snmp_cred_id: UUID,
-    request: DeptSnmpCredentialUpdate,
-    current_user: deps.CurrentUser,
-    _: deps.User = Depends(deps.require_permissions([PermissionCode.SNMP_CRED_UPDATE.value])),
-) -> ResponseBase[DeptSnmpCredentialResponse]:
-    """更新部门 SNMP 凭据。
-
-    Args:
-        db (Session): 数据库会话。
-        snmp_cred_id (UUID): 凭据 ID。
-        request (DeptSnmpCredentialUpdate): 更新请求体。
-        current_user (User): 当前登录用户。
-
-    Returns:
-        ResponseBase[DeptSnmpCredentialResponse]: 更新后的凭据信息。
-    """
-    service = _get_service(db)
-    resp = await service.update(snmp_cred_id=snmp_cred_id, data=request)
-    await db.commit()
-    return ResponseBase(data=resp)
-
-
-@router.delete(
-    "/{snmp_cred_id}",
-    response_model=ResponseBase[dict],
-    summary="删除部门 SNMP 凭据",
-)
-async def delete_snmp_credential(
-    db: deps.SessionDep,
-    snmp_cred_id: UUID,
-    current_user: deps.CurrentUser,
-    _: deps.User = Depends(deps.require_permissions([PermissionCode.SNMP_CRED_DELETE.value])),
-) -> ResponseBase[dict]:
-    """删除部门 SNMP 凭据（软删除）。
-
-    Args:
-        db (Session): 数据库会话。
-        snmp_cred_id (UUID): 凭据 ID。
-        current_user (User): 当前登录用户。
-
-    Returns:
-        ResponseBase[dict]: 删除结果。
-    """
-    service = _get_service(db)
-    await service.delete(snmp_cred_id=snmp_cred_id)
-    await db.commit()
-    return ResponseBase(data={"message": "删除成功"})
+# =============================================================================
+# 2. 静态路由 (必须在动态路由之前定义)
+# =============================================================================
 
 
 @router.delete(
@@ -258,36 +197,6 @@ async def read_recycle_bin_snmp_credentials(
 
 
 @router.post(
-    "/{snmp_cred_id}/restore",
-    response_model=ResponseBase[DeptSnmpCredentialResponse],
-    summary="恢复 SNMP 凭据",
-)
-async def restore_snmp_credential(
-    db: deps.SessionDep,
-    snmp_cred_id: UUID,
-    current_user: deps.CurrentUser,
-    _: deps.User = Depends(deps.require_permissions([PermissionCode.SNMP_CRED_DELETE.value])),
-) -> Any:
-    """恢复已删除的 SNMP 凭据。
-
-    Args:
-        db (Session): 数据库会话。
-        snmp_cred_id (UUID): 凭据 ID。
-        current_user (User): 当前登录用户。
-
-    Returns:
-        ResponseBase[DeptSnmpCredentialResponse]: 恢复后的凭据信息。
-    """
-    service = _get_service(db)
-    obj = await service.restore(snmp_cred_id)
-    await db.commit()
-    return ResponseBase(
-        data=await service.to_response(obj),
-        message="SNMP 凭据已恢复",
-    )
-
-
-@router.post(
     "/batch/restore",
     response_model=ResponseBase[BatchOperationResult],
     summary="批量恢复 SNMP 凭据",
@@ -312,27 +221,6 @@ async def batch_restore_snmp_credentials(
     result = await service.batch_restore(request.ids)
     await db.commit()
     return ResponseBase(data=result)
-
-
-@router.delete(
-    "/{snmp_cred_id}/hard",
-    response_model=ResponseBase[dict],
-    summary="彻底删除 SNMP 凭据",
-)
-async def hard_delete_snmp_credential(
-    db: deps.SessionDep,
-    snmp_cred_id: UUID,
-    current_user: deps.CurrentUser,
-    _: deps.User = Depends(deps.require_permissions([PermissionCode.SNMP_CRED_DELETE.value])),
-) -> Any:
-    """彻底删除 SNMP 凭据（硬删除，不可恢复）。"""
-    service = _get_service(db)
-    await service.hard_delete(snmp_cred_id)
-    await db.commit()
-    return ResponseBase(
-        data={"message": "SNMP 凭据已彻底删除"},
-        message="SNMP 凭据已彻底删除",
-    )
 
 
 @router.delete(
@@ -489,3 +377,141 @@ async def commit_snmp_credential_import(
     svc = ImportExportService(db=db, redis_client=None, base_dir=str(settings.IMPORT_EXPORT_TMP_DIR or "") or None)
     resp = await svc.commit(body=body, persist_fn=persist_snmp_credentials, lock_namespace="import")
     return ResponseBase(data=resp)
+
+
+# =============================================================================
+# 3. 动态路由 (/{snmp_cred_id} 及其子路由)
+# =============================================================================
+
+
+@router.get(
+    "/{snmp_cred_id}",
+    response_model=ResponseBase[DeptSnmpCredentialResponse],
+    summary="获取部门 SNMP 凭据详情",
+)
+async def get_snmp_credential(
+    db: deps.SessionDep,
+    snmp_cred_id: UUID,
+    current_user: deps.CurrentUser,
+    _: deps.User = Depends(deps.require_permissions([PermissionCode.SNMP_CRED_LIST.value])),
+) -> ResponseBase[DeptSnmpCredentialResponse]:
+    """获取单个部门 SNMP 凭据详情。
+
+    Args:
+        db (Session): 数据库会话。
+        snmp_cred_id (UUID): 凭据 ID。
+        current_user (User): 当前登录用户。
+
+    Returns:
+        ResponseBase[DeptSnmpCredentialResponse]: 凭据详情。
+    """
+    service = _get_service(db)
+    resp = await service.get(snmp_cred_id=snmp_cred_id)
+    return ResponseBase(data=resp)
+
+
+@router.put(
+    "/{snmp_cred_id}",
+    response_model=ResponseBase[DeptSnmpCredentialResponse],
+    summary="更新部门 SNMP 凭据",
+)
+async def update_snmp_credential(
+    db: deps.SessionDep,
+    snmp_cred_id: UUID,
+    request: DeptSnmpCredentialUpdate,
+    current_user: deps.CurrentUser,
+    _: deps.User = Depends(deps.require_permissions([PermissionCode.SNMP_CRED_UPDATE.value])),
+) -> ResponseBase[DeptSnmpCredentialResponse]:
+    """更新部门 SNMP 凭据。
+
+    Args:
+        db (Session): 数据库会话。
+        snmp_cred_id (UUID): 凭据 ID。
+        request (DeptSnmpCredentialUpdate): 更新请求体。
+        current_user (User): 当前登录用户。
+
+    Returns:
+        ResponseBase[DeptSnmpCredentialResponse]: 更新后的凭据信息。
+    """
+    service = _get_service(db)
+    resp = await service.update(snmp_cred_id=snmp_cred_id, data=request)
+    await db.commit()
+    return ResponseBase(data=resp)
+
+
+@router.delete(
+    "/{snmp_cred_id}",
+    response_model=ResponseBase[dict],
+    summary="删除部门 SNMP 凭据",
+)
+async def delete_snmp_credential(
+    db: deps.SessionDep,
+    snmp_cred_id: UUID,
+    current_user: deps.CurrentUser,
+    _: deps.User = Depends(deps.require_permissions([PermissionCode.SNMP_CRED_DELETE.value])),
+) -> ResponseBase[dict]:
+    """删除部门 SNMP 凭据（软删除）。
+
+    Args:
+        db (Session): 数据库会话。
+        snmp_cred_id (UUID): 凭据 ID。
+        current_user (User): 当前登录用户。
+
+    Returns:
+        ResponseBase[dict]: 删除结果。
+    """
+    service = _get_service(db)
+    await service.delete(snmp_cred_id=snmp_cred_id)
+    await db.commit()
+    return ResponseBase(data={"message": "删除成功"})
+
+
+@router.post(
+    "/{snmp_cred_id}/restore",
+    response_model=ResponseBase[DeptSnmpCredentialResponse],
+    summary="恢复 SNMP 凭据",
+)
+async def restore_snmp_credential(
+    db: deps.SessionDep,
+    snmp_cred_id: UUID,
+    current_user: deps.CurrentUser,
+    _: deps.User = Depends(deps.require_permissions([PermissionCode.SNMP_CRED_DELETE.value])),
+) -> Any:
+    """恢复已删除的 SNMP 凭据。
+
+    Args:
+        db (Session): 数据库会话。
+        snmp_cred_id (UUID): 凭据 ID。
+        current_user (User): 当前登录用户。
+
+    Returns:
+        ResponseBase[DeptSnmpCredentialResponse]: 恢复后的凭据信息。
+    """
+    service = _get_service(db)
+    obj = await service.restore(snmp_cred_id)
+    await db.commit()
+    return ResponseBase(
+        data=await service.to_response(obj),
+        message="SNMP 凭据已恢复",
+    )
+
+
+@router.delete(
+    "/{snmp_cred_id}/hard",
+    response_model=ResponseBase[dict],
+    summary="彻底删除 SNMP 凭据",
+)
+async def hard_delete_snmp_credential(
+    db: deps.SessionDep,
+    snmp_cred_id: UUID,
+    current_user: deps.CurrentUser,
+    _: deps.User = Depends(deps.require_permissions([PermissionCode.SNMP_CRED_DELETE.value])),
+) -> Any:
+    """彻底删除 SNMP 凭据（硬删除，不可恢复）。"""
+    service = _get_service(db)
+    await service.hard_delete(snmp_cred_id)
+    await db.commit()
+    return ResponseBase(
+        data={"message": "SNMP 凭据已彻底删除"},
+        message="SNMP 凭据已彻底删除",
+    )
