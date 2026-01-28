@@ -116,11 +116,17 @@ class DeptService:
         Returns:
             部门列表和总数
         """
-        depts, total = await self.dept_crud.get_multi_paginated(
+        from app.models.dept import Department
+        from sqlalchemy.orm import selectinload
+
+        depts, total = await self.dept_crud.get_paginated(
             self.db,
             page=page,
             page_size=page_size,
             keyword=keyword,
+            keyword_columns=[Department.name, Department.code, Department.leader],
+            order_by=(Department.sort.asc(), Department.created_at.desc()),
+            options=[selectinload(Department.children)],
             is_active=is_active,
         )
         return [self._to_dept_response(d, children=[]) for d in depts], total
@@ -134,11 +140,18 @@ class DeptService:
         is_active: bool | None = None,
     ) -> tuple[list[DeptResponse], int]:
         """获取已删除部门列表（回收站）。"""
-        depts, total = await self.dept_crud.get_multi_deleted_paginated(
+        from app.models.dept import Department
+        from sqlalchemy.orm import selectinload
+
+        depts, total = await self.dept_crud.get_paginated(
             self.db,
             page=page,
             page_size=page_size,
             keyword=keyword,
+            keyword_columns=[Department.name, Department.code, Department.leader],
+            order_by=(Department.sort.asc(), Department.created_at.desc()),
+            options=[selectinload(Department.children)],
+            is_deleted=True,
             is_active=is_active,
         )
         return [self._to_dept_response(d, children=[]) for d in depts], total
@@ -326,7 +339,7 @@ class DeptService:
         Raises:
             NotFoundException: 部门不存在或未被软删除
         """
-        deleted_dept = await self.dept_crud.get_deleted(self.db, dept_id=dept_id)
+        deleted_dept = await self.dept_crud.get(self.db, dept_id, is_deleted=True)
         if not deleted_dept:
             raise NotFoundException(message="部门不存在或未被软删除")
 

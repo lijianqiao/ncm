@@ -157,7 +157,15 @@ class BackupService(DeviceCredentialMixin):
         if not device:
             raise NotFoundException(message="设备不存在")
 
-        return await self.backup_crud.get_by_device(self.db, device_id=device_id, page=page, page_size=page_size)
+        return await self.backup_crud.get_paginated(
+            self.db,
+            page=page,
+            page_size=page_size,
+            max_size=500,
+            device_id=device_id,
+            order_by=Backup.created_at.desc(),
+            options=self.backup_crud._BACKUP_OPTIONS,
+        )
 
     async def get_device_latest_backup(self, device_id: UUID) -> Backup | None:
         """
@@ -764,7 +772,7 @@ class BackupService(DeviceCredentialMixin):
             )
 
         # 2. 批量获取设备
-        devices = await self.device_crud.get_multi_by_ids(self.db, ids=device_ids_to_backup)
+        devices = await self.device_crud.get_by_ids(self.db, device_ids_to_backup, options=self.device_crud._DEVICE_OPTIONS)
         if not devices:
             raise BadRequestException(message="没有找到有效设备")
 
@@ -1055,10 +1063,11 @@ class BackupService(DeviceCredentialMixin):
         Returns:
             list[Device]: 活跃设备列表
         """
-        devices, _ = await self.device_crud.get_multi_paginated(
+        devices, _ = await self.device_crud.get_paginated(
             self.db,
             page=1,
-            page_size=10000,  # 大页获取所有
+            page_size=10000,
+            max_size=10000,
             status=DeviceStatus.ACTIVE.value,
         )
         return devices

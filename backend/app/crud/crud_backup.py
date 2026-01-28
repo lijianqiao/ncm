@@ -6,7 +6,9 @@
 @Docs: 配置备份 CRUD 操作。
 """
 
+from collections.abc import Sequence
 from datetime import datetime
+from typing import Any
 from uuid import UUID
 
 from sqlalchemy import func, select
@@ -28,52 +30,19 @@ class BackupUpdate(BackupCreate):
 class CRUDBackup(CRUDBase[Backup, BackupCreate, BackupUpdate]):
     """配置备份 CRUD 操作类。"""
 
-    async def get(self, db: AsyncSession, id: UUID) -> Backup | None:
-        """
-        通过 ID 获取备份（预加载设备关联）。
-        """
-        query = (
-            select(self.model)
-            .options(selectinload(Backup.device), selectinload(Backup.operator))
-            .where(self.model.id == id)
-            .where(self.model.is_deleted.is_(False))
-        )
-        result = await db.execute(query)
-        return result.scalars().first()
+    # 备份关联加载选项
+    _BACKUP_OPTIONS = [selectinload(Backup.device), selectinload(Backup.operator)]
 
-    async def get_by_device(
+    async def get(
         self,
         db: AsyncSession,
-        device_id: UUID,
+        id: UUID,
         *,
-        page: int = 1,
-        page_size: int = 20,
-    ) -> tuple[list[Backup], int]:
-        """
-        获取指定设备的备份历史（分页）。
-
-        Args:
-            db: 数据库会话
-            device_id: 设备ID
-            page: 页码
-            page_size: 每页数量
-
-        Returns:
-            (items, total): 备份列表和总数
-        """
-        page, page_size = self._validate_pagination(page, page_size, max_size=500, default_size=20)
-
-        where_clause = (self.model.device_id == device_id) & (self.model.is_deleted.is_(False))
-        count_stmt = select(func.count(Backup.id)).where(where_clause)
-        stmt = (
-            select(self.model)
-            .options(selectinload(Backup.device), selectinload(Backup.operator))
-            .where(where_clause)
-            .order_by(self.model.created_at.desc())
-        )
-        return await self.paginate(
-            db, stmt=stmt, count_stmt=count_stmt, page=page, page_size=page_size, max_size=500, default_size=20
-        )
+        is_deleted: bool | None = False,
+        options: Sequence[Any] | None = None,
+    ) -> Backup | None:
+        """通过 ID 获取备份（预加载设备关联）。"""
+        return await super().get(db, id, is_deleted=is_deleted, options=options or self._BACKUP_OPTIONS)
 
     async def get_latest_by_device(self, db: AsyncSession, device_id: UUID) -> Backup | None:
         """
@@ -224,9 +193,10 @@ class CRUDBackup(CRUDBase[Backup, BackupCreate, BackupUpdate]):
                 .order_by(self.model.created_at.desc())
             )
 
-        return await self.paginate(
-            db, stmt=stmt, count_stmt=count_stmt, page=page, page_size=page_size, max_size=500, default_size=20
-        )
+        # 执行分页查询
+        total = await db.scalar(count_stmt) or 0
+        result = await db.execute(stmt.offset((page - 1) * page_size).limit(page_size))
+        return list(result.scalars().all()), int(total)
 
     async def get_multi_deleted_paginated(
         self,
@@ -309,9 +279,10 @@ class CRUDBackup(CRUDBase[Backup, BackupCreate, BackupUpdate]):
                 .order_by(self.model.created_at.desc())
             )
 
-        return await self.paginate(
-            db, stmt=stmt, count_stmt=count_stmt, page=page, page_size=page_size, max_size=500, default_size=20
-        )
+        # 执行分页查询
+        total = await db.scalar(count_stmt) or 0
+        result = await db.execute(stmt.offset((page - 1) * page_size).limit(page_size))
+        return list(result.scalars().all()), int(total)
 
     async def count_by_device(self, db: AsyncSession, device_id: UUID) -> int:
         """

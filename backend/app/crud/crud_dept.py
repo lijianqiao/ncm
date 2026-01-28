@@ -6,126 +6,30 @@
 @Docs: 部门 CRUD 操作。
 """
 
+from collections.abc import Sequence
+from typing import Any
 from uuid import UUID
 
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
-from sqlalchemy.sql.elements import ColumnElement
 
 from app.crud.base import CRUDBase
 from app.models.dept import Department
 from app.schemas.dept import DeptCreate, DeptUpdate
 
+# 关联加载选项
+_CHILDREN_OPTIONS = [selectinload(Department.children)]
+
+# 关键词搜索列
+_KEYWORD_COLUMNS = [Department.name, Department.code, Department.leader]
+
+# 默认排序
+_DEFAULT_ORDER = (Department.sort.asc(), Department.created_at.desc())
+
 
 class CRUDDept(CRUDBase[Department, DeptCreate, DeptUpdate]):
     """部门 CRUD 操作类。"""
-
-    async def get_multi_deleted_paginated(
-        self,
-        db: AsyncSession,
-        *,
-        page: int = 1,
-        page_size: int = 20,
-        keyword: str | None = None,
-        is_active: bool | None = None,
-    ) -> tuple[list[Department], int]:
-        """获取已删除部门列表 (回收站 - 分页)。"""
-
-        page, page_size = self._validate_pagination(page, page_size)
-
-        conditions: list[ColumnElement[bool]] = [Department.is_deleted.is_(True)]
-
-        kw = self._normalize_keyword(keyword)
-        if kw:
-            escaped = self._escape_like(kw)
-            pattern = f"%{escaped}%"
-            conditions.append(
-                or_(
-                    Department.name.ilike(pattern, escape="\\"),
-                    Department.code.ilike(pattern, escape="\\"),
-                    Department.leader.ilike(pattern, escape="\\"),
-                )
-            )
-
-        if is_active is not None:
-            conditions.append(Department.is_active.is_(is_active))
-
-        count_stmt = select(func.count(Department.id)).where(and_(*conditions))
-        total = (await db.execute(count_stmt)).scalar_one()
-
-        stmt = (
-            select(Department)
-            .options(selectinload(Department.children))
-            .where(and_(*conditions))
-            .order_by(Department.sort.asc(), Department.created_at.desc())
-            .offset((page - 1) * page_size)
-            .limit(page_size)
-        )
-        result = await db.execute(stmt)
-        return list(result.scalars().all()), int(total)
-
-    async def get_multi_paginated(
-        self,
-        db: AsyncSession,
-        *,
-        page: int = 1,
-        page_size: int = 20,
-        keyword: str | None = None,
-        is_active: bool | None = None,
-        include_deleted: bool = False,
-    ) -> tuple[list[Department], int]:
-        """
-        分页查询部门列表。
-
-        Args:
-            db: 数据库会话
-            page: 页码
-            page_size: 每页数量
-            keyword: 关键词（搜索名称/编码/负责人）
-            is_active: 是否启用过滤
-            include_deleted: 是否包含已删除
-
-        Returns:
-            部门列表和总数
-        """
-        page, page_size = self._validate_pagination(page, page_size)
-
-        conditions: list[ColumnElement[bool]] = []
-
-        if not include_deleted:
-            conditions.append(Department.is_deleted.is_(False))
-
-        kw = self._normalize_keyword(keyword)
-        if kw:
-            escaped = self._escape_like(kw)
-            pattern = f"%{escaped}%"
-            conditions.append(
-                or_(
-                    Department.name.ilike(pattern, escape="\\"),
-                    Department.code.ilike(pattern, escape="\\"),
-                    Department.leader.ilike(pattern, escape="\\"),
-                )
-            )
-
-        if is_active is not None:
-            conditions.append(Department.is_active.is_(is_active))
-
-        # 查询总数
-        count_stmt = select(func.count()).select_from(Department)
-        if conditions:
-            count_stmt = count_stmt.where(and_(*conditions))
-        total = (await db.execute(count_stmt)).scalar() or 0
-
-        # 查询数据
-        stmt = select(Department).options(selectinload(Department.children))
-        if conditions:
-            stmt = stmt.where(and_(*conditions))
-        stmt = stmt.order_by(Department.sort.asc(), Department.created_at.desc())
-        stmt = stmt.offset((page - 1) * page_size).limit(page_size)
-
-        result = await db.execute(stmt)
-        return list(result.scalars().all()), int(total)
 
     async def get_tree(
         self,
@@ -155,31 +59,17 @@ class CRUDDept(CRUDBase[Department, DeptCreate, DeptUpdate]):
             conditions.append(Department.is_active.is_(is_active))
 
         if keyword:
-            kw = self._normalize_keyword(keyword)
-            if kw:
-                escaped = self._escape_like(kw)
-                pattern = f"%{escaped}%"
-                conditions.append(
-                    or_(
-                        Department.name.ilike(pattern, escape="\\"),
-                        Department.code.ilike(pattern, escape="\\"),
-                        Department.leader.ilike(pattern, escape="\\"),
-                    )
-                )
+            keyword_clause = self._or_ilike_contains(keyword, _KEYWORD_COLUMNS)
+            if keyword_clause is not None:
+                conditions.append(keyword_clause)
 
         stmt = select(Department)
         if conditions:
             stmt = stmt.where(and_(*conditions))
-        stmt = stmt.order_by(Department.sort.asc(), Department.created_at.desc())
+        stmt = stmt.order_by(*_DEFAULT_ORDER)
 
         result = await db.execute(stmt)
         return list(result.scalars().all())
-
-    async def get_deleted(self, db: AsyncSession, *, dept_id: UUID) -> Department | None:
-        """获取已软删除的部门记录。"""
-        stmt = select(Department).where(Department.id == dept_id, Department.is_deleted.is_(True))
-        result = await db.execute(stmt)
-        return result.scalars().first()
 
     async def get_children_ids(self, db: AsyncSession, *, dept_id: UUID) -> list[UUID]:
         """

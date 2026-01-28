@@ -8,10 +8,10 @@
 提供告警创建、分页查询、确认(ack)、关闭(close)等能力。
 """
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from uuid import UUID
 
-from sqlalchemy import update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.decorator import transactional
@@ -38,17 +38,22 @@ class AlertService:
         return alert
 
     async def list_alerts(self, query: AlertListQuery) -> tuple[list[Alert], int]:
-        return await self.alert_crud.get_multi_paginated(
+        from app.models.alert import Alert
+
+        return await self.alert_crud.get_paginated(
             self.db,
             page=query.page,
             page_size=query.page_size,
             keyword=query.keyword,
+            keyword_columns=[Alert.title, Alert.message],
+            order_by=Alert.created_at.desc(),
+            options=self.alert_crud._ALERT_OPTIONS,
             alert_type=query.alert_type.value if query.alert_type else None,
             severity=query.severity.value if query.severity else None,
             status=query.status.value if query.status else None,
             related_device_id=query.related_device_id,
-            start_time=query.start_time,
-            end_time=query.end_time,
+            created_at__gte=query.start_time,
+            created_at__lte=query.end_time,
         )
 
     @transactional()
@@ -290,9 +295,46 @@ class AlertService:
         获取告警统计数据（按类型/级别/状态分组）。
 
         Returns:
-            dict: 统计数据
+            dict: {
+                "total": 总数,
+                "by_type": {"config_change": n, ...},
+                "by_severity": {"low": n, "medium": n, "high": n},
+                "by_status": {"open": n, "ack": n, "closed": n}
+            }
         """
-        return await self.alert_crud.get_stats(self.db)
+        base_condition = Alert.is_deleted.is_(False)
+
+        # 总数
+        total_query = select(func.count(Alert.id)).where(base_condition)
+        total = (await self.db.execute(total_query)).scalar() or 0
+
+        # 按类型分组
+        type_query = (
+            select(Alert.alert_type, func.count(Alert.id)).where(base_condition).group_by(Alert.alert_type)
+        )
+        type_result = await self.db.execute(type_query)
+        by_type = {row[0]: row[1] for row in type_result.all()}
+
+        # 按级别分组
+        severity_query = (
+            select(Alert.severity, func.count(Alert.id)).where(base_condition).group_by(Alert.severity)
+        )
+        severity_result = await self.db.execute(severity_query)
+        by_severity = {row[0]: row[1] for row in severity_result.all()}
+
+        # 按状态分组
+        status_query = (
+            select(Alert.status, func.count(Alert.id)).where(base_condition).group_by(Alert.status)
+        )
+        status_result = await self.db.execute(status_query)
+        by_status = {row[0]: row[1] for row in status_result.all()}
+
+        return {
+            "total": total,
+            "by_type": by_type,
+            "by_severity": by_severity,
+            "by_status": by_status,
+        }
 
     async def get_trend(self, days: int = 7) -> list[dict]:
         """
@@ -302,6 +344,22 @@ class AlertService:
             days: 天数，默认 7 天
 
         Returns:
-            list[dict]: 趋势数据列表
+            list[dict]: [{"date": "2026-01-20", "count": 5}, ...]
         """
-        return await self.alert_crud.get_trend(self.db, days=days)
+        since = datetime.now() - timedelta(days=days)
+
+        # 按日期分组统计
+        query = (
+            select(
+                func.date(Alert.created_at).label("date"),
+                func.count(Alert.id).label("count"),
+            )
+            .where(Alert.is_deleted.is_(False))
+            .where(Alert.created_at >= since)
+            .group_by(func.date(Alert.created_at))
+            .order_by(func.date(Alert.created_at))
+        )
+        result = await self.db.execute(query)
+        rows = result.all()
+
+        return [{"date": str(row.date), "count": row.count} for row in rows]

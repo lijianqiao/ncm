@@ -54,11 +54,21 @@ class TemplateService:
         template_type: str | None = None,
         status: str | None = None,
     ) -> tuple[list[Template], int]:
-        return await self.template_crud.get_multi_paginated(
+        from app.models.template import Template
+
+        # 构建 JSONB contains 条件
+        extra_conditions = []
+        if vendor:
+            extra_conditions.append(Template.vendors.contains([vendor]))  # type: ignore[attr-defined]
+
+        return await self.template_crud.get_paginated(
             self.db,
             page=page,
             page_size=page_size,
-            vendor=vendor,
+            max_size=500,
+            order_by=Template.updated_at.desc(),
+            options=self.template_crud._build_template_options(),
+            extra_conditions=extra_conditions if extra_conditions else None,
             template_type=template_type,
             status=status,
         )
@@ -93,17 +103,24 @@ class TemplateService:
         keyword: str | None = None,
     ) -> tuple[list[Template], int]:
         """获取回收站模板列表（分页）。"""
-        return await self.template_crud.get_multi_deleted_paginated(
+        from app.models.template import Template
+
+        return await self.template_crud.get_paginated(
             self.db,
             page=page,
             page_size=page_size,
+            max_size=500,
             keyword=keyword,
+            keyword_columns=[Template.name, Template.description],
+            order_by=Template.updated_at.desc(),
+            options=self.template_crud._build_template_options(),
+            is_deleted=True,
         )
 
     @transactional()
     async def restore_template(self, template_id: UUID) -> Template:
         """恢复已删除的模板。"""
-        template = await self.template_crud.get_deleted(self.db, id=template_id)
+        template = await self.template_crud.get(self.db, template_id, is_deleted=True)
         if not template:
             raise NotFoundException("模板不存在或未被删除")
 
@@ -122,7 +139,7 @@ class TemplateService:
     @transactional()
     async def hard_delete_template(self, template_id: UUID) -> None:
         """彻底删除模板（硬删除）。"""
-        template = await self.template_crud.get_deleted(self.db, id=template_id)
+        template = await self.template_crud.get(self.db, template_id, is_deleted=True)
         if not template:
             raise NotFoundException("模板不存在或未被软删除")
 
@@ -295,9 +312,11 @@ class TemplateService:
         if level != (template.current_approval_level or 0) + 1:
             raise BadRequestException("请按顺序审批（必须审批当前级别）")
 
-        step = await self.template_approval_crud.get_by_template_and_level(
-            self.db, template_id=template.id, level=level
+        # 获取指定模板和级别的审批步骤
+        steps, _ = await self.template_approval_crud.get_paginated(
+            self.db, page=1, page_size=1, template_id=template.id, level=level
         )
+        step = steps[0] if steps else None
         if not step:
             raise NotFoundException("审批步骤不存在")
 
@@ -543,11 +562,7 @@ class TemplateService:
 
         # 创建参数记录
         if data.parameters_list and self.template_parameter_crud:
-            await self.template_parameter_crud.create_for_template(
-                self.db,
-                template_id=obj.id,
-                params=data.parameters_list,
-            )
+            await self._create_parameters_for_template(obj.id, data.parameters_list)
             await self.db.refresh(obj)
 
         return obj
@@ -579,11 +594,7 @@ class TemplateService:
 
         # 如果提供了参数列表，同步参数并更新 JSON Schema
         if data.parameters_list is not None and self.template_parameter_crud:
-            await self.template_parameter_crud.sync_parameters(
-                self.db,
-                template_id=template_id,
-                params=data.parameters_list,
-            )
+            await self._sync_parameters(template_id, data.parameters_list)
             update_data["parameters"] = self.parameters_to_json_schema(data.parameters_list)
 
         if update_data:
@@ -591,3 +602,67 @@ class TemplateService:
 
         await self.db.refresh(template)
         return template
+
+    # ===== 私有辅助方法 =====
+
+    async def _create_parameters_for_template(
+        self, template_id: UUID, params: list[TemplateParameterCreate]
+    ) -> list[TemplateParameter]:
+        """
+        为模板批量创建参数（服务层业务逻辑）。
+
+        Args:
+            template_id: 模板 ID
+            params: 参数创建列表
+
+        Returns:
+            创建的参数列表
+        """
+        if not self.template_parameter_crud:
+            return []
+
+        created = []
+        for idx, param in enumerate(params):
+            obj = TemplateParameter(
+                template_id=template_id,
+                name=param.name,
+                label=param.label,
+                param_type=param.param_type.value,
+                required=param.required,
+                default_value=param.default_value,
+                description=param.description,
+                options=param.options,
+                min_value=param.min_value,
+                max_value=param.max_value,
+                pattern=param.pattern,
+                order=param.order if param.order > 0 else idx,
+            )
+            self.db.add(obj)
+            created.append(obj)
+
+        await self.db.flush()
+        for obj in created:
+            await self.db.refresh(obj)
+        return created
+
+    async def _sync_parameters(self, template_id: UUID, params: list[TemplateParameterCreate]) -> list[TemplateParameter]:
+        """
+        同步模板参数（先删除旧参数，再创建新参数）。
+
+        Args:
+            template_id: 模板 ID
+            params: 新参数列表
+
+        Returns:
+            创建的参数列表
+        """
+        if not self.template_parameter_crud:
+            return []
+
+        # 硬删除旧参数
+        await self.template_parameter_crud.delete_by_template(self.db, template_id, hard_delete=True)
+
+        # 创建新参数
+        if params:
+            return await self._create_parameters_for_template(template_id, params)
+        return []

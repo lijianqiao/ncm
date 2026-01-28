@@ -60,7 +60,7 @@ class DeployService:
         return device_ids
 
     async def get_task(self, task_id: UUID) -> Task:
-        task = await self.task_crud.get_with_related(self.db, id=task_id)
+        task = await self.task_crud.get(self.db, task_id, options=self.task_crud.RELATED_OPTIONS)
         if not task:
             raise NotFoundException("任务不存在")
         if task.task_type != TaskType.DEPLOY.value:
@@ -68,21 +68,24 @@ class DeployService:
         return task
 
     async def list_tasks_paginated(self, *, page: int = 1, page_size: int = 20) -> tuple[list[Task], int]:
-        return await self.task_crud.get_multi_paginated(
+        return await self.task_crud.get_paginated(
             self.db,
             page=page,
             page_size=page_size,
+            order_by=Task.created_at.desc(),
+            options=self.task_crud.RELATED_OPTIONS,
             task_type=TaskType.DEPLOY.value,
-            with_related=True,
         )
 
     async def list_deleted_tasks_paginated(self, *, page: int = 1, page_size: int = 20) -> tuple[list[Task], int]:
-        return await self.task_crud.get_multi_deleted_paginated(
+        return await self.task_crud.get_paginated(
             self.db,
             page=page,
             page_size=page_size,
+            order_by=Task.updated_at.desc(),
+            options=self.task_crud.RELATED_OPTIONS,
+            is_deleted=True,
             task_type=TaskType.DEPLOY.value,
-            with_related=True,
         )
 
     async def _get_deploy_task_ids(self, *, ids: list[UUID]) -> list[UUID]:
@@ -146,7 +149,7 @@ class DeployService:
             return []
 
         # 批量查询设备信息
-        devices = await self.device_crud.get_multi_by_ids(self.db, ids=device_ids)
+        devices = await self.device_crud.get_by_ids(self.db, device_ids, options=self.device_crud._DEVICE_OPTIONS)
         device_map = {d.id: d for d in devices}
 
         # 解析任务执行结果
@@ -213,7 +216,7 @@ class DeployService:
         if not device_ids:
             raise BadRequestException("任务未包含目标设备")
 
-        devices = await self.device_crud.get_multi_by_ids(self.db, ids=device_ids)
+        devices = await self.device_crud.get_by_ids(self.db, device_ids, options=self.device_crud._DEVICE_OPTIONS)
         devices = [d for d in devices if d.status == DeviceStatus.ACTIVE.value]
         if not devices:
             raise BadRequestException("没有可下发的设备")
@@ -275,7 +278,7 @@ class DeployService:
             }
             await self.db.flush()
             await self.db.refresh(task)
-            task_with_related = await self.task_crud.get_with_related(self.db, id=task.id)
+            task_with_related = await self.task_crud.get(self.db, task.id, options=self.task_crud.RELATED_OPTIONS)
             if not task_with_related:
                 raise NotFoundException("任务不存在")
             return task_with_related
@@ -294,7 +297,7 @@ class DeployService:
 
         await self.db.flush()
         await self.db.refresh(task)
-        task_with_related = await self.task_crud.get_with_related(self.db, id=task.id)
+        task_with_related = await self.task_crud.get(self.db, task.id, options=self.task_crud.RELATED_OPTIONS)
         if not task_with_related:
             raise NotFoundException("任务不存在")
         return task_with_related
@@ -358,7 +361,7 @@ class DeployService:
 
         await self.db.flush()
         await self.db.refresh(task)
-        task_with_related = await self.task_crud.get_with_related(self.db, id=task.id)
+        task_with_related = await self.task_crud.get(self.db, task.id, options=self.task_crud.RELATED_OPTIONS)
         if not task_with_related:
             raise NotFoundException("任务不存在")
         return task_with_related
@@ -384,7 +387,11 @@ class DeployService:
         if level != task.current_approval_level + 1:
             raise BadRequestException("请按顺序审批（必须审批当前级别）")
 
-        step = await self.task_approval_crud.get_by_task_and_level(self.db, task_id=task.id, level=level)
+        # 获取指定任务和级别的审批步骤
+        steps, _ = await self.task_approval_crud.get_paginated(
+            self.db, page=1, page_size=1, task_id=task.id, level=level
+        )
+        step = steps[0] if steps else None
         if not step:
             raise NotFoundException("审批步骤不存在")
 
@@ -413,7 +420,7 @@ class DeployService:
 
         await self.db.flush()
         await self.db.refresh(task)
-        task_with_related = await self.task_crud.get_with_related(self.db, id=task.id)
+        task_with_related = await self.task_crud.get(self.db, task.id, options=self.task_crud.RELATED_OPTIONS)
         if not task_with_related:
             raise NotFoundException("任务不存在")
         return task_with_related
@@ -426,7 +433,7 @@ class DeployService:
         task.started_at = datetime.now(UTC)
         await self.db.flush()
         await self.db.refresh(task)
-        task_with_related = await self.task_crud.get_with_related(self.db, id=task.id)
+        task_with_related = await self.task_crud.get(self.db, task.id, options=self.task_crud.RELATED_OPTIONS)
         if not task_with_related:
             raise NotFoundException("任务不存在")
         return task_with_related
@@ -439,7 +446,7 @@ class DeployService:
         task.result = details or {}
         await self.db.flush()
         await self.db.refresh(task)
-        task_with_related = await self.task_crud.get_with_related(self.db, id=task.id)
+        task_with_related = await self.task_crud.get(self.db, task.id, options=self.task_crud.RELATED_OPTIONS)
         if not task_with_related:
             raise NotFoundException("任务不存在")
         return task_with_related
@@ -455,7 +462,7 @@ class DeployService:
         task.error_message = error
         await self.db.flush()
         await self.db.refresh(task)
-        task_with_related = await self.task_crud.get_with_related(self.db, id=task.id)
+        task_with_related = await self.task_crud.get(self.db, task.id, options=self.task_crud.RELATED_OPTIONS)
         if not task_with_related:
             raise NotFoundException("任务不存在")
         return task_with_related
@@ -491,7 +498,7 @@ class DeployService:
 
         await self.db.flush()
         await self.db.refresh(task)
-        task_with_related = await self.task_crud.get_with_related(self.db, id=task.id)
+        task_with_related = await self.task_crud.get(self.db, task.id, options=self.task_crud.RELATED_OPTIONS)
         if not task_with_related:
             raise NotFoundException("任务不存在")
         return task_with_related
@@ -531,7 +538,7 @@ class DeployService:
         if check_otp:
             device_ids = self._get_target_device_ids(task)
             if device_ids:
-                devices = await self.device_crud.get_multi_by_ids(self.db, ids=device_ids)
+                devices = await self.device_crud.get_by_ids(self.db, device_ids, options=self.device_crud._DEVICE_OPTIONS)
 
                 otp_required_groups: list[dict] = []
                 for device in devices:
@@ -627,7 +634,7 @@ class DeployService:
                 summary="没有目标设备",
             )
 
-        devices = await self.device_crud.get_multi_by_ids(self.db, ids=device_ids)
+        devices = await self.device_crud.get_by_ids(self.db, device_ids, options=self.device_crud._DEVICE_OPTIONS)
         device_map = {str(d.id): d for d in devices}
 
         # 分类设备
@@ -887,7 +894,7 @@ class DeployService:
 
         await self.db.flush()
         await self.db.refresh(task)
-        task_with_related = await self.task_crud.get_with_related(self.db, id=task.id)
+        task_with_related = await self.task_crud.get(self.db, task.id, options=self.task_crud.RELATED_OPTIONS)
         if not task_with_related:
             raise NotFoundException("任务不存在")
         return task_with_related

@@ -239,6 +239,11 @@ class AlertStatus(str, Enum):
     ACK = "ack"  # 已确认
     CLOSED = "closed"  # 已关闭
 
+    @classmethod
+    def open_statuses(cls) -> set[str]:
+        """返回所有"未关闭"状态值集合。"""
+        return {cls.OPEN.value, cls.ACK.value}
+
 
 # ===== 模板参数类型枚举 =====
 

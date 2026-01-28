@@ -159,13 +159,6 @@ class CRUDUser(CRUDBase[User, UserCreate, UserUpdate]):
         result = await db.execute(stmt)
         return list(result.scalars().all()), total
 
-    async def get_by_username(self, db: AsyncSession, *, username: str) -> User | None:
-        """
-        根据用户名查询用户 (排除已软删除)。
-        """
-        result = await db.execute(select(User).where(User.username == username, User.is_deleted.is_(False)))
-        return result.scalars().first()
-
     async def get_by_unique_field(
         self,
         db: AsyncSession,
@@ -185,38 +178,6 @@ class CRUDUser(CRUDBase[User, UserCreate, UserUpdate]):
             stmt = stmt.where(User.is_deleted.is_(False))
         result = await db.execute(stmt)
         return result.scalars().first()
-
-    async def get_by_username_include_deleted(self, db: AsyncSession, *, username: str) -> User | None:
-        """
-        根据用户名查询用户 (包含已软删除)。
-        """
-        return await self.get_by_unique_field(db, field="username", value=username, include_deleted=True)
-
-    async def get_by_email(self, db: AsyncSession, *, email: str) -> User | None:
-        """
-        根据邮箱查询用户 (排除已软删除)。
-        """
-        result = await db.execute(select(User).where(User.email == email, User.is_deleted.is_(False)))
-        return result.scalars().first()
-
-    async def get_by_email_include_deleted(self, db: AsyncSession, *, email: str) -> User | None:
-        """
-        根据邮箱查询用户 (包含已软删除)。
-        """
-        return await self.get_by_unique_field(db, field="email", value=email, include_deleted=True)
-
-    async def get_by_phone(self, db: AsyncSession, *, phone: str) -> User | None:
-        """
-        根据手机号查询用户 (排除已软删除)。
-        """
-        result = await db.execute(select(User).where(User.phone == phone, User.is_deleted.is_(False)))
-        return result.scalars().first()
-
-    async def get_by_phone_include_deleted(self, db: AsyncSession, *, phone: str) -> User | None:
-        """
-        根据手机号查询用户 (包含已软删除)。
-        """
-        return await self.get_by_unique_field(db, field="phone", value=phone, include_deleted=True)
 
     async def get_with_roles(self, db: AsyncSession, *, id: UUID) -> User | None:
         """获取用户并预加载 roles，避免后续访问触发惰性加载。"""

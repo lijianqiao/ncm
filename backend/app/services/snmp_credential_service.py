@@ -28,10 +28,17 @@ class SnmpCredentialService:
         self.snmp_cred_crud = snmp_cred_crud
 
     async def get_multi_paginated(self, *, page: int = 1, page_size: int = 20, dept_id: UUID | None = None):
-        return await self.snmp_cred_crud.get_multi_paginated(
+        from sqlalchemy.orm import selectinload
+
+        from app.models.snmp_credential import DeptSnmpCredential
+
+        return await self.snmp_cred_crud.get_paginated(
             self.db,
             page=page,
             page_size=page_size,
+            max_size=500,
+            order_by=DeptSnmpCredential.created_at.desc(),
+            options=[selectinload(DeptSnmpCredential.dept)],
             dept_id=dept_id,
         )
 
@@ -107,16 +114,24 @@ class SnmpCredentialService:
         keyword: str | None = None,
     ) -> tuple[list[DeptSnmpCredential], int]:
         """获取回收站 SNMP 凭据列表（分页）。"""
-        return await self.snmp_cred_crud.get_multi_deleted_paginated(
+        from sqlalchemy.orm import selectinload
+
+        from app.models.snmp_credential import DeptSnmpCredential
+
+        return await self.snmp_cred_crud.get_paginated(
             self.db,
             page=page,
             page_size=page_size,
             keyword=keyword,
+            keyword_columns=[DeptSnmpCredential.description, DeptSnmpCredential.v3_username],
+            order_by=DeptSnmpCredential.updated_at.desc(),
+            options=[selectinload(DeptSnmpCredential.dept)],
+            is_deleted=True,
         )
 
     async def restore(self, snmp_cred_id: UUID) -> DeptSnmpCredential:
         """恢复已删除的 SNMP 凭据。"""
-        obj = await self.snmp_cred_crud.get_deleted(self.db, id=snmp_cred_id)
+        obj = await self.snmp_cred_crud.get(self.db, snmp_cred_id, is_deleted=True)
         if not obj:
             raise NotFoundException(message="SNMP 凭据不存在或未被删除")
 
@@ -133,7 +148,7 @@ class SnmpCredentialService:
 
     async def hard_delete(self, snmp_cred_id: UUID) -> None:
         """彻底删除 SNMP 凭据（硬删除）。"""
-        obj = await self.snmp_cred_crud.get_deleted(self.db, id=snmp_cred_id)
+        obj = await self.snmp_cred_crud.get(self.db, snmp_cred_id, is_deleted=True)
         if not obj:
             raise NotFoundException(message="SNMP 凭据不存在或未被软删除")
 

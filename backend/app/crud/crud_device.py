@@ -6,6 +6,8 @@
 @Docs: 设备 CRUD 操作。
 """
 
+from collections.abc import Sequence
+from typing import Any
 from uuid import UUID
 
 from sqlalchemy import func, select
@@ -21,18 +23,19 @@ from app.schemas.device import DeviceCreate, DeviceUpdate
 class CRUDDevice(CRUDBase[Device, DeviceCreate, DeviceUpdate]):
     """设备 CRUD 操作类。"""
 
-    async def get(self, db: AsyncSession, id: UUID) -> Device | None:
-        """
-        通过 ID 获取设备（预加载部门关联）。
-        """
-        query = (
-            select(self.model)
-            .options(selectinload(Device.dept))
-            .where(self.model.id == id)
-            .where(self.model.is_deleted.is_(False))
-        )
-        result = await db.execute(query)
-        return result.scalars().first()
+    # 设备关联加载选项
+    _DEVICE_OPTIONS = [selectinload(Device.dept)]
+
+    async def get(
+        self,
+        db: AsyncSession,
+        id: UUID,
+        *,
+        is_deleted: bool | None = False,
+        options: Sequence[Any] | None = None,
+    ) -> Device | None:
+        """通过 ID 获取设备（预加载部门关联）。"""
+        return await super().get(db, id, is_deleted=is_deleted, options=options or self._DEVICE_OPTIONS)
 
     async def get_by_ip(self, db: AsyncSession, ip_address: str) -> Device | None:
         """
@@ -139,60 +142,6 @@ class CRUDDevice(CRUDBase[Device, DeviceCreate, DeviceUpdate]):
         result = await db.execute(query)
         return (result.scalar() or 0) > 0
 
-    async def get_multi_paginated(
-        self,
-        db: AsyncSession,
-        *,
-        page: int = 1,
-        page_size: int = 20,
-        keyword: str | None = None,
-        vendor: str | None = None,
-        status: str | None = None,
-        device_group: str | None = None,
-        dept_id: UUID | None = None,
-    ) -> tuple[list[Device], int]:
-        """
-        获取分页过滤的设备列表。
-
-        Args:
-            db: 数据库会话
-            page: 页码
-            page_size: 每页数量
-            keyword: 搜索关键词（名称或IP）
-            vendor: 厂商筛选
-            status: 状态筛选
-            device_group: 设备分组筛选
-            dept_id: 部门筛选
-
-        Returns:
-            (items, total): 设备列表和总数
-        """
-        conditions: list[ColumnElement[bool]] = [self.model.is_deleted.is_(False)]
-
-        keyword_clause = self._or_ilike_contains(keyword, [self.model.name, self.model.ip_address])
-        if keyword_clause is not None:
-            conditions.append(keyword_clause)
-        if vendor:
-            conditions.append(self.model.vendor == vendor)
-        if status:
-            conditions.append(self.model.status == status)
-        if device_group:
-            conditions.append(self.model.device_group == device_group)
-        if dept_id:
-            conditions.append(self.model.dept_id == dept_id)
-
-        where_clause = self._and_where(conditions)
-        count_stmt = select(func.count(Device.id)).where(where_clause)
-        stmt = (
-            select(self.model)
-            .options(selectinload(Device.dept))
-            .where(where_clause)
-            .order_by(self.model.created_at.desc())
-        )
-        return await self.paginate(
-            db, stmt=stmt, count_stmt=count_stmt, page=page, page_size=page_size, max_size=10000, default_size=20
-        )
-
     async def batch_create(
         self, db: AsyncSession, *, devices_in: list[DeviceCreate]
     ) -> tuple[list[Device], list[dict]]:
@@ -253,61 +202,6 @@ class CRUDDevice(CRUDBase[Device, DeviceCreate, DeviceUpdate]):
                 )
 
         return created_devices, failed_items
-
-    async def get_multi_by_ids(self, db: AsyncSession, *, ids: list[UUID]) -> list[Device]:
-        """
-        通过 ID 列表批量获取设备。
-
-        Args:
-            db: 数据库会话
-            ids: 设备ID列表
-
-        Returns:
-            list[Device]: 设备列表
-        """
-        if not ids:
-            return []
-
-        query = (
-            select(self.model)
-            .options(selectinload(Device.dept))
-            .where(self.model.id.in_(ids))
-            .where(self.model.is_deleted.is_(False))
-        )
-        result = await db.execute(query)
-        return list(result.scalars().all())
-
-    async def get_recycle_bin(
-        self, db: AsyncSession, *, page: int = 1, page_size: int = 20
-    ) -> tuple[list[Device], int]:
-        """
-        获取回收站中的设备。
-
-        Args:
-            db: 数据库会话
-            page: 页码
-            page_size: 每页数量
-
-        Returns:
-            (items, total): 设备列表和总数
-        """
-        where_clause = self.model.is_deleted.is_(True)
-        count_stmt = select(func.count(Device.id)).where(where_clause)
-        stmt = (
-            select(self.model)
-            .options(selectinload(Device.dept))
-            .where(where_clause)
-            .order_by(self.model.updated_at.desc())
-        )
-        return await self.paginate(
-            db, stmt=stmt, count_stmt=count_stmt, page=page, page_size=page_size, max_size=10000, default_size=20
-        )
-
-    async def get_multi_deleted_paginated(
-        self, db: AsyncSession, *, page: int = 1, page_size: int = 20
-    ) -> tuple[list[Device], int]:
-        return await self.get_recycle_bin(db, page=page, page_size=page_size)
-
 
 # 单例实例
 device = CRUDDevice(Device)

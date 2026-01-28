@@ -87,12 +87,6 @@ class CRUDMenu(CRUDBase[Menu, MenuCreate, MenuUpdate]):
         result = await db.execute(select(Menu).where(Menu.is_deleted.is_(False)).order_by(Menu.sort))
         return list(result.scalars().all())
 
-    async def get_multi_by_ids(self, db: AsyncSession, *, ids: list[UUID]) -> list[Menu]:
-        if not ids:
-            return []
-        result = await db.execute(select(Menu).where(Menu.id.in_(ids), Menu.is_deleted.is_(False)).order_by(Menu.sort))
-        return list(result.scalars().all())
-
     async def count(self, db: AsyncSession) -> int:
         result = await db.execute(select(func.count(Menu.id)).where(Menu.is_deleted.is_(False)))
         return result.scalar_one()

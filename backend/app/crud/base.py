@@ -7,7 +7,7 @@
 """
 
 from collections.abc import Iterable, Sequence
-from typing import Any, TypeVar, cast
+from typing import Any, TypeAlias, TypeVar, cast
 from uuid import UUID
 
 from pydantic import BaseModel
@@ -21,6 +21,9 @@ from app.models.base import Base, SoftDeleteMixin
 ModelType = TypeVar("ModelType", bound=Base)
 CreateSchemaType = TypeVar("CreateSchemaType", bound=BaseModel)
 UpdateSchemaType = TypeVar("UpdateSchemaType", bound=BaseModel)
+
+# 类型别名，减少重复注解
+ConditionList: TypeAlias = list[ColumnElement[bool]]
 
 
 class CRUDBase[ModelType: Base, CreateSchemaType: BaseModel, UpdateSchemaType: BaseModel]:
@@ -101,8 +104,18 @@ class CRUDBase[ModelType: Base, CreateSchemaType: BaseModel, UpdateSchemaType: B
 
     @staticmethod
     def _and_where(conditions: Iterable[ColumnElement[bool]]) -> ColumnElement[bool]:
+        """组合多个条件为 AND 表达式。
+
+        Args:
+            conditions: 条件列表
+
+        Returns:
+            组合后的 AND 表达式，空列表返回恒真表达式
+        """
         conds = list(conditions)
-        return and_(*conds) if conds else and_(True)  # type: ignore[arg-type]
+        if not conds:
+            return and_(True)  # 空条件返回恒真  # type: ignore[arg-type]
+        return and_(*conds)
 
     @classmethod
     def _parse_bool_keyword(
@@ -138,34 +151,156 @@ class CRUDBase[ModelType: Base, CreateSchemaType: BaseModel, UpdateSchemaType: B
             return None
         return column.is_(value)
 
-    async def paginate(
+    def _parse_filter_key(self, key: str) -> tuple[str, str]:
+        """解析过滤器键，提取字段名和操作符。
+
+        支持的操作符后缀：
+            - __eq: 等于（默认）
+            - __ne: 不等于
+            - __gt: 大于
+            - __gte: 大于等于
+            - __lt: 小于
+            - __lte: 小于等于
+            - __in: 在列表中
+            - __not_in: 不在列表中
+            - __is: IS（用于布尔/NULL）
+            - __is_not: IS NOT
+            - __like: LIKE 模式匹配
+            - __ilike: ILIKE 模式匹配（不区分大小写）
+            - __contains: JSONB 数组包含
+
+        Args:
+            key: 过滤器键（如 "status" 或 "created_at__gte"）
+
+        Returns:
+            (field_name, operator): 字段名和操作符
+        """
+        operators = (
+            "__gte", "__lte", "__gt", "__lt",
+            "__in", "__not_in",
+            "__is", "__is_not",
+            "__like", "__ilike",
+            "__contains",
+            "__ne", "__eq",
+        )
+        for op in operators:
+            if key.endswith(op):
+                return key[: -len(op)], op[2:]  # 去掉 "__" 前缀
+        return key, "eq"
+
+    def _build_filter_condition(self, field_name: str, operator: str, value: Any) -> ColumnElement[bool] | None:
+        """根据字段、操作符和值构建过滤条件。
+
+        Args:
+            field_name: 字段名
+            operator: 操作符（eq, ne, gt, gte, lt, lte, in, not_in, is, is_not, like, ilike, contains）
+            value: 过滤值
+
+        Returns:
+            SQLAlchemy 条件表达式，或 None（如果值为 None 且操作符不是 is/is_not）
+        """
+        col = getattr(self.model, field_name, None)
+        if col is None:
+            return None
+
+        # 对于 is/is_not 操作符，None 是有效值
+        if operator not in ("is", "is_not") and value is None:
+            return None
+
+        match operator:
+            case "eq":
+                return col == value
+            case "ne":
+                return col != value
+            case "gt":
+                return col > value
+            case "gte":
+                return col >= value
+            case "lt":
+                return col < value
+            case "lte":
+                return col <= value
+            case "in":
+                if not value:
+                    return None
+                return col.in_(value)
+            case "not_in":
+                if not value:
+                    return None
+                return col.not_in(value)
+            case "is":
+                return col.is_(value)
+            case "is_not":
+                return col.is_not(value)
+            case "like":
+                return col.like(value)
+            case "ilike":
+                return col.ilike(value)
+            case "contains":
+                # 用于 JSONB 数组包含查询
+                return col.contains(value)
+            case _:
+                return col == value
+
+    # ========== 核心查询方法 ==========
+
+    async def get(
         self,
         db: AsyncSession,
+        id: UUID,
         *,
-        stmt,
-        count_stmt,
-        page: int = 1,
-        page_size: int = 20,
-        max_size: int = 100,
-        default_size: int = 20,
-    ) -> tuple[list[ModelType], int]:
-        page, page_size = self._validate_pagination(page, page_size, max_size=max_size, default_size=default_size)
-        total = await db.scalar(count_stmt) or 0
-        items = (await db.execute(stmt.offset((page - 1) * page_size).limit(page_size))).scalars().all()
-        return list(items), int(total)
-
-    async def get(self, db: AsyncSession, id: UUID) -> ModelType | None:
+        is_deleted: bool | None = False,
+        options: Sequence[Any] | None = None,
+    ) -> ModelType | None:
         """
         通过 ID 获取单个记录。
+
+        Args:
+            db: 数据库会话
+            id: 记录 ID
+            is_deleted: 软删除过滤（三态参数）
+                - False (默认): 只返回未删除记录
+                - True: 只返回已删除记录（回收站）
+                - None: 返回全部（不过滤删除状态）
+            options: 查询选项列表（如 [selectinload(Model.dept)]）
+
+        Returns:
+            记录对象或 None
         """
         query = select(self.model).where(self.model.id == id)  # pyright: ignore[reportAttributeAccessIssue]
+
+        # 软删除过滤
+        if self._supports_soft_delete and is_deleted is not None:
+            soft_model = cast(type[SoftDeleteMixin], self.model)
+            query = query.where(soft_model.is_deleted.is_(is_deleted))
+
+        if options:
+            query = query.options(*options)
+
+        result = await db.execute(query)
+        return result.scalars().first()
+
+    async def exists(self, db: AsyncSession, id: UUID) -> bool:
+        """
+        检查记录是否存在（软删除过滤）。
+
+        Args:
+            db: 数据库会话
+            id: 记录 ID
+
+        Returns:
+            记录是否存在
+        """
+        query = select(func.count()).select_from(self.model).where(
+            self.model.id == id  # pyright: ignore[reportAttributeAccessIssue]
+        )
 
         if self._supports_soft_delete:
             soft_model = cast(type[SoftDeleteMixin], self.model)
             query = query.where(soft_model.is_deleted.is_(False))
 
         result = await db.execute(query)
-        return result.scalars().first()
+        return (result.scalar() or 0) > 0
 
     async def count(self, db: AsyncSession) -> int:
         """
@@ -180,34 +315,189 @@ class CRUDBase[ModelType: Base, CreateSchemaType: BaseModel, UpdateSchemaType: B
         result = await db.execute(query)
         return result.scalar() or 0
 
-    async def get_multi_paginated(
-        self, db: AsyncSession, *, page: int = 1, page_size: int = 20
-    ) -> tuple[list[ModelType], int]:
+    async def get_by_ids(
+        self,
+        db: AsyncSession,
+        ids: list[UUID],
+        *,
+        is_deleted: bool | None = False,
+        options: Sequence[Any] | None = None,
+    ) -> list[ModelType]:
         """
-        获取分页数据，返回 (items, total)。
+        通过 ID 列表批量获取记录。
 
         Args:
-            page: 页码 (从 1 开始)
-            page_size: 每页大小
+            db: 数据库会话
+            ids: 记录 ID 列表
+            is_deleted: 软删除过滤（三态参数）
+                - False (默认): 只返回未删除记录
+                - True: 只返回已删除记录
+                - None: 返回全部（不过滤删除状态）
+            options: 查询选项列表（如 [selectinload(Model.dept)]）
+
+        Returns:
+            记录列表
+        """
+        if not ids:
+            return []
+
+        query = select(self.model).where(
+            self.model.id.in_(ids)  # pyright: ignore[reportAttributeAccessIssue]
+        )
+
+        if self._supports_soft_delete and is_deleted is not None:
+            soft_model = cast(type[SoftDeleteMixin], self.model)
+            query = query.where(soft_model.is_deleted.is_(is_deleted))
+
+        if options:
+            query = query.options(*options)
+
+        result = await db.execute(query)
+        return list(result.scalars().all())
+
+    # ========== 分页查询方法 ==========
+
+    async def get_paginated(
+        self,
+        db: AsyncSession,
+        *,
+        page: int = 1,
+        page_size: int = 20,
+        keyword: str | None = None,
+        keyword_columns: Sequence[Any] | None = None,
+        order_by: Any | None = None,
+        max_size: int = 100,
+        options: Sequence[Any] | None = None,
+        is_deleted: bool | None = False,
+        extra_conditions: Sequence[ColumnElement[bool]] | None = None,
+        **filters: Any,
+    ) -> tuple[list[ModelType], int]:
+        """
+        统一分页查询方法（支持搜索、过滤、软删除三态控制）。
+
+        Args:
+            db: 数据库会话
+            page: 页码
+            page_size: 每页数量
+            keyword: 搜索关键词
+            keyword_columns: 关键词搜索的列列表（如 [Model.name, Model.ip]）
+            order_by: 排序表达式（如 Model.created_at.desc()）
+            max_size: 最大每页数量限制
+            options: 查询选项列表（如 [selectinload(Model.dept)]）
+            is_deleted: 软删除过滤（三态参数）
+                - False (默认): 只返回未删除记录
+                - True: 只返回已删除记录（回收站）
+                - None: 返回全部记录（不过滤删除状态）
+            extra_conditions: 额外的 SQLAlchemy 条件表达式列表（用于复杂查询）
+            **filters: 过滤条件，支持以下格式：
+                - field=value: 精确匹配（等于）
+                - field__ne=value: 不等于
+                - field__gt=value: 大于
+                - field__gte=value: 大于等于
+                - field__lt=value: 小于
+                - field__lte=value: 小于等于
+                - field__in=[values]: 在列表中
+                - field__not_in=[values]: 不在列表中
+                - field__is=value: IS（用于布尔/NULL）
+                - field__is_not=value: IS NOT
+                - field__like=pattern: LIKE 模式匹配
+                - field__ilike=pattern: ILIKE（不区分大小写）
+                - field__contains=value: JSONB 数组包含
 
         Returns:
             (items, total): 数据列表和总数
+
+        Example:
+            # 正常列表
+            items, total = await crud.get_paginated(db, page=1, page_size=20)
+
+            # 回收站
+            items, total = await crud.get_paginated(db, is_deleted=True)
+
+            # 带搜索和过滤
+            items, total = await crud.get_paginated(
+                db,
+                keyword="test",
+                keyword_columns=[Device.name, Device.ip_address],
+                order_by=Device.created_at.desc(),
+                options=[selectinload(Device.dept)],
+                status="active",
+            )
+
+            # 使用操作符过滤
+            items, total = await crud.get_paginated(
+                db,
+                created_at__gte=start_time,        # >= 大于等于
+                created_at__lte=end_time,          # <= 小于等于
+                status__in=["active", "pending"],  # IN 列表
+                is_active__is=True,                # IS 布尔
+            )
+
+            # 使用额外条件（复杂查询）
+            items, total = await crud.get_paginated(
+                db,
+                extra_conditions=[
+                    Template.vendors.contains([vendor]),  # JSONB 包含
+                    or_(Model.a == 1, Model.b == 2),      # 复杂 OR 条件
+                ],
+            )
         """
-        page, page_size = self._validate_pagination(page, page_size)
+        page, page_size = self._validate_pagination(page, page_size, max_size=max_size)
 
-        total = await self.count(db)
-        skip = (page - 1) * page_size
+        conditions: ConditionList = []
 
-        # 内联查询逻辑（原 get_multi）
-        query = select(self.model)
-        if self._supports_soft_delete:
+        # 软删除过滤（三态：False=未删除, True=已删除, None=全部）
+        if self._supports_soft_delete and is_deleted is not None:
             soft_model = cast(type[SoftDeleteMixin], self.model)
-            query = query.where(soft_model.is_deleted.is_(False))
-        query = query.offset(skip).limit(page_size)
-        result = await db.execute(query)
-        items = list(result.scalars().all())
+            conditions.append(soft_model.is_deleted.is_(is_deleted))
 
-        return items, total
+        # 关键词搜索
+        if keyword and keyword_columns:
+            keyword_clause = self._or_ilike_contains(keyword, keyword_columns)
+            if keyword_clause is not None:
+                conditions.append(keyword_clause)
+
+        # 应用额外条件（SQLAlchemy 表达式）
+        if extra_conditions:
+            conditions.extend(extra_conditions)
+
+        # 应用过滤条件（支持操作符语法）
+        for key, value in filters.items():
+            field_name, operator = self._parse_filter_key(key)
+            condition = self._build_filter_condition(field_name, operator, value)
+            if condition is not None:
+                conditions.append(condition)
+
+        where_clause = self._and_where(conditions)
+
+        # 统计总数
+        count_stmt = select(func.count(self.model.id)).where(where_clause)  # pyright: ignore[reportAttributeAccessIssue]
+        total = await db.scalar(count_stmt) or 0
+
+        # 分页查询
+        stmt = select(self.model).where(where_clause)
+
+        # 应用查询选项（selectinload 等）
+        if options:
+            stmt = stmt.options(*options)
+
+        # 排序
+        if order_by is not None:
+            # 支持元组排序（如 (Model.sort.asc(), Model.created_at.desc())）
+            if isinstance(order_by, tuple):
+                stmt = stmt.order_by(*order_by)
+            else:
+                stmt = stmt.order_by(order_by)
+        else:
+            # 默认排序：回收站按更新时间，正常列表按创建时间
+            if is_deleted is True and hasattr(self.model, "updated_at"):
+                stmt = stmt.order_by(self.model.updated_at.desc())  # pyright: ignore[reportAttributeAccessIssue]
+            elif hasattr(self.model, "created_at"):
+                stmt = stmt.order_by(self.model.created_at.desc())  # pyright: ignore[reportAttributeAccessIssue]
+
+        stmt = stmt.offset((page - 1) * page_size).limit(page_size)
+        result = await db.execute(stmt)
+        return list(result.scalars().all()), int(total)
 
     async def create(self, db: AsyncSession, *, obj_in: CreateSchemaType) -> ModelType:
         """
@@ -321,20 +611,6 @@ class CRUDBase[ModelType: Base, CreateSchemaType: BaseModel, UpdateSchemaType: B
         await db.flush()
         return len(to_restore), failed_ids
 
-    async def _count_deleted(self, db: AsyncSession) -> int:
-        """
-        统计已软删除的记录数（内部方法）。
-
-        Returns:
-            已删除记录总数，非软删除模型返回 0
-        """
-        if not self._supports_soft_delete:
-            return 0
-
-        soft_model = cast(type[SoftDeleteMixin], self.model)
-        result = await db.execute(select(func.count()).select_from(self.model).where(soft_model.is_deleted.is_(True)))
-        return result.scalar() or 0
-
     async def get_multi_by_ids(self, db: AsyncSession, *, ids: list[UUID]) -> list[ModelType]:
         """
         通过 ID 列表批量获取记录。
@@ -359,32 +635,3 @@ class CRUDBase[ModelType: Base, CreateSchemaType: BaseModel, UpdateSchemaType: B
 
         result = await db.execute(query)
         return list(result.scalars().all())
-
-    async def get_multi_deleted_paginated(
-        self, db: AsyncSession, *, page: int = 1, page_size: int = 20
-    ) -> tuple[list[ModelType], int]:
-        """
-        获取已删除记录的分页列表（回收站）。
-
-        Args:
-            db: 数据库会话
-            page: 页码
-            page_size: 每页数量
-
-        Returns:
-            (items, total): 已删除记录列表和总数
-        """
-        if not self._supports_soft_delete:
-            return [], 0
-
-        page, page_size = self._validate_pagination(page, page_size)
-
-        # 统计总数
-        total = await self._count_deleted(db)
-
-        # 分页查询
-        skip = (page - 1) * page_size
-        soft_model = cast(type[SoftDeleteMixin], self.model)
-        query = select(self.model).where(soft_model.is_deleted.is_(True)).offset(skip).limit(page_size)
-        result = await db.execute(query)
-        return list(result.scalars().all()), total

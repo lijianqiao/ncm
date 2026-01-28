@@ -341,7 +341,7 @@ class CollectService:
         # 如果提供了 OTP，先缓存
         if request.otp_code:
             # 获取设备列表确定需要缓存 OTP 的部分设备
-            devices = await self.device_crud.get_multi_by_ids(self.db, ids=request.device_ids)
+            devices = await self.device_crud.get_by_ids(self.db, request.device_ids, options=self.device_crud._DEVICE_OPTIONS)
             for device in devices:
                 auth_type_str = device.auth_type or AuthType.STATIC.value
                 try:
@@ -414,10 +414,11 @@ class CollectService:
             CollectResult: 采集结果
         """
         # 获取所有活跃设备
-        devices, _ = await self.device_crud.get_multi_paginated(
+        devices, _ = await self.device_crud.get_paginated(
             self.db,
             page=1,
-            page_size=10000,  # 获取所有活跃设备
+            page_size=10000,
+            max_size=10000,
             status=DeviceStatus.ACTIVE.value,
         )
 
@@ -630,10 +631,11 @@ class CollectService:
             )
 
         # 获取所有设备
-        devices, _ = await self.device_crud.get_multi_paginated(
+        devices, _ = await self.device_crud.get_paginated(
             self.db,
             page=1,
             page_size=10000,
+            max_size=10000,
         )
 
         # 预加载设备信息映射
@@ -726,10 +728,11 @@ class CollectService:
             return stored_normalized == mac_normalized
 
         # 获取所有设备
-        devices, _ = await self.device_crud.get_multi_paginated(
+        devices, _ = await self.device_crud.get_paginated(
             self.db,
             page=1,
             page_size=10000,
+            max_size=10000,
         )
 
         # 预加载设备信息映射

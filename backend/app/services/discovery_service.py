@@ -34,16 +34,47 @@ class DiscoveryService:
         sort_by: str | None = None,
         sort_order: str | None = None,
     ) -> tuple[list[Discovery], int]:
-        return await self.discovery_crud.get_multi_paginated(
+        from app.models.discovery import Discovery
+
+        order_expr = self._build_sort_expression(Discovery, sort_by, sort_order)
+        return await self.discovery_crud.get_paginated(
             self.db,
             page=page,
             page_size=page_size,
-            status=status,
+            max_size=10000,
             keyword=keyword,
+            keyword_columns=[Discovery.ip_address, Discovery.hostname, Discovery.mac_address],
+            order_by=order_expr,
+            status=status.value if status else None,
             scan_source=scan_source,
-            sort_by=sort_by,
-            sort_order=sort_order,
         )
+
+    @staticmethod
+    def _build_sort_expression(model, sort_by: str | None, sort_order: str | None):
+        """构建排序表达式。"""
+        sort_by_normalized = (sort_by or "").strip()
+        sort_order_normalized = (sort_order or "").strip().lower()
+
+        sort_map = {
+            "ip_address": model.ip_address,
+            "mac_address": model.mac_address,
+            "vendor": model.vendor,
+            "hostname": model.hostname,
+            "os_info": model.os_info,
+            "status": model.status,
+            "scan_source": model.scan_source,
+            "first_seen_at": model.first_seen_at,
+            "last_seen_at": model.last_seen_at,
+            "offline_days": model.offline_days,
+            "created_at": model.created_at,
+            "updated_at": model.updated_at,
+        }
+
+        sort_col = sort_map.get(sort_by_normalized, model.last_seen_at)
+        if sort_order_normalized not in {"asc", "desc"}:
+            sort_order_normalized = "desc"
+
+        return sort_col.asc() if sort_order_normalized == "asc" else sort_col.desc()
 
     async def get_deleted_discoveries_paginated(
         self,
@@ -56,15 +87,20 @@ class DiscoveryService:
         sort_by: str | None = None,
         sort_order: str | None = None,
     ) -> tuple[list[Discovery], int]:
-        return await self.discovery_crud.get_multi_deleted_paginated(
+        from app.models.discovery import Discovery
+
+        order_expr = self._build_sort_expression(Discovery, sort_by, sort_order)
+        return await self.discovery_crud.get_paginated(
             self.db,
             page=page,
             page_size=page_size,
-            status=status,
+            max_size=10000,
             keyword=keyword,
+            keyword_columns=[Discovery.ip_address, Discovery.hostname, Discovery.mac_address],
+            order_by=order_expr,
+            is_deleted=True,
+            status=status.value if status else None,
             scan_source=scan_source,
-            sort_by=sort_by,
-            sort_order=sort_order,
         )
 
     async def get_discovery(self, *, discovery_id: UUID) -> Discovery:

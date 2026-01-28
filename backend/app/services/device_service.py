@@ -53,11 +53,15 @@ class DeviceService:
         Returns:
             (items, total): 设备列表和总数
         """
-        return await self.device_crud.get_multi_paginated(
+        return await self.device_crud.get_paginated(
             self.db,
             page=query.page,
             page_size=query.page_size,
+            max_size=10000,
             keyword=query.keyword,
+            keyword_columns=[Device.name, Device.ip_address],
+            order_by=Device.created_at.desc(),
+            options=self.device_crud._DEVICE_OPTIONS,
             vendor=query.vendor.value if query.vendor else None,
             status=query.status.value if query.status else None,
             device_group=query.device_group.value if query.device_group else None,
@@ -272,17 +276,15 @@ class DeviceService:
         )
 
     async def get_recycle_bin(self, page: int = 1, page_size: int = 20) -> tuple[list[Device], int]:
-        """
-        获取回收站中的设备列表。
-
-        Args:
-            page: 页码
-            page_size: 每页数量
-
-        Returns:
-            (items, total): 设备列表和总数
-        """
-        return await self.device_crud.get_multi_deleted_paginated(self.db, page=page, page_size=page_size)
+        """获取回收站中的设备列表。"""
+        return await self.device_crud.get_paginated(
+            self.db,
+            page=page,
+            page_size=page_size,
+            max_size=10000,
+            order_by=Device.updated_at.desc(),
+            is_deleted=True,
+        )
 
     @transactional()
     async def transition_status(

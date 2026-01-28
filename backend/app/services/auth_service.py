@@ -46,10 +46,10 @@ class AuthService:
         """
         验证用户名/密码。支持用户名或手机号。
         """
-        user = await self.user_crud.get_by_username(self.db, username=username)
+        user = await self.user_crud.get_by_unique_field(self.db, field="username", value=username)
         if not user:
             # 尝试通过手机号查找
-            user = await self.user_crud.get_by_phone(self.db, phone=username)
+            user = await self.user_crud.get_by_unique_field(self.db, field="phone", value=username)
 
         if not user or not user.is_active or user.is_deleted:
             return None

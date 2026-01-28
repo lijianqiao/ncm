@@ -9,7 +9,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import and_, func, select, update
+from sqlalchemy import and_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
@@ -234,146 +234,6 @@ class CRUDDiscovery(CRUDBase[Discovery, DiscoveryCreate, DiscoveryUpdate]):
         result = await db.execute(query)
         return list(result.scalars().all())
 
-    async def get_multi_paginated(
-        self,
-        db: AsyncSession,
-        *,
-        page: int = 1,
-        page_size: int = 20,
-        status: DiscoveryStatus | None = None,
-        keyword: str | None = None,
-        scan_source: str | None = None,
-        sort_by: str | None = None,
-        sort_order: str | None = None,
-    ) -> tuple[list[Discovery], int]:
-        """
-        分页查询发现记录，支持筛选。
-
-        Args:
-            db: 数据库会话
-            page: 页码
-            page_size: 每页数量
-            status: 状态筛选
-            keyword: 关键词搜索 (IP/主机名)
-            scan_source: 扫描来源筛选
-
-        Returns:
-            (items, total): 数据列表和总数
-        """
-        page, page_size = self._validate_pagination(page, page_size)
-
-        # 基础查询条件
-        conditions: list[ColumnElement[bool]] = [self.model.is_deleted.is_(False)]
-
-        # 状态筛选
-        if status:
-            conditions.append(self.model.status == status.value)
-
-        # 关键词搜索
-        keyword_clause = self._or_ilike_contains(
-            keyword, [self.model.ip_address, self.model.hostname, self.model.mac_address]
-        )
-        if keyword_clause is not None:
-            conditions.append(keyword_clause)
-
-        # 扫描来源筛选
-        if scan_source:
-            conditions.append(self.model.scan_source == scan_source)
-
-        # 排序
-        sort_by = (sort_by or "").strip()
-        sort_order = (sort_order or "").strip().lower()
-        sort_map = {
-            "ip_address": self.model.ip_address,
-            "mac_address": self.model.mac_address,
-            "vendor": self.model.vendor,
-            "hostname": self.model.hostname,
-            "os_info": self.model.os_info,
-            "status": self.model.status,
-            "scan_source": self.model.scan_source,
-            "first_seen_at": self.model.first_seen_at,
-            "last_seen_at": self.model.last_seen_at,
-            "offline_days": self.model.offline_days,
-            "created_at": self.model.created_at,
-            "updated_at": self.model.updated_at,
-        }
-        sort_col = sort_map.get(sort_by) if sort_by else None
-        if sort_col is None:
-            sort_col = self.model.last_seen_at
-            sort_order = "desc"
-        if sort_order not in {"asc", "desc"}:
-            sort_order = "desc"
-
-        where_clause = self._and_where(conditions)
-        count_stmt = select(func.count(Discovery.id)).where(where_clause)
-
-        order_expr = sort_col.asc() if sort_order == "asc" else sort_col.desc()
-        stmt = select(self.model).where(where_clause).order_by(order_expr)
-        return await self.paginate(
-            db, stmt=stmt, count_stmt=count_stmt, page=page, page_size=page_size, max_size=10000, default_size=20
-        )
-
-    async def get_multi_deleted_paginated(
-        self,
-        db: AsyncSession,
-        *,
-        page: int = 1,
-        page_size: int = 20,
-        status: DiscoveryStatus | None = None,
-        keyword: str | None = None,
-        scan_source: str | None = None,
-        sort_by: str | None = None,
-        sort_order: str | None = None,
-    ) -> tuple[list[Discovery], int]:
-        """分页查询已删除发现记录（回收站）。"""
-        page, page_size = self._validate_pagination(page, page_size)
-
-        conditions: list[ColumnElement[bool]] = [self.model.is_deleted.is_(True)]
-
-        if status:
-            conditions.append(self.model.status == status.value)
-
-        keyword_clause = self._or_ilike_contains(
-            keyword, [self.model.ip_address, self.model.hostname, self.model.mac_address]
-        )
-        if keyword_clause is not None:
-            conditions.append(keyword_clause)
-
-        if scan_source:
-            conditions.append(self.model.scan_source == scan_source)
-
-        sort_by = (sort_by or "").strip()
-        sort_order = (sort_order or "").strip().lower()
-        sort_map = {
-            "ip_address": self.model.ip_address,
-            "mac_address": self.model.mac_address,
-            "vendor": self.model.vendor,
-            "hostname": self.model.hostname,
-            "os_info": self.model.os_info,
-            "status": self.model.status,
-            "scan_source": self.model.scan_source,
-            "first_seen_at": self.model.first_seen_at,
-            "last_seen_at": self.model.last_seen_at,
-            "offline_days": self.model.offline_days,
-            "created_at": self.model.created_at,
-            "updated_at": self.model.updated_at,
-        }
-        sort_col = sort_map.get(sort_by) if sort_by else None
-        if sort_col is None:
-            sort_col = self.model.updated_at
-            sort_order = "desc"
-        if sort_order not in {"asc", "desc"}:
-            sort_order = "desc"
-
-        where_clause = self._and_where(conditions)
-        count_stmt = select(func.count(Discovery.id)).where(where_clause)
-
-        order_expr = sort_col.asc() if sort_order == "asc" else sort_col.desc()
-        stmt = select(self.model).where(where_clause).order_by(order_expr)
-        return await self.paginate(
-            db, stmt=stmt, count_stmt=count_stmt, page=page, page_size=page_size, max_size=10000, default_size=20
-        )
-
     async def update_status(self, db: AsyncSession, *, id: UUID, status: DiscoveryStatus) -> Discovery | None:
         """
         更新发现记录状态。
@@ -386,7 +246,7 @@ class CRUDDiscovery(CRUDBase[Discovery, DiscoveryCreate, DiscoveryUpdate]):
         Returns:
             更新后的 Discovery 记录或 None
         """
-        obj = await self.get(db, id=id)
+        obj = await self.get(db, id)
         if obj:
             obj.status = status.value
             db.add(obj)
@@ -406,7 +266,7 @@ class CRUDDiscovery(CRUDBase[Discovery, DiscoveryCreate, DiscoveryUpdate]):
         Returns:
             更新后的 Discovery 记录或 None
         """
-        obj = await self.get(db, id=id)
+        obj = await self.get(db, id)
         if obj:
             obj.matched_device_id = device_id
             obj.status = DiscoveryStatus.MATCHED.value

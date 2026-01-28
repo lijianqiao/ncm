@@ -441,10 +441,8 @@ def get_dashboard_service(
     user_crud: UserCRUDDep,
     role_crud: RoleCRUDDep,
     menu_crud: MenuCRUDDep,
-    login_log_crud: LoginLogCRUDDep,
-    operation_log_crud: OperationLogCRUDDep,
 ) -> DashboardService:
-    return DashboardService(db, user_crud, role_crud, menu_crud, login_log_crud, operation_log_crud)
+    return DashboardService(db, user_crud, role_crud, menu_crud)
 
 
 def get_deploy_service(

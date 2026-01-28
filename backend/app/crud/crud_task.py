@@ -3,13 +3,15 @@
 @Email: lijianqiao2906@live.com
 @FileName: crud_task.py
 @DateTime: 2026-01-09 23:00:00
-@Docs: Task CRUD。
+@Docs: 任务 CRUD 操作。
+
+提供任务（配置下发、备份等）的数据库操作，支持关联加载审批步骤和提交人信息。
 """
 
+from collections.abc import Sequence
 from typing import Any
 
 from pydantic import BaseModel
-from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload, with_loader_criteria
 
@@ -19,7 +21,12 @@ from app.models.task_approval import TaskApprovalStep
 
 
 class TaskCreateSchema(BaseModel):
-    """Task 创建 Schema（CRUD 内部使用）。"""
+    """
+    Task 创建 Schema（CRUD 内部使用）。
+
+    由于 Task 模型字段较多，CRUD 层使用宽松的 Schema 允许任意字段传入，
+    实际字段验证由 Service 层或 API 层的 Schema 负责。
+    """
 
     task_type: str | None = None
     status: str | None = None
@@ -29,7 +36,11 @@ class TaskCreateSchema(BaseModel):
 
 
 class TaskUpdateSchema(BaseModel):
-    """Task 更新 Schema（CRUD 内部使用）。"""
+    """
+    Task 更新 Schema（CRUD 内部使用）。
+
+    同 TaskCreateSchema，采用宽松模式以支持任意字段更新。
+    """
 
     task_type: str | None = None
     status: str | None = None
@@ -39,79 +50,20 @@ class TaskUpdateSchema(BaseModel):
 
 
 class CRUDTask(CRUDBase[Task, TaskCreateSchema, TaskUpdateSchema]):
+    """任务 CRUD 操作类。"""
+
     @staticmethod
-    def _with_related(stmt):
-        return stmt.options(
+    def _related_options() -> Sequence[Any]:
+        """返回关联加载选项列表（提交人、模板、审批步骤）。"""
+        return [
             selectinload(Task.submitter),
             selectinload(Task.template),
             selectinload(Task.approval_steps).selectinload(TaskApprovalStep.approver),
             with_loader_criteria(TaskApprovalStep, TaskApprovalStep.is_deleted.is_(False), include_aliases=True),
-        )
+        ]
 
-    async def get_with_related(self, db: AsyncSession, *, id) -> Task | None:
-        stmt = select(Task).where(Task.id == id, Task.is_deleted.is_(False))
-        stmt = self._with_related(stmt)
-        return (await db.execute(stmt)).scalars().first()
-
-    async def get_multi_paginated(
-        self,
-        db: AsyncSession,
-        *,
-        page: int = 1,
-        page_size: int = 20,
-        task_type: str | None = None,
-        status: str | None = None,
-        with_related: bool = False,
-    ) -> tuple[list[Task], int]:
-        page, page_size = self._validate_pagination(page, page_size)
-
-        stmt = select(Task).where(Task.is_deleted.is_(False))
-        count_stmt = select(func.count(Task.id)).where(Task.is_deleted.is_(False))
-
-        if task_type:
-            stmt = stmt.where(Task.task_type == task_type)
-            count_stmt = count_stmt.where(Task.task_type == task_type)
-        if status:
-            stmt = stmt.where(Task.status == status)
-            count_stmt = count_stmt.where(Task.status == status)
-
-        if with_related:
-            stmt = self._with_related(stmt)
-
-        stmt = stmt.order_by(Task.created_at.desc()).offset((page - 1) * page_size).limit(page_size)
-        total = await db.scalar(count_stmt) or 0
-        items = (await db.execute(stmt)).scalars().all()
-        return list(items), int(total)
-
-    async def get_multi_deleted_paginated(
-        self,
-        db: AsyncSession,
-        *,
-        page: int = 1,
-        page_size: int = 20,
-        task_type: str | None = None,
-        status: str | None = None,
-        with_related: bool = False,
-    ) -> tuple[list[Task], int]:
-        page, page_size = self._validate_pagination(page, page_size)
-
-        stmt = select(Task).where(Task.is_deleted.is_(True))
-        count_stmt = select(func.count(Task.id)).where(Task.is_deleted.is_(True))
-
-        if task_type:
-            stmt = stmt.where(Task.task_type == task_type)
-            count_stmt = count_stmt.where(Task.task_type == task_type)
-        if status:
-            stmt = stmt.where(Task.status == status)
-            count_stmt = count_stmt.where(Task.status == status)
-
-        if with_related:
-            stmt = self._with_related(stmt)
-
-        stmt = stmt.order_by(Task.updated_at.desc()).offset((page - 1) * page_size).limit(page_size)
-        total = await db.scalar(count_stmt) or 0
-        items = (await db.execute(stmt)).scalars().all()
-        return list(items), int(total)
+    # 公开 _related_options 供服务层使用
+    RELATED_OPTIONS = property(lambda self: self._related_options())
 
 
 task_crud = CRUDTask(Task)

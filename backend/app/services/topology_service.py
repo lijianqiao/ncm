@@ -13,6 +13,7 @@ from typing import Any, Callable
 from uuid import UUID
 
 import redis.asyncio as redis
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -95,10 +96,10 @@ class TopologyService(DeviceCredentialMixin):
         try:
             # 获取待采集设备
             if device_ids:
-                devices = await self.device_crud.get_multi_by_ids(db, ids=device_ids)
+                devices = await self.device_crud.get_by_ids(db, device_ids, options=self.device_crud._DEVICE_OPTIONS)
             else:
-                devices, _ = await self.device_crud.get_multi_paginated(
-                    db, page=1, page_size=10000, status=DeviceStatus.ACTIVE
+                devices, _ = await self.device_crud.get_paginated(
+                    db, page=1, page_size=10000, max_size=10000, status=DeviceStatus.ACTIVE.value
                 )
 
             result.total_devices = len(devices)
@@ -575,10 +576,9 @@ class TopologyService(DeviceCredentialMixin):
 
         links_data = list(links_by_interface.values())
 
-        # 刷新设备拓扑
-        _, created_count = await self.topology_crud.refresh_device_topology(
-            db, device_id=device.id, links_data=links_data
-        )
+        # 刷新设备拓扑：先删除旧链路，再创建新链路
+        await self.topology_crud.delete_by_device(db, device_id=device.id, hard_delete=False)
+        created_count = await self.topology_crud.upsert_many(db, links_data=links_data)
 
         return created_count
 
@@ -603,11 +603,16 @@ class TopologyService(DeviceCredentialMixin):
         node_ids: set[str] = set()
 
         # 获取所有链路
-        links = await self.topology_crud.get_all_links(db, limit=5000)
+        links, _ = await self.topology_crud.get_paginated(
+            db,
+            page=1,
+            page_size=5000,
+            order_by=TopologyLink.created_at.desc(),
+        )
 
-        # 获取所有相关设备
-        device_ids = await self.topology_crud.get_unique_devices_in_topology(db)
-        devices_list = await self.device_crud.get_multi_by_ids(db, ids=list(device_ids))
+        # 获取所有相关设备ID
+        device_ids = await self._get_unique_device_ids(db)
+        devices_list = await self.device_crud.get_by_ids(db, list(device_ids), options=self.device_crud._DEVICE_OPTIONS)
         device_map: dict[UUID, Device] = {d.id: d for d in devices_list}
 
         # 构建节点和边
@@ -681,6 +686,32 @@ class TopologyService(DeviceCredentialMixin):
 
         return response
 
+    async def _get_unique_device_ids(self, db: AsyncSession) -> set[UUID]:
+        """
+        获取拓扑中涉及的所有设备ID。
+
+        Args:
+            db: 数据库会话
+
+        Returns:
+            设备ID集合
+        """
+        stmt = (
+            select(TopologyLink.source_device_id, TopologyLink.target_device_id)
+            .where(TopologyLink.is_deleted.is_(False))
+            .distinct()
+        )
+        result = await db.execute(stmt)
+        rows = result.all()
+
+        device_ids: set[UUID] = set()
+        for source_id, target_id in rows:
+            device_ids.add(source_id)
+            if target_id:
+                device_ids.add(target_id)
+
+        return device_ids
+
     def _create_node_from_device(self, device: Device) -> TopologyNode:
         """
         从设备创建拓扑节点。
@@ -740,11 +771,18 @@ class TopologyService(DeviceCredentialMixin):
                 total=0,
             )
 
-        links = await self.topology_crud.get_device_neighbors(db, device_id=device_id)
+        # 获取设备的所有邻居链路
+        links, _ = await self.topology_crud.get_paginated(
+            db,
+            page=1,
+            page_size=1000,
+            order_by=TopologyLink.source_interface,
+            source_device_id=device_id,
+        )
 
         # 批量预加载目标设备信息，避免 N+1 查询
         target_ids = [link.target_device_id for link in links if link.target_device_id]
-        target_devices = await self.device_crud.get_multi_by_ids(db, ids=target_ids) if target_ids else []
+        target_devices = await self.device_crud.get_by_ids(db, target_ids, options=self.device_crud._DEVICE_OPTIONS) if target_ids else []
         target_map: dict[UUID, Device] = {d.id: d for d in target_devices}
 
         # 转换为响应格式
@@ -798,10 +836,12 @@ class TopologyService(DeviceCredentialMixin):
         Returns:
             (links, total): 链路列表和总数
         """
-        skip = (page - 1) * page_size
-        links = await self.topology_crud.get_all_links(db, skip=skip, limit=page_size)
-        total = await self.topology_crud.count_links(db)
-        return links, total
+        return await self.topology_crud.get_paginated(
+            db,
+            page=page,
+            page_size=page_size,
+            order_by=TopologyLink.created_at.desc(),
+        )
 
     async def export_topology(self, db: AsyncSession) -> dict[str, Any]:
         """
@@ -833,7 +873,7 @@ class TopologyService(DeviceCredentialMixin):
         Returns:
             删除统计信息
         """
-        deleted_count = await self.topology_crud.clear_all_links(db, hard_delete=hard_delete)
+        deleted_count = await self.topology_crud.delete_all(db, hard_delete=hard_delete)
 
         # 清除缓存
         await self._invalidate_cache()
@@ -871,10 +911,10 @@ class TopologyService(DeviceCredentialMixin):
 
         # 获取待采集设备
         if device_ids:
-            devices = await self.device_crud.get_multi_by_ids(db, ids=device_ids)
+            devices = await self.device_crud.get_by_ids(db, device_ids, options=self.device_crud._DEVICE_OPTIONS)
         else:
-            devices, _ = await self.device_crud.get_multi_paginated(
-                db, page=1, page_size=10000, status=DeviceStatus.ACTIVE
+            devices, _ = await self.device_crud.get_paginated(
+                db, page=1, page_size=10000, max_size=10000, status=DeviceStatus.ACTIVE.value
             )
 
         # 只检查 OTP 手动认证的设备

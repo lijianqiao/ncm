@@ -6,6 +6,7 @@
 @Docs: 角色 CRUD 操作 (Role CRUD).
 """
 
+from collections.abc import Sequence
 from typing import Any
 from uuid import UUID
 
@@ -78,14 +79,19 @@ class CRUDRole(CRUDBase[Role, RoleCreate, RoleUpdate]):
         )
         return list(result.scalars().all())
 
-    async def get(self, db: AsyncSession, id: UUID) -> Role | None:
-        """
-        通过 ID 获取角色 (包含菜单关联，避免 N+1 问题)。
-        """
-        result = await db.execute(
-            select(Role).options(selectinload(Role.menus)).where(Role.id == id, Role.is_deleted.is_(False))
-        )
-        return result.scalars().first()
+    # 角色关联加载选项
+    _ROLE_OPTIONS = [selectinload(Role.menus)]
+
+    async def get(
+        self,
+        db: AsyncSession,
+        id: UUID,
+        *,
+        is_deleted: bool | None = False,
+        options: Sequence[Any] | None = None,
+    ) -> Role | None:
+        """通过 ID 获取角色 (包含菜单关联，避免 N+1 问题)。"""
+        return await super().get(db, id, is_deleted=is_deleted, options=options or self._ROLE_OPTIONS)
 
     async def get_multi(self, db: AsyncSession, *, skip: int = 0, limit: int = 100) -> list[Role]:
         """
@@ -104,14 +110,6 @@ class CRUDRole(CRUDBase[Role, RoleCreate, RoleUpdate]):
             select(Role).options(selectinload(Role.menus)).where(Role.code == code, Role.is_deleted.is_(False))
         )
         return result.scalars().first()
-
-    async def get_multi_by_ids(self, db: AsyncSession, *, ids: list[UUID]) -> list[Role]:
-        if not ids:
-            return []
-        result = await db.execute(
-            select(Role).where(Role.id.in_(ids), Role.is_deleted.is_(False)).order_by(Role.sort.asc())
-        )
-        return list(result.scalars().all())
 
     async def create(self, db: AsyncSession, *, obj_in: RoleCreate) -> Role:
         db_obj = Role(name=obj_in.name, code=obj_in.code, description=obj_in.description, sort=obj_in.sort)

@@ -166,7 +166,7 @@ class UserService(PermissionCacheMixin):
             raise NotFoundException(message="用户不存在")
 
         unique_role_ids = list(dict.fromkeys(role_ids))
-        roles = await self.role_crud.get_multi_by_ids(self.db, ids=unique_role_ids)
+        roles = await self.role_crud.get_by_ids(self.db, unique_role_ids, options=self.role_crud._ROLE_OPTIONS)
 
         if len(roles) != len(unique_role_ids):
             found = {r.id for r in roles}
@@ -188,11 +188,11 @@ class UserService(PermissionCacheMixin):
         update_data = obj_in.model_dump(exclude_unset=True)
 
         if "phone" in update_data and update_data["phone"] != user.phone:
-            if await self.user_crud.get_by_phone(self.db, phone=update_data["phone"]):
+            if await self.user_crud.get_by_unique_field(self.db, field="phone", value=update_data["phone"]):
                 raise BadRequestException(message="手机号已存在")
 
         if "email" in update_data and update_data["email"] != user.email:
-            if await self.user_crud.get_by_email(self.db, email=update_data["email"]):
+            if await self.user_crud.get_by_unique_field(self.db, field="email", value=update_data["email"]):
                 raise BadRequestException(message="邮箱已存在")
 
         return await self.user_crud.update(self.db, db_obj=user, obj_in=update_data)
@@ -208,15 +208,15 @@ class UserService(PermissionCacheMixin):
 
         # 唯一性检查
         if obj_in.username is not None and obj_in.username != user.username:
-            if await self.user_crud.get_by_username(self.db, username=obj_in.username):
+            if await self.user_crud.get_by_unique_field(self.db, field="username", value=obj_in.username):
                 raise BadRequestException(message="用户名已存在")
 
         if obj_in.phone is not None and obj_in.phone != user.phone:
-            if await self.user_crud.get_by_phone(self.db, phone=obj_in.phone):
+            if await self.user_crud.get_by_unique_field(self.db, field="phone", value=obj_in.phone):
                 raise BadRequestException(message="手机号已存在")
 
         if obj_in.email is not None and obj_in.email != user.email:
-            if await self.user_crud.get_by_email(self.db, email=obj_in.email):
+            if await self.user_crud.get_by_unique_field(self.db, field="email", value=obj_in.email):
                 raise BadRequestException(message="邮箱已存在")
 
         return await self.user_crud.update(self.db, db_obj=user, obj_in=obj_in)

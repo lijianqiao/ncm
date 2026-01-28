@@ -105,7 +105,7 @@ class RoleService(PermissionCacheMixin):
         affected_user_ids = await self.role_crud.get_user_ids_by_roles(self.db, role_ids=[role_id])
 
         unique_menu_ids = list(dict.fromkeys(menu_ids))
-        menus = await self.menu_crud.get_multi_by_ids(self.db, ids=unique_menu_ids)
+        menus = await self.menu_crud.get_by_ids(self.db, unique_menu_ids)
         if len(menus) != len(unique_menu_ids):
             found = {m.id for m in menus}
             missing = [mid for mid in unique_menu_ids if mid not in found]

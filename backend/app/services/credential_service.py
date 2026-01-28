@@ -9,6 +9,7 @@
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.core.decorator import transactional
 from app.core.encryption import encrypt_otp_seed
@@ -58,10 +59,15 @@ class CredentialService:
         Returns:
             (items, total): 凭据列表和总数
         """
-        return await self.credential_crud.get_multi_paginated(
+        from app.models.credential import DeviceGroupCredential
+
+        return await self.credential_crud.get_paginated(
             self.db,
             page=page,
             page_size=page_size,
+            max_size=500,
+            order_by=DeviceGroupCredential.created_at.desc(),
+            options=[selectinload(DeviceGroupCredential.dept)],
             dept_id=dept_id,
             device_group=device_group.value if device_group else None,
         )
@@ -229,11 +235,17 @@ class CredentialService:
         Returns:
             (items, total): 已删除凭据列表和总数
         """
-        return await self.credential_crud.get_multi_deleted_paginated(
+        from app.models.credential import DeviceGroupCredential
+
+        return await self.credential_crud.get_paginated(
             self.db,
             page=page,
             page_size=page_size,
             keyword=keyword,
+            keyword_columns=[DeviceGroupCredential.username, DeviceGroupCredential.description],
+            order_by=DeviceGroupCredential.updated_at.desc(),
+            options=[selectinload(DeviceGroupCredential.dept)],
+            is_deleted=True,
         )
 
     @transactional()
@@ -250,7 +262,7 @@ class CredentialService:
         Raises:
             NotFoundException: 凭据不存在或未被删除
         """
-        credential = await self.credential_crud.get_deleted(self.db, id=credential_id)
+        credential = await self.credential_crud.get(self.db, credential_id, is_deleted=True)
         if not credential:
             raise NotFoundException(message="凭据不存在或未被删除")
 
@@ -285,7 +297,7 @@ class CredentialService:
         Raises:
             NotFoundException: 凭据不存在
         """
-        credential = await self.credential_crud.get_deleted(self.db, id=credential_id)
+        credential = await self.credential_crud.get(self.db, credential_id, is_deleted=True)
         if not credential:
             raise NotFoundException(message="凭据不存在或未被软删除")
 
@@ -486,9 +498,9 @@ class CredentialService:
             id=credential.id,
             dept_id=credential.dept_id,
             dept_name=credential.dept.name if credential.dept else None,
-            device_group=credential.device_group,
+            device_group=DeviceGroup(credential.device_group),
             username=credential.username,
-            auth_type=credential.auth_type,
+            auth_type=AuthType(credential.auth_type),
             description=credential.description,
             has_otp_seed=bool(credential.otp_seed_encrypted),
             created_at=credential.created_at,

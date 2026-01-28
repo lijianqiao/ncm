@@ -3,11 +3,10 @@
 @Email: lijianqiao2906@live.com
 @FileName: crud_inventory_audit.py
 @DateTime: 2026-01-09 21:20:00
-@Docs: InventoryAudit CRUD。
-"""
+@Docs: 资产盘点任务 CRUD 操作。
 
-from sqlalchemy import func, select
-from sqlalchemy.ext.asyncio import AsyncSession
+提供资产盘点任务的数据库操作，包括分页查询、状态筛选等功能。
+"""
 
 from app.crud.base import CRUDBase
 from app.models.inventory_audit import InventoryAudit
@@ -15,45 +14,9 @@ from app.schemas.inventory_audit import InventoryAuditCreate
 
 
 class CRUDInventoryAudit(CRUDBase[InventoryAudit, InventoryAuditCreate, InventoryAuditCreate]):
-    async def get_multi_paginated(
-        self,
-        db: AsyncSession,
-        *,
-        page: int = 1,
-        page_size: int = 20,
-        status: str | None = None,
-    ) -> tuple[list[InventoryAudit], int]:
-        stmt = select(InventoryAudit).where(InventoryAudit.is_deleted.is_(False))
-        count_stmt = select(func.count(InventoryAudit.id)).where(InventoryAudit.is_deleted.is_(False))
+    """资产盘点任务 CRUD 操作类。"""
 
-        if status:
-            stmt = stmt.where(InventoryAudit.status == status)
-            count_stmt = count_stmt.where(InventoryAudit.status == status)
-
-        stmt = stmt.order_by(InventoryAudit.created_at.desc()).offset((page - 1) * page_size).limit(page_size)
-        total = await db.scalar(count_stmt) or 0
-        items = (await db.execute(stmt)).scalars().all()
-        return list(items), int(total)
-
-    async def get_multi_deleted_paginated(
-        self,
-        db: AsyncSession,
-        *,
-        page: int = 1,
-        page_size: int = 20,
-        status: str | None = None,
-    ) -> tuple[list[InventoryAudit], int]:
-        stmt = select(InventoryAudit).where(InventoryAudit.is_deleted.is_(True))
-        count_stmt = select(func.count(InventoryAudit.id)).where(InventoryAudit.is_deleted.is_(True))
-
-        if status:
-            stmt = stmt.where(InventoryAudit.status == status)
-            count_stmt = count_stmt.where(InventoryAudit.status == status)
-
-        stmt = stmt.order_by(InventoryAudit.updated_at.desc()).offset((page - 1) * page_size).limit(page_size)
-        total = await db.scalar(count_stmt) or 0
-        items = (await db.execute(stmt)).scalars().all()
-        return list(items), int(total)
+    pass
 
 
 inventory_audit_crud = CRUDInventoryAudit(InventoryAudit)

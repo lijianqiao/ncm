@@ -8,22 +8,21 @@
 
 from uuid import UUID
 
-from sqlalchemy import and_, delete, func, or_, select, text, update
+from sqlalchemy import delete, func, text, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import with_loader_criteria
 
 from app.crud.base import CRUDBase
-from app.models.device import Device
 from app.models.topology import TopologyLink
 from app.schemas.topology import TopologyLinkCreate, TopologyLinkResponse
 
 
 class CRUDTopology(CRUDBase[TopologyLink, TopologyLinkCreate, TopologyLinkResponse]):
-    """网络拓扑 CRUD 类。"""
+    """网络拓扑 CRUD 类（纯数据访问）。"""
 
     @staticmethod
     def _upsert_set_clause(stmt):
+        """构建 upsert 更新字段。"""
         excluded = stmt.excluded
         return {
             "target_device_id": excluded.target_device_id,
@@ -42,6 +41,16 @@ class CRUDTopology(CRUDBase[TopologyLink, TopologyLinkCreate, TopologyLinkRespon
         }
 
     async def upsert_many(self, db: AsyncSession, *, links_data: list[TopologyLinkCreate]) -> int:
+        """
+        批量 upsert 链路数据。
+
+        Args:
+            db: 数据库会话
+            links_data: 链路数据列表
+
+        Returns:
+            受影响的行数
+        """
         if not links_data:
             return 0
 
@@ -56,96 +65,9 @@ class CRUDTopology(CRUDBase[TopologyLink, TopologyLinkCreate, TopologyLinkRespon
         await db.flush()
         return int(getattr(result, "rowcount", 0) or 0)
 
-    async def get_by_source_interface(
-        self,
-        db: AsyncSession,
-        *,
-        source_device_id: UUID,
-        source_interface: str,
-    ) -> TopologyLink | None:
+    async def delete_by_device(self, db: AsyncSession, *, device_id: UUID, hard_delete: bool = False) -> int:
         """
-        根据源设备和接口获取链路。
-
-        Args:
-            db: 数据库会话
-            source_device_id: 源设备ID
-            source_interface: 源接口名称
-
-        Returns:
-            TopologyLink 记录或 None
-        """
-        query = select(self.model).where(
-            and_(
-                self.model.source_device_id == source_device_id,
-                self.model.source_interface == source_interface,
-                self.model.is_deleted.is_(False),
-            )
-        )
-        result = await db.execute(query)
-        return result.scalars().first()
-
-    async def get_device_neighbors(self, db: AsyncSession, *, device_id: UUID) -> list[TopologyLink]:
-        """
-        获取设备的所有邻居链路。
-
-        Args:
-            db: 数据库会话
-            device_id: 设备ID
-
-        Returns:
-            TopologyLink 列表
-        """
-        query = (
-            select(self.model)
-            .options(with_loader_criteria(Device, Device.is_deleted.is_(False), include_aliases=True))
-            .where(
-                and_(
-                    self.model.source_device_id == device_id,
-                    self.model.is_deleted.is_(False),
-                )
-            )
-            .order_by(self.model.source_interface)
-        )
-        result = await db.execute(query)
-        return list(result.scalars().all())
-
-    async def get_all_links(self, db: AsyncSession, *, skip: int = 0, limit: int = 1000) -> list[TopologyLink]:
-        """
-        获取所有拓扑链路。
-
-        Args:
-            db: 数据库会话
-            skip: 跳过数量
-            limit: 返回数量
-
-        Returns:
-            TopologyLink 列表
-        """
-        query = (
-            select(self.model)
-            .options(with_loader_criteria(Device, Device.is_deleted.is_(False), include_aliases=True))
-            .where(self.model.is_deleted.is_(False))
-            .order_by(self.model.created_at.desc())
-            .offset(skip)
-            .limit(limit)
-        )
-        result = await db.execute(query)
-        return list(result.scalars().all())
-
-    async def count_links(self, db: AsyncSession) -> int:
-        """
-        获取链路总数。
-
-        Returns:
-            链路总数
-        """
-        query = select(func.count()).select_from(self.model).where(self.model.is_deleted.is_(False))
-        result = await db.execute(query)
-        return result.scalar() or 0
-
-    async def delete_device_links(self, db: AsyncSession, *, device_id: UUID, hard_delete: bool = False) -> int:
-        """
-        删除设备的所有链路 (用于刷新拓扑前)。
+        删除指定设备的所有链路。
 
         Args:
             db: 数据库会话
@@ -156,7 +78,6 @@ class CRUDTopology(CRUDBase[TopologyLink, TopologyLinkCreate, TopologyLinkRespon
             删除的链路数量
         """
         if hard_delete:
-            # 硬删除
             query = delete(self.model).where(self.model.source_device_id == device_id)
             result = await db.execute(query)
             await db.flush()
@@ -174,24 +95,22 @@ class CRUDTopology(CRUDBase[TopologyLink, TopologyLinkCreate, TopologyLinkRespon
             await db.flush()
             return int(getattr(result, "rowcount", 0) or 0)
 
-    async def clear_all_links(self, db: AsyncSession, *, hard_delete: bool = False) -> int:
+    async def delete_all(self, db: AsyncSession, *, hard_delete: bool = False) -> int:
         """
-        清除所有拓扑链路数据。
+        删除所有链路。
 
         Args:
             db: 数据库会话
-            hard_delete: 是否硬删除（物理删除）
+            hard_delete: 是否硬删除
 
         Returns:
             删除的链路数量
         """
         if hard_delete:
-            # 硬删除所有链路
             result = await db.execute(delete(self.model))
             await db.flush()
             return result.rowcount  # type: ignore
         else:
-            # 软删除所有未删除的链路
             result = await db.execute(
                 update(self.model)
                 .where(self.model.is_deleted.is_(False))
@@ -203,90 +122,6 @@ class CRUDTopology(CRUDBase[TopologyLink, TopologyLinkCreate, TopologyLinkRespon
             )
             await db.flush()
             return int(getattr(result, "rowcount", 0) or 0)
-
-    async def refresh_device_topology(
-        self,
-        db: AsyncSession,
-        *,
-        device_id: UUID,
-        links_data: list[TopologyLinkCreate],
-    ) -> tuple[int, int]:
-        """
-        刷新设备拓扑 (删除旧链路，创建新链路)。
-
-        Args:
-            db: 数据库会话
-            device_id: 设备ID
-            links_data: 新的链路数据
-
-        Returns:
-            (deleted_count, created_count): 删除数量和创建数量
-        """
-        # 软删除旧链路
-        deleted_count = await self.delete_device_links(db, device_id=device_id, hard_delete=False)
-
-        created_count = await self.upsert_many(db, links_data=links_data)
-        return deleted_count, created_count
-
-    async def get_bidirectional_link(
-        self,
-        db: AsyncSession,
-        *,
-        device_a_id: UUID,
-        device_b_id: UUID,
-    ) -> list[TopologyLink]:
-        """
-        获取两个设备之间的双向链路。
-
-        Args:
-            db: 数据库会话
-            device_a_id: 设备A ID
-            device_b_id: 设备B ID
-
-        Returns:
-            TopologyLink 列表
-        """
-        query = select(self.model).where(
-            and_(
-                self.model.is_deleted.is_(False),
-                or_(
-                    and_(
-                        self.model.source_device_id == device_a_id,
-                        self.model.target_device_id == device_b_id,
-                    ),
-                    and_(
-                        self.model.source_device_id == device_b_id,
-                        self.model.target_device_id == device_a_id,
-                    ),
-                ),
-            )
-        )
-        query = query.options(with_loader_criteria(Device, Device.is_deleted.is_(False), include_aliases=True))
-        result = await db.execute(query)
-        return list(result.scalars().all())
-
-    async def get_unique_devices_in_topology(self, db: AsyncSession) -> set[UUID]:
-        """
-        获取拓扑中涉及的所有设备ID。
-
-        Returns:
-            设备ID集合
-        """
-        query = (
-            select(self.model.source_device_id, self.model.target_device_id)
-            .where(self.model.is_deleted.is_(False))
-            .distinct()
-        )
-        result = await db.execute(query)
-        rows = result.all()
-
-        device_ids: set[UUID] = set()
-        for source_id, target_id in rows:
-            device_ids.add(source_id)
-            if target_id:
-                device_ids.add(target_id)
-
-        return device_ids
 
 
 # 创建单例实例
