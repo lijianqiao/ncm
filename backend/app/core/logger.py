@@ -168,56 +168,49 @@ def setup_logging() -> None:
     root_logger.addHandler(error_handler)
 
     # 4.API流量记录器
-    # 我们为访问日志定义一个特定的记录器“api_traffic”
-    # 如果我们不希望它在 info.log 中与应用程序日志混合，则该记录器不应传播到 root？
-    # 用户请求单独的文件。
-    # 中间件将使用 logger.bind(type="access") 或 structlog.get_logger("api_traffic")
 
-    traffic_logger = logging.getLogger("api_traffic")
-    traffic_logger.setLevel(logging.INFO)
-    traffic_logger.propagate = (
-        False  # 停止传递给 root （因此如果不需要，它不会在 info.log 中重复，但通常 info 包含所有内容）
-    )
-    # 如果用户想要分开，让我们关闭传播。
+    # --- 通用辅助函数：设置独立日志记录器 ---
+    def _setup_logger(
+        name: str,
+        level: int,
+        filename: str,
+        *,
+        add_console_in_local: bool = True,
+    ) -> logging.Logger:
+        """
+        设置独立日志记录器的辅助函数。
 
-    traffic_handler = get_file_handler("traffic_handler", logging.INFO, "api_traffic.log")
-    traffic_handler.setFormatter(file_formatter)
-    traffic_logger.addHandler(traffic_handler)
+        Args:
+            name: 日志记录器名称
+            level: 日志级别
+            filename: 日志文件名
+            add_console_in_local: 是否在本地环境添加控制台输出
 
-    # 如果是本地的话，还要将标准输出添加到流量记录器中吗？
+        Returns:
+            logging.Logger: 配置好的日志记录器
+        """
+        new_logger = logging.getLogger(name)
+        new_logger.setLevel(level)
+        new_logger.propagate = False  # 不传播到 root，避免重复
 
-    if settings.ENVIRONMENT == "local":
-        traffic_logger.addHandler(stream_handler)
+        handler = get_file_handler(f"{name}_handler", level, filename)
+        handler.setFormatter(file_formatter)
+        new_logger.addHandler(handler)
 
-    # 5. Celery Worker 日志记录器
-    # 记录 Celery 任务执行日志（不包含命令执行结果，避免日志过大）
+        # 本地环境也输出到控制台
+        if add_console_in_local and settings.ENVIRONMENT == "local":
+            new_logger.addHandler(stream_handler)
 
-    celery_logger = logging.getLogger("celery_task")
-    celery_logger.setLevel(logging.INFO)
-    celery_logger.propagate = False  # 不传播到 root，避免重复
+        return new_logger
 
-    celery_handler = get_file_handler("celery_handler", logging.INFO, "celery.log")
-    celery_handler.setFormatter(file_formatter)
-    celery_logger.addHandler(celery_handler)
+    # 4. API 流量记录器
+    _setup_logger("api_traffic", logging.INFO, "api_traffic.log")
 
-    # 本地环境也输出到控制台
-    if settings.ENVIRONMENT == "local":
-        celery_logger.addHandler(stream_handler)
+    # 5. Celery Worker 日志记录器（不包含命令执行结果，避免日志过大）
+    _setup_logger("celery_task", logging.INFO, "celery.log")
 
-    # 6. Celery Details 日志记录器
-    # 记录 Celery 任务执行的详细日志（包含 LLDP 数据、采集结果等）
-
-    celery_details_logger = logging.getLogger("celery_details")
-    celery_details_logger.setLevel(logging.DEBUG)
-    celery_details_logger.propagate = False  # 不传播到 root，避免重复
-
-    celery_details_handler = get_file_handler("celery_details_handler", logging.DEBUG, "celery_details.log")
-    celery_details_handler.setFormatter(file_formatter)
-    celery_details_logger.addHandler(celery_details_handler)
-
-    # 本地环境也输出到控制台
-    if settings.ENVIRONMENT == "local":
-        celery_details_logger.addHandler(stream_handler)
+    # 6. Celery Details 日志记录器（包含 LLDP 数据、采集结果等详细信息）
+    _setup_logger("celery_details", logging.DEBUG, "celery_details.log")
 
     # 排除 uvicorn、sqlalchemy 的日志
 

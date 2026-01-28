@@ -8,11 +8,11 @@
 
 import functools
 import hashlib
-import json
 from collections.abc import Callable, Iterable
 from typing import Any, TypeVar
 from uuid import UUID
 
+import orjson
 import redis.asyncio as redis
 
 from app.core.config import settings
@@ -34,14 +34,24 @@ async def init_redis() -> None:
         redis_pool = redis.ConnectionPool.from_url(
             str(settings.REDIS_URL),
             decode_responses=True,
-            max_connections=10,
+            max_connections=settings.REDIS_MAX_CONNECTIONS,
         )
         redis_client = redis.Redis(connection_pool=redis_pool)
         await redis_client.ping()  # type: ignore
-        logger.info("Redis 连接成功")
+        logger.info("Redis 连接成功", max_connections=settings.REDIS_MAX_CONNECTIONS)
     except Exception as e:
         logger.warning(f"Redis 连接失败，缓存功能将被禁用: {e}")
         redis_client = None
+
+
+def _serialize(data: Any) -> str:
+    """使用 orjson 序列化数据（高性能）。"""
+    return orjson.dumps(data, default=str, option=orjson.OPT_SORT_KEYS).decode("utf-8")
+
+
+def _deserialize(data: str) -> Any:
+    """使用 orjson 反序列化数据。"""
+    return orjson.loads(data)
 
 
 async def close_redis() -> None:
@@ -59,11 +69,14 @@ async def close_redis() -> None:
 def _generate_cache_key(prefix: str, func: Callable, args: tuple, kwargs: dict) -> str:
     """
     根据函数名和参数生成缓存 Key。
+    使用 orjson 提高序列化性能。
     """
     # 排除 self 参数
     key_args = args[1:] if args and hasattr(args[0], "__class__") else args
     key_data = {"args": str(key_args), "kwargs": str(sorted(kwargs.items()))}
-    key_hash = hashlib.md5(json.dumps(key_data, sort_keys=True).encode()).hexdigest()[:16]
+    # 使用 orjson 序列化 + md5 哈希
+    key_bytes = orjson.dumps(key_data, option=orjson.OPT_SORT_KEYS)
+    key_hash = hashlib.md5(key_bytes).hexdigest()[:16]
     return f"{prefix}:{func.__module__}.{func.__qualname__}:{key_hash}"
 
 
@@ -90,7 +103,7 @@ def cache(prefix: str = "cache", expire: int = 300) -> Callable:
                 cached_value = await redis_client.get(cache_key)
                 if cached_value is not None:
                     logger.debug(f"缓存命中: {cache_key}")
-                    return json.loads(cached_value)
+                    return _deserialize(cached_value)
             except Exception as e:
                 logger.warning(f"缓存读取错误: {e}")
 
@@ -98,9 +111,8 @@ def cache(prefix: str = "cache", expire: int = 300) -> Callable:
             result = await func(*args, **kwargs)
 
             try:
-                # 将结果写入缓存
-                # 注意: 对于 ORM 对象，需要先序列化
-                await redis_client.setex(cache_key, expire, json.dumps(result, default=str))  # type: ignore
+                # 将结果写入缓存（使用 orjson 高性能序列化）
+                await redis_client.setex(cache_key, expire, _serialize(result))  # type: ignore
                 logger.debug(f"缓存写入: {cache_key}")
             except Exception as e:
                 logger.warning(f"缓存写入错误: {e}")
@@ -142,8 +154,10 @@ def user_permissions_cache_key(user_id: UUID) -> str:
 
 
 async def invalidate_user_permissions_cache(user_ids: Iterable[UUID]) -> int:
-    """精确失效指定用户的权限缓存。"""
-
+    """
+    精确失效指定用户的权限缓存。
+    使用 Redis Pipeline 批量删除，提高性能。
+    """
     if redis_client is None:
         return 0
 
@@ -153,9 +167,13 @@ async def invalidate_user_permissions_cache(user_ids: Iterable[UUID]) -> int:
 
     deleted = 0
     try:
-        for user_id in ids:
-            key = user_permissions_cache_key(user_id)
-            deleted += int(await redis_client.delete(key))  # type: ignore
+        keys = [user_permissions_cache_key(user_id) for user_id in ids]
+        # 使用 Pipeline 批量删除，减少网络往返
+        async with redis_client.pipeline() as pipe:
+            for key in keys:
+                pipe.delete(key)
+            results = await pipe.execute()
+        deleted = sum(1 for r in results if r)
         if deleted > 0:
             logger.info(f"权限缓存失效: users={len(ids)}, deleted={deleted}")
     except Exception as e:

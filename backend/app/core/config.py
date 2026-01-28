@@ -66,6 +66,7 @@ class Settings(BaseSettings):
     DB_POOL_SIZE: int = 5  # 连接池大小
     DB_MAX_OVERFLOW: int = 10  # 最大溢出连接数
     DB_POOL_RECYCLE: int = 3600  # 连接回收时间（秒），防止数据库端断开空闲连接
+    DB_POOL_TIMEOUT: int = 30  # 获取连接超时时间（秒）
 
     # 初始化超级管理员 (Initial Superuser)
     FIRST_SUPERUSER: str = "admin"
@@ -83,20 +84,31 @@ class Settings(BaseSettings):
     REDIS_PORT: int = 6379
     REDIS_DB: int = 0
     REDIS_PASSWORD: str = ""
+    REDIS_MAX_CONNECTIONS: int = 10  # Redis 连接池最大连接数
     OTP_CACHE_TTL_SECONDS: int = 30
     OTP_WAIT_TIMEOUT_SECONDS: int = 60  # 等待前端输入新 OTP 的最长时间（秒）
 
-    @computed_field
-    @property
-    def REDIS_URL(self) -> RedisDsn:
+    def _build_redis_url(self, db: int) -> RedisDsn:
         """
-        根据配置生成 Redis 连接 URI.
+        构建 Redis URL 的通用方法。
+
+        Args:
+            db: Redis 数据库编号
+
+        Returns:
+            RedisDsn: Redis 连接 URI
         """
         from urllib.parse import quote
 
         # 转义密码中的特殊字符（如 @, :, / 等）
         password_part = f":{quote(self.REDIS_PASSWORD, safe='')}@" if self.REDIS_PASSWORD else ""
-        return RedisDsn(f"redis://{password_part}{self.REDIS_HOST}:{self.REDIS_PORT}/{self.REDIS_DB}")
+        return RedisDsn(f"redis://{password_part}{self.REDIS_HOST}:{self.REDIS_PORT}/{db}")
+
+    @computed_field
+    @property
+    def REDIS_URL(self) -> RedisDsn:
+        """根据配置生成 Redis 连接 URI."""
+        return self._build_redis_url(self.REDIS_DB)
 
     # Celery 配置
     CELERY_BROKER_DB: int = 1  # Celery Broker 使用 Redis DB 1
@@ -198,24 +210,14 @@ class Settings(BaseSettings):
     @computed_field
     @property
     def CELERY_BROKER_URL(self) -> RedisDsn:
-        """
-        Celery 消息代理 URL (使用独立的 Redis DB).
-        """
-        from urllib.parse import quote
-
-        password_part = f":{quote(self.REDIS_PASSWORD, safe='')}@" if self.REDIS_PASSWORD else ""
-        return RedisDsn(f"redis://{password_part}{self.REDIS_HOST}:{self.REDIS_PORT}/{self.CELERY_BROKER_DB}")
+        """Celery 消息代理 URL (使用独立的 Redis DB)."""
+        return self._build_redis_url(self.CELERY_BROKER_DB)
 
     @computed_field
     @property
     def CELERY_RESULT_BACKEND(self) -> RedisDsn:
-        """
-        Celery 结果后端 URL (使用独立的 Redis DB).
-        """
-        from urllib.parse import quote
-
-        password_part = f":{quote(self.REDIS_PASSWORD, safe='')}@" if self.REDIS_PASSWORD else ""
-        return RedisDsn(f"redis://{password_part}{self.REDIS_HOST}:{self.REDIS_PORT}/{self.CELERY_RESULT_DB}")
+        """Celery 结果后端 URL (使用独立的 Redis DB)."""
+        return self._build_redis_url(self.CELERY_RESULT_DB)
 
     @computed_field
     @property
@@ -296,26 +298,20 @@ class Settings(BaseSettings):
         _check_key_length(self.NCM_OTP_SEED_KEY, "NCM_OTP_SEED_KEY")
         _check_key_length(self.NCM_SNMP_KEY, "NCM_SNMP_KEY")
 
-        if self.NCM_CREDENTIAL_KEY in ncm_default_keys:
-            msg = "[安全警告]: NCM_CREDENTIAL_KEY 使用了默认值，请在 .env 中修改。"
-            if self.ENVIRONMENT == "production":
-                raise ValueError(f"[BLOCK] {msg} 生产环境严禁使用默认密钥！")
-            else:
-                logging.getLogger(__name__).warning(msg)
+        # 使用循环检查 NCM 密钥是否使用默认值
+        ncm_keys_to_check = {
+            "NCM_CREDENTIAL_KEY": self.NCM_CREDENTIAL_KEY,
+            "NCM_OTP_SEED_KEY": self.NCM_OTP_SEED_KEY,
+            "NCM_SNMP_KEY": self.NCM_SNMP_KEY,
+        }
 
-        if self.NCM_OTP_SEED_KEY in ncm_default_keys:
-            msg = "[安全警告]: NCM_OTP_SEED_KEY 使用了默认值，请在 .env 中修改。"
-            if self.ENVIRONMENT == "production":
-                raise ValueError(f"[BLOCK] {msg} 生产环境严禁使用默认密钥！")
-            else:
-                logging.getLogger(__name__).warning(msg)
-
-        if self.NCM_SNMP_KEY in ncm_default_keys:
-            msg = "[安全警告]: NCM_SNMP_KEY 使用了默认值，请在 .env 中修改。"
-            if self.ENVIRONMENT == "production":
-                raise ValueError(f"[BLOCK] {msg} 生产环境严禁使用默认密钥！")
-            else:
-                logging.getLogger(__name__).warning(msg)
+        for key_name, key_value in ncm_keys_to_check.items():
+            if key_value in ncm_default_keys:
+                msg = f"[安全警告]: {key_name} 使用了默认值，请在 .env 中修改。"
+                if self.ENVIRONMENT == "production":
+                    raise ValueError(f"[BLOCK] {msg} 生产环境严禁使用默认密钥！")
+                else:
+                    logging.getLogger(__name__).warning(msg)
 
         return self
 
