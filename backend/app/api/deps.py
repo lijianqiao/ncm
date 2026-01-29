@@ -9,7 +9,8 @@
 import json
 import uuid
 from collections.abc import AsyncGenerator
-from typing import Annotated
+from typing import Annotated, Any, Protocol, TypeAlias
+from uuid import UUID
 from urllib.parse import urlparse
 
 import jwt
@@ -72,6 +73,15 @@ from app.crud.crud_user import CRUDUser
 from app.crud.crud_user import user as user_crud_global
 from app.models.rbac import Role
 from app.models.user import User
+from app.schemas.backup import (
+    BackupBatchDeleteResult,
+    BackupBatchRequest,
+    BackupBatchRestoreResult,
+    BackupBatchResult,
+    BackupListQuery,
+    BackupTaskStatus,
+    BackupType,
+)
 from app.schemas.token import TokenPayload
 from app.services.alert_service import AlertService
 from app.services.auth_service import AuthService
@@ -550,9 +560,46 @@ def get_import_export_service(db: SessionDep) -> ImportExportService:
     return ImportExportService(db)
 
 
+class BackupServiceProtocol(Protocol):
+    async def get_backups_paginated(self, query: BackupListQuery) -> tuple[list[Any], int]: ...
+    async def get_recycle_backups_paginated(self, query: BackupListQuery) -> tuple[list[Any], int]: ...
+    async def get_backup(self, backup_id: UUID) -> Any: ...
+    async def get_backup_content(self, backup_id: UUID) -> str: ...
+    async def backup_single_device(
+        self,
+        device_id: UUID,
+        *,
+        backup_type: BackupType,
+        operator_id: UUID | None = None,
+        otp_code: str | None = None,
+    ) -> Any: ...
+    async def backup_devices_batch(
+        self,
+        request: BackupBatchRequest,
+        *,
+        operator_id: UUID | None = None,
+    ) -> BackupBatchResult: ...
+    async def get_task_status(self, task_id: str) -> BackupTaskStatus: ...
+    async def get_device_latest_backup(self, device_id: UUID) -> Any: ...
+    async def get_device_backups(
+        self,
+        device_id: UUID,
+        page: int = 1,
+        page_size: int = 20,
+    ) -> tuple[list[Any], int]: ...
+    async def delete_backups_batch(
+        self,
+        backup_ids: list[UUID],
+        hard_delete: bool = False,
+    ) -> BackupBatchDeleteResult: ...
+    async def restore_backups_batch(self, backup_ids: list[UUID]) -> BackupBatchRestoreResult: ...
+    async def delete_backup(self, backup_id: UUID, hard_delete: bool = False) -> None: ...
+    async def restore_backup(self, backup_id: UUID) -> None: ...
+
+
 AlertServiceDep = Annotated[AlertService, Depends(get_alert_service)]
 AuthServiceDep = Annotated[AuthService, Depends(get_auth_service)]
-BackupServiceDep = Annotated[BackupService, Depends(get_backup_service)]
+BackupServiceDep: TypeAlias = Annotated[BackupServiceProtocol, Depends(get_backup_service)]
 CollectServiceDep = Annotated[CollectService, Depends(get_collect_service)]
 CredentialServiceDep = Annotated[CredentialService, Depends(get_credential_service)]
 DashboardServiceDep = Annotated[DashboardService, Depends(get_dashboard_service)]

@@ -19,10 +19,12 @@ const props = withDefaults(
     length?: number
     alertTitle?: string
     alertText?: string
+    queueHint?: string
     infoItems?: InfoItem[]
     maxInfoItems?: number
     errorMessage?: string
     confirmText?: string
+    idleTimeoutMs?: number
   }>(),
   {
     title: '需要 OTP 验证码',
@@ -30,10 +32,12 @@ const props = withDefaults(
     length: 6,
     alertTitle: '需要 OTP',
     alertText: '请输入当前有效的 OTP 验证码以继续操作。',
+    queueHint: '',
     infoItems: () => [],
     maxInfoItems: 3,
     confirmText: '确认',
     errorMessage: '',
+    idleTimeoutMs: 60_000,
   },
 )
 
@@ -44,7 +48,6 @@ const emit = defineEmits<{
 }>()
 
 const otpChars = ref<string[]>([])
-const idleTimeoutMs = 60_000
 const inactivityTimer = ref<ReturnType<typeof setTimeout> | null>(null)
 
 const resetOtp = () => {
@@ -66,7 +69,7 @@ const startInactivityTimer = () => {
       emit('timeout')
       emit('update:show', false)
     }
-  }, idleTimeoutMs)
+  }, props.idleTimeoutMs)
 }
 
 watch(
@@ -111,6 +114,15 @@ watch(
   }
 )
 
+watch(
+  () => props.idleTimeoutMs,
+  () => {
+    if (props.show) {
+      startInactivityTimer()
+    }
+  }
+)
+
 onBeforeUnmount(() => {
   clearInactivityTimer()
 })
@@ -137,6 +149,10 @@ const submit = () => {
     <n-space vertical size="large">
       <n-alert type="warning" :title="alertTitle" :show-icon="false">
         {{ alertText }}
+      </n-alert>
+
+      <n-alert v-if="queueHint" type="info" :show-icon="false">
+        {{ queueHint }}
       </n-alert>
 
       <n-descriptions v-if="infoItems.length" :column="1" label-placement="left" bordered>

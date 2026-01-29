@@ -15,15 +15,24 @@
 """
 
 from typing import Annotated, Any
+from uuid import UUID
 
 from celery.result import AsyncResult
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
 
-from app.api.deps import get_current_active_superuser
+from app.api.deps import (
+    BackupServiceDep,
+    DeployServiceDep,
+    get_current_active_superuser,
+)
 from app.celery.app import celery_app
+from app.core.exceptions import BadRequestException, NotFoundException
+from app.core.otp import otp_coordinator
 from app.models.user import User
+from app.schemas.backup import BackupBatchRequest
 from app.schemas.common import ResponseBase
+from app.core.enums import BackupType
 
 router = APIRouter()
 
@@ -141,3 +150,44 @@ async def revoke_task(task_id: str, _: SuperuserDep) -> ResponseBase[RevokeRespo
     """
     celery_app.control.revoke(task_id, terminate=True)
     return ResponseBase(data=RevokeResponse(message=f"任务 {task_id} 已被撤销"))
+
+
+@router.post("/{task_id}/resume", response_model=ResponseBase[dict])
+async def resume_task_group(
+    task_id: str,
+    backup_service: BackupServiceDep,
+    deploy_service: DeployServiceDep,
+    _: SuperuserDep,
+    dept_id: UUID = Query(..., description="部门ID"),
+    group: str = Query(..., description="设备分组"),
+) -> ResponseBase[dict]:
+    batch_info = await otp_coordinator.registry.get_batch(task_id)
+    if not batch_info:
+        raise NotFoundException(message="任务不存在或不支持恢复")
+
+    pause_state = await otp_coordinator.resume_group(task_id, dept_id, group)
+    pending_ids = [UUID(str(x)) for x in (pause_state.get("pending_device_ids") if pause_state else []) or []]
+    task_type = batch_info.get("task_type")
+    if not pending_ids and task_type == "deploy":
+        pending_ids = await deploy_service.get_group_device_ids(UUID(task_id), dept_id, group)
+    if not pending_ids:
+        raise BadRequestException(message="未找到可恢复的设备")
+    if task_type == "backup":
+        backup_type = batch_info.get("backup_type") or "manual"
+        operator_id = batch_info.get("operator_id")
+        request = BackupBatchRequest(
+            device_ids=pending_ids,
+            backup_type=BackupType(backup_type),
+            resume_task_id=task_id,
+        )
+        result = await backup_service.backup_devices_batch(
+            request,
+            operator_id=UUID(str(operator_id)) if operator_id else None,
+        )
+        return ResponseBase(data={"task_id": task_id, "resume_task_id": result.task_id})
+
+    if task_type == "deploy":
+        result = await deploy_service.resume_task_by_device_ids(UUID(task_id), pending_ids)
+        return ResponseBase(data={"task_id": str(result.id), "celery_task_id": result.celery_task_id})
+
+    raise BadRequestException(message="当前任务类型不支持恢复")

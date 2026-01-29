@@ -11,7 +11,7 @@ from typing import Any
 from fastapi import APIRouter, Depends
 
 from app.api import deps
-from app.core.otp_notice import build_otp_required_response
+from app.core.otp_notice import build_otp_required_response_from_result
 from app.core.permissions import PermissionCode
 from app.schemas.common import ResponseBase
 from app.schemas.preset import PresetDetail, PresetExecuteRequest, PresetExecuteResult, PresetInfo
@@ -64,14 +64,10 @@ async def execute_preset(
         device_id=body.device_id,
         params=body.params,
     )
-    if result.otp_required:
-        return build_otp_required_response(
-            message=result.error_message or "需要重新输入 OTP 验证码",
-            details={
-                "otp_required": True,
-                "otp_required_groups": result.otp_required_groups,
-                "next_action": result.next_action,
-                "expires_in": result.expires_in,
-            },
-        )
+    required_response = build_otp_required_response_from_result(
+        result.model_dump(),
+        message=result.error_message or "需要重新输入 OTP 验证码",
+    )
+    if required_response:
+        return required_response
     return ResponseBase(data=result, message="执行成功" if result.success else "执行失败")

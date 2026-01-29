@@ -89,11 +89,23 @@ class OTPRequiredException(CustomException):
         device_group: str,
         failed_devices: list[str] | None = None,
         message: str = "需要输入 OTP 验证码",
+        *,
+        otp_wait_timeout: int | None = None,
+        otp_cache_ttl: int | None = None,
+        otp_wait_status: str | None = None,
+        task_id: str | None = None,
+        pending_device_ids: list[str] | None = None,
     ):
         # 存储为字符串，确保可序列化
         self.dept_id_str = str(dept_id)
         self.device_group = device_group
         self.failed_devices = failed_devices or []
+
+        if otp_wait_timeout is None or otp_cache_ttl is None:
+            from app.core.config import settings
+
+            otp_wait_timeout = otp_wait_timeout or settings.OTP_WAIT_TIMEOUT_SECONDS
+            otp_cache_ttl = otp_cache_ttl or settings.OTP_CACHE_TTL_SECONDS
 
         # 同时保留 UUID 类型的属性（用于类型兼容）
         self._dept_id = dept_id if isinstance(dept_id, UUID) else UUID(dept_id)
@@ -105,6 +117,11 @@ class OTPRequiredException(CustomException):
                 "dept_id": self.dept_id_str,
                 "device_group": device_group,
                 "failed_devices": self.failed_devices,
+                "pending_device_ids": pending_device_ids,
+                "task_id": task_id,
+                "otp_wait_timeout": otp_wait_timeout,
+                "otp_cache_ttl": otp_cache_ttl,
+                "otp_wait_status": otp_wait_status,
             },
         )
 

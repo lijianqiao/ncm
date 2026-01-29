@@ -112,79 +112,50 @@ class AsyncRunner:
             task: 异步任务函数
             hosts: 主机字典
             progress_callback: 可选的进度回调
-            otp_wait_timeout: OTP 等待超时时间（秒），设置后支持断点续传
+            otp_wait_timeout: OTP 等待超时时间（秒），兼容参数，不参与执行
             **kwargs: 额外参数
 
         Returns:
             AggregatedResult: 聚合结果
         """
-        from uuid import UUID
-
-        from app.network.otp_utils import wait_and_retry_otp
-
         task_name = getattr(task, "__name__", "async_task")
         results = AggregatedResult(task_name)
         semaphore = asyncio.Semaphore(self.semaphore_limit)
-
-        # OTP 超时标记：一旦某个设备等待 OTP 超时，取消剩余任务
-        otp_timeout_event = asyncio.Event()
 
         async def _execute_host(host: "Host") -> tuple[str, Result]:
             """单设备执行（带信号量控制、OTP 等待和可选重试）。"""
             last_exception: Exception | None = None
 
             for attempt in range(self.max_retries + 1):
-                # 检查是否已有 OTP 超时，跳过执行
-                if otp_timeout_event.is_set():
-                    return host.name, Result(
-                        host=host,
-                        result={"success": False, "otp_timeout": True, "skipped": True},
-                        failed=True,
-                    )
-
                 try:
                     async with semaphore:
                         logger.debug("开始执行异步任务", host=host.name, task=task_name, attempt=attempt + 1)
                         result_data = await task(host, **kwargs)
                         return host.name, Result(host=host, result=result_data)
                 except OTPRequiredException as e:
-                    # OTP 异常：尝试等待新 OTP
-                    if otp_wait_timeout and otp_wait_timeout > 0:
-                        dept_id_raw = host.data.get("dept_id")
-                        device_group = host.data.get("device_group")
-
-                        if dept_id_raw and device_group:
-                            celery_task_logger.info(
-                                "OTP 异常，开始等待新 OTP",
-                                host=host.name,
-                                dept_id=str(dept_id_raw),
-                                device_group=device_group,
-                                timeout=otp_wait_timeout,
-                            )
-
-                            new_otp = await wait_and_retry_otp(
-                                UUID(str(dept_id_raw)),
-                                str(device_group),
-                                timeout=otp_wait_timeout,
-                            )
-
-                            if new_otp:
-                                # 收到新 OTP，更新 host 密码并重试
-                                host.password = new_otp
-                                celery_task_logger.info("收到新 OTP，准备重试", host=host.name)
-                                continue  # 重新进入循环执行任务
-                            else:
-                                # 等待超时，设置超时标记
-                                otp_timeout_event.set()
-                                celery_task_logger.warning("等待新 OTP 超时，终止剩余任务", host=host.name)
-                                return host.name, Result(
-                                    host=host,
-                                    result={"success": False, "otp_timeout": True, "error": "等待 OTP 超时"},
-                                    failed=True,
-                                )
-
-                    # 不等待或无法等待，直接返回 OTP 异常
-                    return host.name, Result(host=host, exception=e, failed=True)
+                    dept_id_raw = host.data.get("dept_id")
+                    device_group = host.data.get("device_group")
+                    device_id = host.data.get("device_id")
+                    wait_status = None
+                    if isinstance(e.details, dict):
+                        wait_status = e.details.get("otp_wait_status")
+                    otp_meta = {
+                        "otp_dept_id": str(dept_id_raw) if dept_id_raw else None,
+                        "otp_device_group": str(device_group) if device_group else None,
+                        "otp_wait_status": wait_status,
+                        "pending_device_ids": [str(device_id)] if device_id else None,
+                    }
+                    return host.name, Result(
+                        host=host,
+                        result={
+                            "success": False,
+                            "otp_required": True,
+                            "error": str(e),
+                            "skipped": True,
+                            **otp_meta,
+                        },
+                        failed=True,
+                    )
                 except asyncio.CancelledError:
                     raise
                 except Exception as e:

@@ -20,12 +20,10 @@ from scrapli import AsyncScrapli
 from scrapli.exceptions import ScrapliAuthenticationFailed, ScrapliTimeout
 from scrapli.response import MultiResponse, Response
 
-from uuid import UUID
-
 from app.core.config import settings
 from app.core.logger import logger
 from app.network.connection_pool import get_connection_pool
-from app.network.otp_utils import handle_otp_auth_failure, resolve_otp_password, wait_and_retry_otp
+from app.network.otp_utils import handle_otp_auth_failure, resolve_otp_password
 from app.network.scrapli_utils import build_scrapli_config, disable_paging_async, send_command_with_paging_async
 
 if TYPE_CHECKING:
@@ -207,7 +205,7 @@ async def async_send_command(host: "Host", command: str, *, timeout_ops: float |
     """
     异步执行单条命令（使用连接池复用连接）。
 
-    支持 OTP 断点续传：认证失败时等待新 OTP 并重试。
+    OTP 认证失败时直接提示重新输入。
 
     Args:
         host: Nornir Host 对象
@@ -234,36 +232,6 @@ async def async_send_command(host: "Host", command: str, *, timeout_ops: float |
             "failed": response.failed,
         }
     except ScrapliAuthenticationFailed as e:
-        # 尝试等待新 OTP 并重试
-        auth_type = host.data.get("auth_type")
-        if auth_type == "otp_manual":
-            dept_id_raw = host.data.get("dept_id")
-            device_group = host.data.get("device_group")
-
-            if dept_id_raw and device_group:
-                logger.info(
-                    "认证失败，等待新 OTP",
-                    host=device_name,
-                    dept_id=str(dept_id_raw),
-                    device_group=device_group,
-                )
-                new_otp = await wait_and_retry_otp(
-                    UUID(str(dept_id_raw)),
-                    str(device_group),
-                    timeout=settings.OTP_WAIT_TIMEOUT_SECONDS,
-                )
-                if new_otp:
-                    # 使用新 OTP 重试（不使用连接池，因为密码已变更）
-                    kwargs["auth_password"] = new_otp
-                    response = await _run_send_command(host, kwargs, command, timeout_ops=timeout_ops, use_pool=False)
-                    return {
-                        "success": not response.failed,
-                        "result": response.result,
-                        "elapsed_time": response.elapsed_time,
-                        "failed": response.failed,
-                    }
-
-        # 无法恢复，抛出 OTPRequiredException
         await handle_otp_auth_failure(dict(host.data), e)
         raise
     except ScrapliTimeout as e:
@@ -278,7 +246,7 @@ async def async_send_commands(host: "Host", commands: list[str]) -> dict[str, An
     """
     异步执行多条命令（使用连接池复用连接）。
 
-    支持 OTP 断点续传：认证失败时等待新 OTP 并重试。
+    OTP 认证失败时直接提示重新输入。
 
     Args:
         host: Nornir Host 对象
@@ -407,30 +375,6 @@ async def async_send_commands(host: "Host", commands: list[str]) -> dict[str, An
     try:
         return await _execute_commands(kwargs, use_pool=True)
     except ScrapliAuthenticationFailed as e:
-        # 尝试等待新 OTP 并重试
-        auth_type = host.data.get("auth_type")
-        if auth_type == "otp_manual":
-            dept_id_raw = host.data.get("dept_id")
-            device_group = host.data.get("device_group")
-
-            if dept_id_raw and device_group:
-                logger.info(
-                    "认证失败，等待新 OTP",
-                    host=device_name,
-                    dept_id=str(dept_id_raw),
-                    device_group=device_group,
-                )
-                new_otp = await wait_and_retry_otp(
-                    UUID(str(dept_id_raw)),
-                    str(device_group),
-                    timeout=settings.OTP_WAIT_TIMEOUT_SECONDS,
-                )
-                if new_otp:
-                    # 使用新 OTP 重试（不使用连接池）
-                    kwargs["auth_password"] = new_otp
-                    return await _execute_commands(kwargs, use_pool=False)
-
-        # 无法恢复，抛出 OTPRequiredException
         await handle_otp_auth_failure(dict(host.data), e)
         raise
     except ScrapliTimeout as e:
@@ -445,7 +389,7 @@ async def async_send_config(host: "Host", config: str | list[str]) -> dict[str, 
     """
     异步下发配置（使用连接池复用连接）。
 
-    支持 OTP 断点续传：认证失败时等待新 OTP 并重试。
+    OTP 认证失败时直接提示重新输入。
 
     Args:
         host: Nornir Host 对象
@@ -548,30 +492,6 @@ async def async_send_config(host: "Host", config: str | list[str]) -> dict[str, 
     try:
         return await _send_config(kwargs, use_pool=True)
     except ScrapliAuthenticationFailed as e:
-        # 尝试等待新 OTP 并重试
-        auth_type = host.data.get("auth_type")
-        if auth_type == "otp_manual":
-            dept_id_raw = host.data.get("dept_id")
-            device_group = host.data.get("device_group")
-
-            if dept_id_raw and device_group:
-                logger.info(
-                    "配置下发认证失败，等待新 OTP",
-                    host=device_name,
-                    dept_id=str(dept_id_raw),
-                    device_group=device_group,
-                )
-                new_otp = await wait_and_retry_otp(
-                    UUID(str(dept_id_raw)),
-                    str(device_group),
-                    timeout=settings.OTP_WAIT_TIMEOUT_SECONDS,
-                )
-                if new_otp:
-                    # 使用新 OTP 重试（不使用连接池）
-                    kwargs["auth_password"] = new_otp
-                    return await _send_config(kwargs, use_pool=False)
-
-        # 无法恢复，抛出 OTPRequiredException
         await handle_otp_auth_failure(dict(host.data), e)
         raise
     except Exception as e:
@@ -630,7 +550,7 @@ async def async_collect_config(host: "Host") -> dict[str, Any]:
     异步采集设备运行配置（使用连接池复用连接）。
 
     根据设备平台自动选择正确的命令。
-    支持 OTP 断点续传：认证失败时等待新 OTP 并重试。
+    OTP 认证失败时直接提示重新输入。
 
     Args:
         host: Nornir Host 对象
@@ -748,30 +668,6 @@ async def async_collect_config(host: "Host") -> dict[str, Any]:
     try:
         return await _collect_config(kwargs, use_pool=True)
     except ScrapliAuthenticationFailed as e:
-        # 尝试等待新 OTP 并重试
-        auth_type = host.data.get("auth_type")
-        if auth_type == "otp_manual":
-            dept_id_raw = host.data.get("dept_id")
-            device_group = host.data.get("device_group")
-
-            if dept_id_raw and device_group:
-                logger.info(
-                    "配置采集认证失败，等待新 OTP",
-                    host=host.name,
-                    dept_id=str(dept_id_raw),
-                    device_group=device_group,
-                )
-                new_otp = await wait_and_retry_otp(
-                    UUID(str(dept_id_raw)),
-                    str(device_group),
-                    timeout=settings.OTP_WAIT_TIMEOUT_SECONDS,
-                )
-                if new_otp:
-                    # 使用新 OTP 重试（不使用连接池）
-                    kwargs["auth_password"] = new_otp
-                    return await _collect_config(kwargs, use_pool=False)
-
-        # 无法恢复，抛出 OTPRequiredException
         await handle_otp_auth_failure(dict(host.data), e)
         raise
 
@@ -821,7 +717,7 @@ async def async_get_lldp_neighbors(host: "Host") -> dict[str, Any]:
     异步获取设备 LLDP 邻居信息（使用连接池复用连接）。
 
     根据设备平台自动选择正确的命令，并使用 TextFSM 解析输出。
-    支持 OTP 断点续传：认证失败时等待新 OTP 并重试。
+    OTP 认证失败时直接提示重新输入。
 
     Args:
         host: Nornir Host 对象
@@ -956,30 +852,6 @@ async def async_get_lldp_neighbors(host: "Host") -> dict[str, Any]:
     try:
         return await _collect_lldp(kwargs, use_pool=True)
     except ScrapliAuthenticationFailed as e:
-        # 尝试等待新 OTP 并重试
-        auth_type = host.data.get("auth_type")
-        if auth_type == "otp_manual":
-            dept_id_raw = host.data.get("dept_id")
-            device_group = host.data.get("device_group")
-
-            if dept_id_raw and device_group:
-                logger.info(
-                    "LLDP 采集认证失败，等待新 OTP",
-                    host=device_name,
-                    dept_id=str(dept_id_raw),
-                    device_group=device_group,
-                )
-                new_otp = await wait_and_retry_otp(
-                    UUID(str(dept_id_raw)),
-                    str(device_group),
-                    timeout=settings.OTP_WAIT_TIMEOUT_SECONDS,
-                )
-                if new_otp:
-                    # 使用新 OTP 重试（不使用连接池）
-                    kwargs["auth_password"] = new_otp
-                    return await _collect_lldp(kwargs, use_pool=False)
-
-        # 无法恢复，抛出 OTPRequiredException
         await handle_otp_auth_failure(dict(host.data), e)
         raise
     except Exception as e:

@@ -37,6 +37,7 @@ import {
 import { getDeviceOptions, type Device } from '@/api/devices'
 import { getDeviceLatestDiff, type DiffResponse } from '@/api/diff'
 import { cacheOTP, type OTPCacheRequest } from '@/api/credentials'
+import { resumeTaskGroup } from '@/api/tasks'
 import { formatDateTime } from '@/utils/date'
 import { useTaskPolling, renderIpAddress, renderEnumTag } from '@/composables'
 import {
@@ -160,7 +161,7 @@ const columns: DataTableColumns<Backup> = [
   {
     title: 'IP',
     key: 'ip_address',
-    width: 150,
+    width: 165,
     render: (row) => renderIpAddress(row.device?.ip_address),
   },
   {
@@ -604,6 +605,40 @@ interface OTPRequiredDetails {
   device_group: string
   failed_devices?: string[]
   pending_device_ids?: string[]
+  task_id?: string
+  otp_wait_status?: string
+  otp_wait_timeout?: number
+  otp_cache_ttl?: number
+}
+
+const resolveOtpPayload = (error: unknown): OTPRequiredDetails | null => {
+  const err = error as {
+    response?: {
+      data?: {
+        message?: string
+        details?: OTPRequiredDetails
+        data?: OTPRequiredDetails | { otp_notice?: OTPRequiredDetails }
+      }
+    }
+  }
+  const data = err?.response?.data
+  const dataPayload = data?.data as OTPRequiredDetails | { otp_notice?: OTPRequiredDetails } | undefined
+  const candidate =
+    (dataPayload as { otp_notice?: OTPRequiredDetails } | undefined)?.otp_notice ||
+    (dataPayload as OTPRequiredDetails | undefined) ||
+    (data?.details as OTPRequiredDetails | undefined)
+  if (!candidate?.dept_id || !candidate?.device_group) return null
+  return {
+    dept_id: candidate.dept_id,
+    device_group: candidate.device_group,
+    failed_devices: candidate.failed_devices || [],
+    pending_device_ids: candidate.pending_device_ids,
+    task_id: candidate.task_id,
+    otp_wait_status: candidate.otp_wait_status,
+    otp_wait_timeout: candidate.otp_wait_timeout,
+    otp_cache_ttl: candidate.otp_cache_ttl,
+    message: candidate.message || data?.message,
+  }
 }
 
 const showOTPModal = ref(false)
@@ -611,6 +646,20 @@ const otpLoading = ref(false)
 const otpRequiredInfo = ref<OTPRequiredDetails | null>(null)
 const pendingBackupDeviceId = ref<string>('')
 const pendingBatchBackup = ref(false)
+const currentBatchTaskId = ref('')
+const otpQueue = ref<OTPRequiredDetails[]>([])
+const otpQueueHint = computed(() => {
+  const count = otpQueue.value.length
+  if (!count) return ''
+  return count === 1 ? '还有下一组 OTP 待输入' : `还有 ${count} 组 OTP 待输入`
+})
+const otpIdleTimeoutMs = computed(() => {
+  const waitSeconds = otpRequiredInfo.value?.otp_wait_timeout
+  if (typeof waitSeconds === 'number' && waitSeconds > 0) {
+    return Math.floor(waitSeconds * 1000)
+  }
+  return 60_000
+})
 
 const submitOTP = async (otpCode: string) => {
   if (!/^\d{6}$/.test(otpCode)) {
@@ -636,9 +685,17 @@ const submitOTP = async (otpCode: string) => {
         otp_code: otpCode,
       }
       await cacheOTP(cacheRequest)
-      $alert.success('OTP 已缓存，正在重试批量备份...')
-      // 批量备份重试
-      await submitBatchBackupInternal()
+      const resumeTaskId = otpRequiredInfo.value.task_id || currentBatchTaskId.value
+      if (!resumeTaskId) {
+        $alert.error('任务ID丢失，无法恢复')
+        return
+      }
+      await resumeTaskGroup(resumeTaskId, {
+        dept_id: otpRequiredInfo.value.dept_id,
+        group: otpRequiredInfo.value.device_group,
+      })
+      $alert.success('OTP 已缓存，已发起恢复')
+      startPollingTaskStatus(resumeTaskId)
     } else if (pendingBackupDeviceId.value) {
       // 单设备备份：直接把 otp_code 传给后端备份接口
       await backupDevice(pendingBackupDeviceId.value, { otp_code: otpCode })
@@ -651,8 +708,68 @@ const submitOTP = async (otpCode: string) => {
   } finally {
     otpLoading.value = false
     pendingBackupDeviceId.value = ''
-    pendingBatchBackup.value = false
     otpRequiredInfo.value = null
+    if (otpQueue.value.length > 0) {
+      applyNextOtp()
+      pendingBatchBackup.value = true
+    } else {
+      pendingBatchBackup.value = false
+    }
+  }
+}
+
+const buildOtpKey = (payload: OTPRequiredDetails) =>
+  `${payload.dept_id}|${payload.device_group}|${payload.task_id || ''}`
+
+const applyNextOtp = () => {
+  const next = otpQueue.value.shift()
+  if (!next) return
+  otpRequiredInfo.value = next
+  showOTPModal.value = true
+}
+
+const enqueueOtp = (payload: OTPRequiredDetails) => {
+  const nextKey = buildOtpKey(payload)
+  if (otpQueue.value.some(item => buildOtpKey(item) === nextKey)) return
+  if (otpRequiredInfo.value && buildOtpKey(otpRequiredInfo.value) === nextKey) {
+    if (!showOTPModal.value) {
+      if (otpLoading.value) {
+        otpQueue.value.push(payload)
+      } else {
+        showOTPModal.value = true
+      }
+    }
+    return
+  }
+  if (showOTPModal.value || otpLoading.value) {
+    otpQueue.value.push(payload)
+  } else {
+    otpRequiredInfo.value = payload
+    showOTPModal.value = true
+  }
+  pendingBatchBackup.value = true
+}
+
+const handleOtpTimeout = () => {
+  showOTPModal.value = false
+  otpRequiredInfo.value = null
+  if (otpQueue.value.length > 0) {
+    applyNextOtp()
+    pendingBatchBackup.value = true
+  } else {
+    pendingBatchBackup.value = false
+  }
+}
+
+const handleOtpModalUpdate = (v: boolean) => {
+  showOTPModal.value = v
+  if (v || otpLoading.value) return
+  otpRequiredInfo.value = null
+  if (otpQueue.value.length > 0) {
+    applyNextOtp()
+    pendingBatchBackup.value = true
+  } else {
+    pendingBatchBackup.value = false
   }
 }
 
@@ -691,17 +808,23 @@ const {
       if (otpNotice) {
         stopPollingTaskStatus()
         $alert.warning(otpNotice.message || '部分设备需要 OTP 验证码，请输入以继续')
-        otpRequiredInfo.value = {
+        const payload: OTPRequiredDetails = {
           dept_id: otpNotice.dept_id,
           device_group: otpNotice.device_group,
           failed_devices: otpNotice.failed_devices?.map(d => d.name) || [],
           pending_device_ids: otpNotice.pending_device_ids,
+          task_id: otpNotice.task_id,
+          otp_wait_status: otpNotice.otp_wait_status,
+          otp_wait_timeout: otpNotice.otp_wait_timeout,
+          otp_cache_ttl: otpNotice.otp_cache_ttl,
+        }
+        enqueueOtp(payload)
+        if (otpNotice.task_id) {
+          currentBatchTaskId.value = otpNotice.task_id
         }
         if (otpNotice.pending_device_ids && otpNotice.pending_device_ids.length > 0) {
           batchBackupModel.value.device_ids = otpNotice.pending_device_ids
         }
-        pendingBatchBackup.value = true
-        showOTPModal.value = true
       }
     } else if (status.status === 'failed') {
       $alert.error(`备份失败: ${status.error || '未知错误'}`)
@@ -712,27 +835,18 @@ const {
   },
   onError: (error) => {
     // 捕获 428 OTP_REQUIRED 错误
-    const err = error as { response?: { status?: number; data?: { code?: number; data?: { otp_notice?: OTPRequiredDetails } } } }
-    if (err?.response?.status === 428 || err?.response?.data?.code === 428) {
-      const otpNotice = err.response?.data?.data?.otp_notice
-      if (otpNotice) {
-        stopPollingTaskStatus()
-        $alert.warning(otpNotice.message || '需要输入 OTP 验证码')
-        otpRequiredInfo.value = {
-          dept_id: otpNotice.dept_id,
-          device_group: otpNotice.device_group,
-          failed_devices: otpNotice.failed_devices || [],
-          pending_device_ids: otpNotice.pending_device_ids,
-        }
+    const payload = resolveOtpPayload(error)
+    if (!payload) return
+    stopPollingTaskStatus()
+    $alert.warning(payload.message || '需要输入 OTP 验证码')
+    enqueueOtp(payload)
+    if (payload.task_id) {
+      currentBatchTaskId.value = payload.task_id
+    }
 
-        // 更新待重试设备 ID
-        if (otpNotice.pending_device_ids && otpNotice.pending_device_ids.length > 0) {
-          batchBackupModel.value.device_ids = otpNotice.pending_device_ids
-        }
-
-        pendingBatchBackup.value = true
-        showOTPModal.value = true
-      }
+    // 更新待重试设备 ID
+    if (payload.pending_device_ids && payload.pending_device_ids.length > 0) {
+      batchBackupModel.value.device_ids = payload.pending_device_ids
     }
   },
 })
@@ -748,56 +862,41 @@ const submitBatchBackup = async () => {
     return
   }
 
-  // 1. 预检查：是否有设备需要 OTP 手动认证
-  const otpManualDevices = selectedBatchDevices.value.filter(
-    (d) => d && d.auth_type === 'otp_manual',
-  )
-
-  // 如果发现有需要 OTP 手动认证的设备
-  if (otpManualDevices.length > 0) {
-    // 假设同一批次通常属于同一部门和分组，取第一个设备的属性
-    // 如果不同，这里可能需要更复杂的逻辑（如按组分批提交），当前简化处理
-    const firstDevice = otpManualDevices[0]
-
-    if (firstDevice && (!firstDevice.dept_id || !firstDevice.device_group)) {
-      $alert.error(`设备 ${firstDevice.name} 缺少部门或分组信息，无法进行 OTP 认证`)
-      return
-    }
-
-    if (firstDevice) {
-      otpRequiredInfo.value = {
-        dept_id: firstDevice.dept_id || '',
-        device_group: firstDevice.device_group || '',
-        failed_devices: [],
-      }
-
-      // 设置标记，表示这是一个批量备份的 OTP 流程
-      pendingBatchBackup.value = true
-      showOTPModal.value = true
-      return
-    }
-  }
-
-  // 2. 无需预检或预检通过，直接提交
+  // 直接提交，由后端返回 428 触发 OTP 流程
   otpLoading.value = true
   try {
     await submitBatchBackupInternal()
   } finally {
     otpLoading.value = false
+    if (!showOTPModal.value && otpQueue.value.length > 0) {
+      applyNextOtp()
+      pendingBatchBackup.value = true
+    }
   }
 }
 
 const submitBatchBackupInternal = async () => {
   try {
-    const res = await batchBackup({
-      device_ids: batchBackupModel.value.device_ids,
-      backup_type: batchBackupModel.value.backup_type,
-    })
+    const res = await batchBackup(
+      {
+        device_ids: batchBackupModel.value.device_ids,
+        backup_type: batchBackupModel.value.backup_type,
+      },
+      { skipOtpHandling: true },
+    )
     $alert.success('批量备份任务已提交')
     // 开始轮询任务状态
     startPollingTaskStatus(res.data.task_id)
-  } catch {
-    // 全局拦截器会自动处理 428 OTP
+    currentBatchTaskId.value = res.data.task_id
+  } catch (error) {
+    // 由本地处理 428 OTP
+    const payload = resolveOtpPayload(error)
+    if (!payload) return
+    $alert.warning(payload.message || '需要输入 OTP 验证码')
+    enqueueOtp(payload)
+    if (payload.task_id) {
+      currentBatchTaskId.value = payload.task_id
+    }
   }
 }
 
@@ -805,6 +904,10 @@ const closeBatchBackupModal = () => {
   stopPollingTaskStatus()
   showBatchBackupModal.value = false
   batchBackupModel.value = { device_ids: [], backup_type: 'scheduled' }
+  currentBatchTaskId.value = ''
+  otpQueue.value = []
+  otpRequiredInfo.value = null
+  showOTPModal.value = false
   resetBatchTask()
 }
 
@@ -1007,7 +1110,9 @@ watch(autoRefresh, () => {
     </n-modal>
 
     <!-- OTP 输入 Modal（通用组件） -->
-    <OtpModal v-model:show="showOTPModal" :loading="otpLoading" title="需要 OTP 验证码" alert-title="设备需要 OTP 认证"
+    <OtpModal :show="showOTPModal" :loading="otpLoading" :idle-timeout-ms="otpIdleTimeoutMs"
+      :queue-hint="otpQueueHint"
+      title="需要 OTP 验证码" alert-title="设备需要 OTP 认证"
       alert-text="请输入当前有效的 OTP 验证码以继续操作。" :info-items="otpRequiredInfo
         ? [
           {
@@ -1017,7 +1122,8 @@ watch(autoRefresh, () => {
           },
         ]
         : []
-        " confirm-text="确认" @confirm="submitOTP" />
+        " confirm-text="确认" @confirm="submitOTP" @timeout="handleOtpTimeout"
+      @update:show="handleOtpModalUpdate" />
   </div>
 </template>
 

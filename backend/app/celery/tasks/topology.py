@@ -14,6 +14,7 @@ from uuid import UUID
 from app.celery.app import celery_app
 from app.celery.base import BaseTask, run_async, safe_update_state
 from app.core import cache as cache_module
+from app.core.config import settings
 from app.core.db import AsyncSessionLocal
 from app.core.exceptions import OTPRequiredException
 from app.core.logger import celery_details_logger, celery_task_logger
@@ -105,6 +106,8 @@ def collect_topology(
                     "device_group": e.device_group,
                     "failed_devices": e.failed_devices,
                     "message": e.message,
+                    "otp_wait_timeout": settings.OTP_WAIT_TIMEOUT_SECONDS,
+                    "otp_cache_ttl": settings.OTP_CACHE_TTL_SECONDS,
                 }
 
     return run_async(_collect())
@@ -163,6 +166,8 @@ def collect_device_topology(self, device_id: str) -> dict[str, Any]:
                     "device_group": e.device_group,
                     "failed_devices": e.failed_devices,
                     "message": e.message,
+                    "otp_wait_timeout": settings.OTP_WAIT_TIMEOUT_SECONDS,
+                    "otp_cache_ttl": settings.OTP_CACHE_TTL_SECONDS,
                 }
 
     return run_async(_collect_single())
@@ -233,6 +238,8 @@ def scheduled_topology_refresh(self) -> dict[str, Any]:
                     "skipped_otp_groups": [
                         {"dept_id": e.dept_id_str, "device_group": e.device_group}
                     ],
+                    "otp_wait_timeout": settings.OTP_WAIT_TIMEOUT_SECONDS,
+                    "otp_cache_ttl": settings.OTP_CACHE_TTL_SECONDS,
                 }
 
     return run_async(_refresh())

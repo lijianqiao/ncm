@@ -46,6 +46,7 @@ const service: AxiosInstance = axios.create({
 
 interface RetryAxiosRequestConfig extends AxiosRequestConfig {
   _retry?: boolean
+  skipOtpHandling?: boolean
 }
 
 // 请求取消管理器
@@ -267,6 +268,9 @@ const responseErrorInterceptor = async (error: unknown) => {
 
   // 处理 428 Precondition Required (OTP)
   if (status === 428) {
+    if (originalRequest?.skipOtpHandling) {
+      return Promise.reject(error)
+    }
     return new Promise((resolve, reject) => {
       // 尝试自动处理 428
       const handled = globalOtpFlow.tryHandleOtpRequired(error as AxiosError, async () => {
@@ -313,8 +317,8 @@ const responseErrorInterceptor = async (error: unknown) => {
         subscribeTokenRefresh(
           (newToken: string) => {
             originalRequest.headers = originalRequest.headers || {}
-            ;(originalRequest.headers as Record<string, string>)['Authorization'] =
-              `Bearer ${newToken}`
+              ; (originalRequest.headers as Record<string, string>)['Authorization'] =
+                `Bearer ${newToken}`
             resolve(service(originalRequest))
           },
           (error: Error) => {
@@ -336,7 +340,7 @@ const responseErrorInterceptor = async (error: unknown) => {
       // 更新默认请求头
       service.defaults.headers.common['Authorization'] = `Bearer ${newToken}`
       originalRequest.headers = originalRequest.headers || {}
-      ;(originalRequest.headers as Record<string, string>)['Authorization'] = `Bearer ${newToken}`
+        ; (originalRequest.headers as Record<string, string>)['Authorization'] = `Bearer ${newToken}`
 
       // 通知排队的请求
       onTokenRefreshed(newToken)

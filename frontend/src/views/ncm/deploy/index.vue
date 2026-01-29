@@ -42,6 +42,7 @@ import {
   type DeviceDeployResult,
   type RollbackPreviewResponse,
 } from '@/api/deploy'
+import { resumeTaskGroup } from '@/api/tasks'
 import { getDevice } from '@/api/devices'
 import { getTemplates, getTemplateV2, type Template } from '@/api/templates'
 import { getUsers, type User } from '@/api/users'
@@ -427,6 +428,10 @@ const extractOtpRequiredGroups = (task: DeployTask): OtpRequiredGroup[] => {
   const taskResult = task.result as Record<string, unknown> | undefined
   if (!taskResult || typeof taskResult !== 'object') return []
 
+  if (taskResult.otp_required && typeof taskResult.otp_dept_id === 'string' && typeof taskResult.otp_device_group === 'string') {
+    return [{ dept_id: taskResult.otp_dept_id, device_group: taskResult.otp_device_group as DeviceGroupType }]
+  }
+
   const groups = taskResult.otp_required_groups
   if (!Array.isArray(groups)) return []
 
@@ -447,28 +452,33 @@ const openOtpModal = (task: DeployTask) => {
     $alert.warning('任务需要 OTP，但未返回分组信息')
     return
   }
-  const first = groups[0]!
+  const taskResult = task.result as Record<string, unknown> | undefined
+  const otpWaitTimeout =
+    typeof taskResult?.otp_wait_timeout === 'number' ? (taskResult.otp_wait_timeout as number) : undefined
+  const otpCacheTtl =
+    typeof taskResult?.otp_cache_ttl === 'number' ? (taskResult.otp_cache_ttl as number) : undefined
+  const otpWaitStatus =
+    typeof taskResult?.otp_wait_status === 'string' ? (taskResult.otp_wait_status as string) : undefined
 
-  globalOtpFlow.open(
-    {
-      dept_id: first.dept_id,
-      device_group: first.device_group,
-      failed_devices: [],
-      message: `任务 "${task.name}" 需要 OTP 验证码才能继续执行。`,
-    },
-    async () => {
-      // useOtpFlow 内部已完成 verifyOTP
-      const execRes = await executeDeployTask(task.id)
-      const updatedTask = execRes.data
-      if (updatedTask.status === 'paused') {
-        openOtpModal(updatedTask)
-        return
-      }
-
-      $alert.success('OTP 已提交，下发任务已开始执行')
-      tableRef.value?.reload()
-    },
-  )
+  groups.forEach((group) => {
+    globalOtpFlow.open(
+      {
+        dept_id: group.dept_id,
+        device_group: group.device_group,
+        failed_devices: [],
+        task_id: task.id,
+        otp_wait_status: otpWaitStatus,
+        message: `任务 "${task.name}" 需要 OTP 验证码才能继续执行。`,
+        otp_wait_timeout: otpWaitTimeout,
+        otp_cache_ttl: otpCacheTtl,
+      },
+      async () => {
+        await resumeTaskGroup(task.id, { dept_id: group.dept_id, group: group.device_group })
+        $alert.success('OTP 已提交，任务已恢复')
+        tableRef.value?.reload()
+      },
+    )
+  })
 }
 
 const handleApprove = (row: DeployTask) => {

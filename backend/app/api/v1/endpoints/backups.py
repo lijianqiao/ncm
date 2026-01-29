@@ -10,13 +10,13 @@ from io import BytesIO
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query
-from fastapi.encoders import jsonable_encoder
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from starlette.background import BackgroundTask
 
 from app.api.deps import BackupServiceDep, CurrentUser, SessionDep, require_permissions
 from app.core.config import settings
 from app.core.enums import BackupStatus, BackupType
+from app.core.otp_notice import build_otp_notice_response
 from app.core.permissions import PermissionCode
 from app.features.import_export.backups import export_backups_df
 from app.import_export import ImportExportService, delete_export_file
@@ -36,7 +36,6 @@ from app.schemas.backup import (
 )
 from app.schemas.common import PaginatedResponse, ResponseBase
 from app.schemas.device import DeviceResponse
-
 router = APIRouter(tags=["配置备份"])
 
 
@@ -482,8 +481,7 @@ async def get_backup_task_status(
     status = await service.get_task_status(task_id)
 
     if status.otp_notice:
-        payload = ResponseBase(code=428, message="OTP_REQUIRED", data=status).model_dump()
-        return JSONResponse(status_code=428, content=jsonable_encoder(payload))
+        return build_otp_notice_response(status)
     return ResponseBase(data=status)
 
 

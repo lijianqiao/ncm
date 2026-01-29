@@ -39,6 +39,7 @@ from app.schemas.topology import (
     TopologyStats,
 )
 from app.services.base import DeviceCredentialMixin
+from app.core.otp_helpers import build_otp_required_info, dedupe_otp_groups
 from app.network.platform_config import get_scrapli_platform
 
 # 拓扑缓存键
@@ -120,7 +121,7 @@ class TopologyService(DeviceCredentialMixin):
             failed_device_ids: list[str] = []
 
             # 收集所有需要 OTP 的设备组（避免多次触发 428）
-            otp_required_groups: list[tuple[str, str]] = []  # [(dept_id, device_group), ...]
+            otp_required_groups: list[dict[str, Any]] = []
 
             for device in devices:
                 if not device.ip_address:
@@ -164,9 +165,9 @@ class TopologyService(DeviceCredentialMixin):
 
                 except OTPRequiredException as e:
                     # 收集所有需要 OTP 的设备组，最后统一抛出
-                    group_key = (e.dept_id_str, e.device_group)
-                    if group_key not in otp_required_groups:
-                        otp_required_groups.append(group_key)
+                    otp_required_groups.append(
+                        {"dept_id": e.dept_id_str, "device_group": e.device_group}
+                    )
                     failed_device_ids.append(str(device.id))
                     result.failed_count += 1
                     result.results.append(
@@ -208,13 +209,20 @@ class TopologyService(DeviceCredentialMixin):
 
             # 如果有需要 OTP 的设备组，抛出异常（只返回第一个）
             if otp_required_groups:
-                first_group = otp_required_groups[0]
-                raise OTPRequiredException(
-                    dept_id=first_group[0],
-                    device_group=first_group[1],
-                    failed_devices=failed_device_ids,
-                    message=f"需要输入 OTP 验证码（共 {len(otp_required_groups)} 个设备组需要验证）",
-                )
+                unique_groups = [
+                    group
+                    for group in dedupe_otp_groups(otp_required_groups)
+                    if group.get("dept_id") and group.get("device_group")
+                ]
+                if unique_groups:
+                    first_group = unique_groups[0]
+                    raise OTPRequiredException(
+                        dept_id=str(first_group.get("dept_id")),
+                        device_group=str(first_group.get("device_group")),
+                        failed_devices=failed_device_ids,
+                        message=f"需要输入 OTP 验证码（共 {len(unique_groups)} 个设备组需要验证）",
+                    )
+                logger.warning("OTP 需要验证但缺少部门或设备分组信息", groups=otp_required_groups)
 
             # 报告进度：凭据准备完成
             if progress_callback:
@@ -394,17 +402,41 @@ class TopologyService(DeviceCredentialMixin):
 
         aggregated: dict[str, Any] = {"results": {}, "success": 0, "failed": 0}
         otp_required_info: dict[str, Any] | None = None
+        otp_timeout_device_ids: list[str] = []
 
         for host_name, multi_result in results.items():
             if multi_result.failed:
                 exc = multi_result[0].exception if multi_result else None
-                if isinstance(exc, OTPRequiredException):
-                    otp_required_info = {
-                        "otp_required": True,
-                        "otp_dept_id": str(exc.dept_id) if exc.dept_id else None,
-                        "otp_device_group": exc.device_group,
-                        "otp_failed_device_ids": [str(d) for d in exc.failed_devices] if exc.failed_devices else [],
+                result_data = multi_result[0].result if multi_result else None
+                if result_data and result_data.get("otp_required"):
+                    wait_status = result_data.get("otp_wait_status")
+                    status = "otp_timeout" if wait_status == "timeout" else "otp_required"
+                    aggregated["results"][host_name] = {
+                        "status": status,
+                        "result": None,
+                        "error": result_data.get("error", "需要输入 OTP 验证码"),
                     }
+                    aggregated["failed"] += 1
+                    if wait_status == "timeout":
+                        otp_timeout_device_ids.append(host_name)
+                    if otp_required_info is None and result_data.get("otp_dept_id") and result_data.get("otp_device_group"):
+                        otp_required_info = build_otp_required_info(
+                            dept_id=result_data.get("otp_dept_id"),
+                            device_group=result_data.get("otp_device_group"),
+                            failed_device_ids=result_data.get("otp_failed_device_ids"),
+                            wait_status=wait_status,
+                        )
+                    continue
+                if isinstance(exc, OTPRequiredException):
+                    wait_status = None
+                    if isinstance(exc.details, dict):
+                        wait_status = exc.details.get("otp_wait_status")
+                    otp_required_info = build_otp_required_info(
+                        dept_id=exc.dept_id,
+                        device_group=exc.device_group,
+                        failed_device_ids=exc.failed_devices,
+                        wait_status=wait_status,
+                    )
                 aggregated["results"][host_name] = {
                     "status": "otp_required" if isinstance(exc, OTPRequiredException) else "failed",
                     "result": None,
@@ -430,6 +462,9 @@ class TopologyService(DeviceCredentialMixin):
 
         if otp_required_info:
             aggregated.update(otp_required_info)
+        if otp_timeout_device_ids:
+            aggregated["otp_timeout"] = True
+            aggregated["otp_timeout_device_ids"] = otp_timeout_device_ids
 
         return aggregated
 

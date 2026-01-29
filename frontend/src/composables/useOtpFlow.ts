@@ -10,6 +10,10 @@ export interface OtpRequiredDetails {
   device_group: string
   failed_devices: string[]
   pending_device_ids?: string[]
+  task_id?: string
+  otp_wait_status?: string
+  otp_wait_timeout?: number
+  otp_cache_ttl?: number
 }
 
 type AxiosLikeError = {
@@ -37,6 +41,20 @@ export function useOtpFlow(options?: { length?: number }) {
   const details = ref<OtpRequiredDetails | null>(null)
   const pendingAction = ref<((otpCode: string) => Promise<void>) | null>(null)
   const errorMessage = ref('')
+  const queue = ref<Array<{ details: OtpRequiredDetails; action: (otpCode: string) => Promise<void> }>>([])
+  const queueCount = computed(() => queue.value.length)
+
+  const buildKey = (d: OtpRequiredDetails) => `${d.dept_id}|${d.device_group}|${d.task_id || ''}`
+
+  const applyNext = () => {
+    if (queue.value.length === 0) return
+    const next = queue.value.shift()
+    if (!next) return
+    details.value = next.details
+    pendingAction.value = next.action
+    show.value = true
+    errorMessage.value = ''
+  }
 
   const formatListValue = (value: string | string[]): string => {
     if (Array.isArray(value)) {
@@ -70,11 +88,23 @@ export function useOtpFlow(options?: { length?: number }) {
     return items
   })
 
+  const idleTimeoutMs = computed(() => {
+    const d = details.value
+    const waitSeconds = d?.otp_wait_timeout
+    if (typeof waitSeconds === 'number' && waitSeconds > 0) {
+      return Math.floor(waitSeconds * 1000)
+    }
+    return 60_000
+  })
+
   const open = (nextDetails: OtpRequiredDetails, action: (otpCode: string) => Promise<void>) => {
-    details.value = nextDetails
-    pendingAction.value = action
-    show.value = true
-    errorMessage.value = ''
+    const nextKey = buildKey(nextDetails)
+    if (details.value && buildKey(details.value) === nextKey) return
+    if (queue.value.some(item => buildKey(item.details) === nextKey)) return
+    queue.value.push({ details: nextDetails, action })
+    if (!show.value) {
+      applyNext()
+    }
   }
 
   const close = () => {
@@ -83,6 +113,7 @@ export function useOtpFlow(options?: { length?: number }) {
     details.value = null
     pendingAction.value = null
     errorMessage.value = ''
+    applyNext()
   }
 
   const handleTimeout = () => {
@@ -92,6 +123,7 @@ export function useOtpFlow(options?: { length?: number }) {
     pendingAction.value = null
     errorMessage.value = ''
     $alert.warning('OTP 输入超时，请重新操作')
+    applyNext()
   }
 
   const extractOtpRequiredDetails = (error: unknown): OtpRequiredDetails | null => {
@@ -108,6 +140,10 @@ export function useOtpFlow(options?: { length?: number }) {
       dept_id?: string
       device_group?: string
       failed_devices?: string[]
+      task_id?: string
+      otp_wait_status?: string
+      otp_wait_timeout?: number
+      otp_cache_ttl?: number
     } | undefined
 
     if (details && details.dept_id && details.device_group) {
@@ -116,6 +152,10 @@ export function useOtpFlow(options?: { length?: number }) {
         device_group: details.device_group,
         failed_devices: details.failed_devices || [],
         message: err?.response?.data?.message || '需要 OTP 验证',
+        task_id: details.task_id,
+        otp_wait_status: details.otp_wait_status,
+        otp_wait_timeout: details.otp_wait_timeout,
+        otp_cache_ttl: details.otp_cache_ttl,
       }
     }
 
@@ -126,18 +166,20 @@ export function useOtpFlow(options?: { length?: number }) {
       device_group?: string
       failed_devices?: string[]
       otp_required?: boolean
+      task_id?: string
+      otp_wait_status?: string
     } | undefined
 
     if (data?.otp_required_groups && data.otp_required_groups.length > 0) {
-       const first = data.otp_required_groups[0]
-       if (first) {
-         return {
-           dept_id: first.dept_id,
-           device_group: first.device_group,
-           failed_devices: [],
-           message: err?.response?.data?.message || '回滚需要输入 OTP',
-         }
-       }
+      const first = data.otp_required_groups[0]
+      if (first) {
+        return {
+          dept_id: first.dept_id,
+          device_group: first.device_group,
+          failed_devices: [],
+          message: err?.response?.data?.message || '回滚需要输入 OTP',
+        }
+      }
     }
 
     // 3. 尝试从 data 直接获取
@@ -147,6 +189,10 @@ export function useOtpFlow(options?: { length?: number }) {
         device_group: data.device_group,
         failed_devices: data.failed_devices || [],
         message: err?.response?.data?.message || '需要 OTP 验证',
+        task_id: (data as { task_id?: string }).task_id,
+        otp_wait_status: (data as { otp_wait_status?: string }).otp_wait_status,
+        otp_wait_timeout: (data as { otp_wait_timeout?: number }).otp_wait_timeout,
+        otp_cache_ttl: (data as { otp_cache_ttl?: number }).otp_cache_ttl,
       }
     }
 
@@ -160,6 +206,10 @@ export function useOtpFlow(options?: { length?: number }) {
         device_group: otpNotice.device_group,
         failed_devices: otpNotice.failed_devices || [],
         pending_device_ids: otpNotice.pending_device_ids,
+        task_id: otpNotice.task_id,
+        otp_wait_status: otpNotice.otp_wait_status,
+        otp_wait_timeout: otpNotice.otp_wait_timeout,
+        otp_cache_ttl: otpNotice.otp_cache_ttl,
       }
     }
 
@@ -210,6 +260,7 @@ export function useOtpFlow(options?: { length?: number }) {
         await action(otpCode.trim())
         // 执行完后再清空
         pendingAction.value = null
+        applyNext()
       }
     } catch (error: unknown) {
       const err = error as AxiosLikeError
@@ -260,6 +311,8 @@ export function useOtpFlow(options?: { length?: number }) {
     details,
     infoItems,
     errorMessage,
+    idleTimeoutMs,
+    queueCount,
     open,
     close,
     confirm,

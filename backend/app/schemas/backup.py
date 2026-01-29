@@ -131,6 +131,10 @@ class OTPNotice(BaseModel):
     dept_id: UUID | None = Field(default=None, description="需要 OTP 的部门ID")
     device_group: str | None = Field(default=None, description="需要 OTP 的设备分组")
     pending_device_ids: list[UUID] | None = Field(default=None, description="待继续处理的设备ID列表")
+    task_id: str | None = Field(default=None, description="批量任务ID")
+    otp_wait_status: str | None = Field(default=None, description="等待状态 waiting/timeout")
+    otp_wait_timeout: int | None = Field(default=None, description="等待 OTP 超时时间（秒）")
+    otp_cache_ttl: int | None = Field(default=None, description="OTP 缓存有效期（秒）")
 
 
 class BackupTaskStatus(BaseModel):

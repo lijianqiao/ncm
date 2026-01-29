@@ -12,9 +12,11 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.core.decorator import transactional
 from app.core.enums import ApprovalStatus, AuthType, DeviceStatus, TaskStatus, TaskType, TemplateStatus
 from app.core.exceptions import BadRequestException, ForbiddenException, NotFoundException
+from app.core.otp import otp_coordinator
 from app.core.otp_service import otp_service
 from app.crud.crud_credential import CRUDCredential
 from app.crud.crud_device import CRUDDevice
@@ -31,6 +33,7 @@ from app.schemas.deploy import (
     RollbackPreviewResponse,
 )
 from app.services.base import BaseService
+from app.core.otp_helpers import build_otp_required_task_result, dedupe_otp_groups
 from app.services.render_service import RenderService
 
 
@@ -262,24 +265,16 @@ class DeployService(BaseService):
             raise BadRequestException(f"不支持的认证类型: {device.auth_type}")
 
         if otp_required_groups:
-            # 去重 + 保持顺序
-            seen: set[tuple[str, str]] = set()
-            unique_groups: list[dict] = []
-            for g in otp_required_groups:
-                key = (g["dept_id"], g["device_group"])
-                if key in seen:
-                    continue
-                seen.add(key)
-                unique_groups.append(g)
+            unique_groups = dedupe_otp_groups(otp_required_groups)
 
             task.status = TaskStatus.PAUSED.value
             task.error_message = f"需要输入 OTP（共 {len(unique_groups)} 个设备分组）"
-            task.result = {
-                "otp_required": True,
-                "otp_required_groups": unique_groups,
-                "expires_in": 60,
-                "next_action": "cache_otp_and_retry_execute",
-            }
+            task.result = build_otp_required_task_result(
+                unique_groups,
+                next_action="cache_otp_and_retry_execute",
+                wait_status="waiting",
+                task_id=str(task.id),
+            )
             await self.db.flush()
             await self.db.refresh(task)
             task_with_related = await self.task_crud.get(self.db, task.id, options=self.task_crud.RELATED_OPTIONS)
@@ -298,6 +293,8 @@ class DeployService(BaseService):
         task.celery_task_id = celery_result.id
         task.status = TaskStatus.RUNNING.value
         task.started_at = datetime.now(UTC)
+
+        await otp_coordinator.registry.create_batch(str(task_id), {"task_type": "deploy"})
 
         await self.db.flush()
         await self.db.refresh(task)
@@ -570,25 +567,16 @@ class DeployService(BaseService):
                         )
 
                 if otp_required_groups:
-                    # 去重 + 保持顺序
-                    seen: set[tuple[str, str]] = set()
-                    unique_groups: list[dict] = []
-                    for g in otp_required_groups:
-                        key = (g["dept_id"], g["device_group"])
-                        if key in seen:
-                            continue
-                        seen.add(key)
-                        unique_groups.append(g)
+                    unique_groups = dedupe_otp_groups(otp_required_groups)
 
                     task.status = TaskStatus.PAUSED.value
                     task.error_message = f"回滚需要输入 OTP（共 {len(unique_groups)} 个设备分组）"
-                    task.result = {
-                        **(task.result if isinstance(task.result, dict) else {}),
-                        "otp_required": True,
-                        "otp_required_groups": unique_groups,
-                        "expires_in": 60,
-                        "next_action": "cache_otp_and_retry_rollback",
-                    }
+                    task.result = build_otp_required_task_result(
+                        unique_groups,
+                        next_action="cache_otp_and_retry_rollback",
+                        wait_status="waiting",
+                        existing=task.result if isinstance(task.result, dict) else None,
+                    )
                     await self.db.flush()
                     await self.db.refresh(task)
 
@@ -896,9 +884,51 @@ class DeployService(BaseService):
         task.started_at = datetime.now(UTC)
         task.finished_at = None
 
+        await otp_coordinator.registry.create_batch(str(task_id), {"task_type": "deploy"})
+
         await self.db.flush()
         await self.db.refresh(task)
         task_with_related = await self.task_crud.get(self.db, task.id, options=self.task_crud.RELATED_OPTIONS)
         if not task_with_related:
             raise NotFoundException("任务不存在")
         return task_with_related
+
+    @transactional()
+    async def resume_task_by_device_ids(self, task_id: UUID, device_ids: list[UUID]) -> Task:
+        """按指定设备列表恢复任务执行。"""
+        task = await self.get_task(task_id)
+        if not device_ids:
+            raise BadRequestException("没有可恢复的设备")
+
+        task.target_devices = {"device_ids": [str(x) for x in device_ids]}
+        task.total_devices = len(device_ids)
+        task.success_count = 0
+        task.failed_count = 0
+        task.progress = 0
+        task.error_message = None
+
+        from app.celery.tasks.deploy import async_deploy_task
+
+        celery_result = async_deploy_task.delay(task_id=str(task_id))  # type: ignore[attr-defined]
+        task.celery_task_id = celery_result.id
+        task.status = TaskStatus.RUNNING.value
+        task.started_at = datetime.now(UTC)
+        task.finished_at = None
+
+        await otp_coordinator.registry.create_batch(str(task_id), {"task_type": "deploy"})
+
+        await self.db.flush()
+        await self.db.refresh(task)
+        task_with_related = await self.task_crud.get(self.db, task.id, options=self.task_crud.RELATED_OPTIONS)
+        if not task_with_related:
+            raise NotFoundException("任务不存在")
+        return task_with_related
+
+    async def get_group_device_ids(self, task_id: UUID, dept_id: UUID, device_group: str) -> list[UUID]:
+        """按部门+分组获取任务内待恢复设备列表。"""
+        task = await self.get_task(task_id)
+        target_ids = self._get_target_device_ids(task)
+        if not target_ids:
+            return []
+        devices = await self.device_crud.get_by_ids(self.db, target_ids, options=self.device_crud._DEVICE_OPTIONS)
+        return [d.id for d in devices if d.dept_id == dept_id and str(d.device_group) == str(device_group)]

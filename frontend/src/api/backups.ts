@@ -85,6 +85,10 @@ export interface OTPNotice {
   device_group: string
   failed_devices?: Array<{ name: string; error: string }>
   pending_device_ids?: string[]
+  task_id?: string
+  otp_wait_status?: string
+  otp_wait_timeout?: number
+  otp_cache_ttl?: number
 }
 
 /** 批量备份结果 */
@@ -263,11 +267,17 @@ export function backupDevice(
 }
 
 /** 批量备份设备 */
-export function batchBackup(data: BatchBackupRequest) {
+export function batchBackup(
+  data: BatchBackupRequest,
+  options?: {
+    skipOtpHandling?: boolean
+  },
+) {
   return request<ResponseBase<BackupBatchResult>>({
     url: '/backups/batch',
     method: 'post',
     data,
+    skipOtpHandling: options?.skipOtpHandling ?? false,
   })
 }
 
@@ -276,6 +286,7 @@ export function getBackupTaskStatus(taskId: string) {
   return request<ResponseBase<BackupTaskStatus>>({
     url: `/backups/task/${taskId}`,
     method: 'get',
+    skipOtpHandling: true,
   })
 }
 

@@ -25,6 +25,12 @@ const otpLoading = computed(() => globalOtpFlow.loading.value)
 const otpInfoItems = computed(() => globalOtpFlow.infoItems.value)
 const otpAlertText = computed(() => globalOtpFlow.details.value?.message)
 const otpErrorMessage = computed(() => globalOtpFlow.errorMessage.value)
+const otpIdleTimeoutMs = computed(() => globalOtpFlow.idleTimeoutMs.value)
+const otpQueueHint = computed(() => {
+  const count = globalOtpFlow.queueCount.value
+  if (!count) return ''
+  return count === 1 ? '还有下一组 OTP 待输入' : `还有 ${count} 组 OTP 待输入`
+})
 </script>
 
 <template>
@@ -57,8 +63,8 @@ const otpErrorMessage = computed(() => globalOtpFlow.errorMessage.value)
           <GlobalAlerts />
           <router-view />
           <!-- v-if 控制渲染，:show 始终为 true 避免动画竞态 -->
-          <OtpModal v-if="otpShow" :show="true" :loading="otpLoading"
-            :info-items="otpInfoItems" :alert-text="otpAlertText"
+          <OtpModal v-if="otpShow" :show="true" :loading="otpLoading" :idle-timeout-ms="otpIdleTimeoutMs"
+            :info-items="otpInfoItems" :alert-text="otpAlertText" :queue-hint="otpQueueHint"
             :error-message="otpErrorMessage" @update:show="(v) => !v && globalOtpFlow.close()"
             @confirm="globalOtpFlow.confirm" @timeout="globalOtpFlow.handleTimeout" />
         </n-notification-provider>

@@ -12,7 +12,8 @@ from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 
 from app.api.deps import CollectServiceDep, CurrentUser, require_permissions
-from app.core.otp_notice import build_otp_required_response, is_otp_error_text
+from app.core.otp_helpers import extract_otp_failed_device_ids
+from app.core.otp_notice import build_otp_required_response, build_otp_required_response_for_failed_devices, is_otp_error_text
 from app.core.permissions import PermissionCode
 from app.schemas.collect import (
     ARPTableResponse,
@@ -102,13 +103,9 @@ async def batch_collect(
     """
     result = await service.batch_collect(request)
 
-    failed_otp_device_ids = [
-        str(item.device_id) for item in result.results if (not item.success) and is_otp_error_text(item.error_message)
-    ]
+    failed_otp_device_ids = extract_otp_failed_device_ids(result.results)
     if failed_otp_device_ids:
-        return build_otp_required_response(
-            details={"otp_required": True, "failed_devices": failed_otp_device_ids},
-        )
+        return build_otp_required_response_for_failed_devices(failed_otp_device_ids)
 
     return ResponseBase(
         data=result,
@@ -194,15 +191,9 @@ async def get_task_status(task_id: str) -> ResponseBase[CollectTaskStatus] | JSO
     if result.ready():
         if result.successful():
             status.result = CollectResult(**result.result)
-            failed_otp_device_ids = [
-                str(item.device_id)
-                for item in status.result.results
-                if (not item.success) and is_otp_error_text(item.error_message)
-            ]
+            failed_otp_device_ids = extract_otp_failed_device_ids(status.result.results)
             if failed_otp_device_ids:
-                return build_otp_required_response(
-                    details={"otp_required": True, "failed_devices": failed_otp_device_ids},
-                )
+                return build_otp_required_response_for_failed_devices(failed_otp_device_ids)
         else:
             status.error = str(result.result)
             if is_otp_error_text(status.error):

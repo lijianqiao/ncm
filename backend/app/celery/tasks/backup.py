@@ -26,6 +26,7 @@ from app.core.enums import AlertSeverity, AlertType, AuthType, BackupStatus, Bac
 from app.core.exceptions import OTPRequiredException
 from app.core.logger import celery_details_logger, celery_task_logger
 from app.core.minio_client import delete_object, put_text
+from app.core.otp import otp_coordinator
 from app.core.otp_service import otp_service
 from app.crud.crud_alert import alert_crud
 from app.crud.crud_backup import backup as backup_crud
@@ -192,34 +193,39 @@ def _convert_async_results_to_summary(
     # OTP 相关跟踪（仅在 include_otp_info=True 时使用）
     otp_required_info: dict[str, Any] | None = None
     otp_failed_device_ids: list[str] = []
-    otp_timeout_device_ids: list[str] = []
     completed_device_ids: list[str] = []
-    skipped_device_ids: list[str] = []
 
-    # 构建 device_id -> name 映射（仅在 include_otp_info=True 且有 hosts_data 时）
-    id_to_name: dict[str, str] = {}
-    name_to_id: dict[str, str] = {}
-    if include_otp_info and hosts_data:
+    # 构建 host_key -> 元信息 映射（用于显示名称/设备ID）
+    host_meta: dict[str, dict[str, str]] = {}
+    if hosts_data:
         for h in hosts_data:
             host_name_val = h.get("name")
-            device_id_val = h.get("device_id")
-            if host_name_val and isinstance(host_name_val, str):
-                id_to_name[host_name_val] = host_name_val
-                if device_id_val:
-                    name_to_id[host_name_val] = str(device_id_val)
-                    id_to_name[str(device_id_val)] = host_name_val
+            if not host_name_val:
+                continue
+            host_key = str(host_name_val)
+            data = h.get("data") or {}
+            device_id_val = h.get("device_id") or data.get("device_id")
+            device_name_val = data.get("device_name") or h.get("device_name") or host_key
+            meta: dict[str, str] = {"device_name": str(device_name_val)}
+            if device_id_val:
+                meta["device_id"] = str(device_id_val)
+            host_meta[host_key] = meta
 
     for host_name, multi_result in results.items():
         # 尝试映射回设备名（如果有映射），确保 name 为 str
         host_key = str(host_name) if host_name else "unknown"
-        name: str = id_to_name.get(host_key, host_key) if id_to_name else host_key
-        device_id = name_to_id.get(name) if name_to_id else None
+        meta = host_meta.get(host_key, {})
+        device_id = meta.get("device_id")
+        device_name = meta.get("device_name") or host_key
 
         if not multi_result or multi_result.failed:
             failed_count += 1
             error_msg = "Unknown error"
             otp_required: OTPRequiredException | None = None
-            is_otp_timeout = False
+            is_otp_required = False
+            otp_wait_status = None
+            otp_dept_id = None
+            otp_device_group = None
 
             if multi_result and len(multi_result) > 0:
                 r = multi_result[0]
@@ -227,46 +233,54 @@ def _convert_async_results_to_summary(
 
                 # 检查 OTP 相关状态
                 if include_otp_info:
-                    if result_data.get("otp_timeout"):
-                        is_otp_timeout = True
-                        error_msg = result_data.get("error", "等待 OTP 超时")
-                        if device_id:
-                            otp_timeout_device_ids.append(str(device_id))
-                        if result_data.get("skipped") and device_id:
-                            skipped_device_ids.append(str(device_id))
+                    if result_data.get("otp_required"):
+                        is_otp_required = True
+                        otp_wait_status = result_data.get("otp_wait_status")
+                        if otp_wait_status == "timeout":
+                            error_msg = result_data.get("error", "用户未提供 OTP 验证码，连接失败")
+                        else:
+                            error_msg = result_data.get("error", "需要输入 OTP 验证码")
+                    if result_data.get("otp_dept_id"):
+                        otp_dept_id = result_data.get("otp_dept_id")
+                    if result_data.get("otp_device_group"):
+                        otp_device_group = result_data.get("otp_device_group")
 
                 if r.exception:
                     error_msg = str(r.exception)
                     if include_otp_info and isinstance(r.exception, OTPRequiredException):
                         otp_required = r.exception
+                        if isinstance(r.exception.details, dict):
+                            otp_wait_status = r.exception.details.get("otp_wait_status") or otp_wait_status
+                            otp_dept_id = r.exception.details.get("dept_id") or otp_dept_id
+                            otp_device_group = r.exception.details.get("device_group") or otp_device_group
 
-            if include_otp_info and is_otp_timeout:
-                results_dict[name] = {
-                    "status": "otp_timeout",
-                    "error": error_msg,
-                    "result": None,
-                }
-            elif include_otp_info and otp_required is not None:
-                results_dict[name] = {
+            if include_otp_info and (otp_required is not None or is_otp_required):
+                results_dict[host_key] = {
                     "status": "otp_required",
                     "error": error_msg,
                     "result": None,
-                    "otp_dept_id": str(otp_required.dept_id),
-                    "otp_device_group": otp_required.device_group,
+                    "device_id": device_id,
+                    "device_name": device_name,
+                    "otp_dept_id": str(otp_required.dept_id) if otp_required else otp_dept_id,
+                    "otp_device_group": otp_required.device_group if otp_required else otp_device_group,
+                    "otp_wait_status": otp_wait_status,
                 }
                 if device_id:
                     otp_failed_device_ids.append(str(device_id))
                 if otp_required_info is None:
                     otp_required_info = {
                         "otp_required": True,
-                        "otp_dept_id": str(otp_required.dept_id),
-                        "otp_device_group": otp_required.device_group,
+                        "otp_dept_id": str(otp_required.dept_id) if otp_required else otp_dept_id,
+                        "otp_device_group": otp_required.device_group if otp_required else otp_device_group,
+                        "otp_wait_status": otp_wait_status,
                     }
             else:
-                results_dict[name] = {
+                results_dict[host_key] = {
                     "status": "failed",
                     "error": error_msg,
                     "result": None,
+                    "device_id": device_id,
+                    "device_name": device_name,
                 }
         else:
             result_data = multi_result[0].result if multi_result else None
@@ -276,17 +290,21 @@ def _convert_async_results_to_summary(
                 success_count += 1
                 if include_otp_info and device_id:
                     completed_device_ids.append(str(device_id))
-                results_dict[name] = {
+                results_dict[host_key] = {
                     "status": "success",
                     "result": result_data.get("config") if result_data else None,
                     "error": None,
+                    "device_id": device_id,
+                    "device_name": device_name,
                 }
             else:
                 failed_count += 1
-                results_dict[name] = {
+                results_dict[host_key] = {
                     "status": "failed",
                     "result": None,
                     "error": result_data.get("error") if result_data else "Unknown error",
+                    "device_id": device_id,
+                    "device_name": device_name,
                 }
 
     # 构建汇总结果
@@ -301,12 +319,6 @@ def _convert_async_results_to_summary(
     if include_otp_info:
         summary["otp_failed_device_ids"] = otp_failed_device_ids
         summary["completed_device_ids"] = completed_device_ids
-
-        if otp_timeout_device_ids:
-            summary["otp_timeout"] = True
-            summary["otp_timeout_device_ids"] = otp_timeout_device_ids
-            summary["skipped_device_ids"] = skipped_device_ids
-
         if otp_required_info:
             summary.update(otp_required_info)
 
@@ -333,8 +345,9 @@ async def _save_backup_results(
 
             effective_operator_id = operator_id or host.get("operator_id")
 
-            name = host.get("name", host.get("hostname"))
-            result = summary.get("results", {}).get(name, {})
+            host_key = host.get("name") or host.get("hostname")
+            display_name = (host.get("data") or {}).get("device_name") or host.get("device_name") or host_key
+            result = summary.get("results", {}).get(host_key, {})
             status = result.get("status", "unknown")
             error_message = result.get("error") if status != "success" else None
             if status == "otp_required" or (
@@ -345,7 +358,7 @@ async def _save_backup_results(
                 celery_details_logger.info(
                     "OTP 过期导致备份暂停，跳过记录",
                     device_id=device_id,
-                    device_name=name,
+                    device_name=display_name,
                 )
                 continue
             config_content = result.get("result") if status == "success" else None
@@ -731,7 +744,7 @@ async def _get_devices_for_scheduled_backup() -> tuple[list[dict], list[str]]:
 
                 hosts_data.append(
                     {
-                        "name": device.name,
+                        "name": str(device.id),
                         "hostname": device.ip_address,
                         "platform": device.platform or device.vendor,
                         "username": username,
@@ -884,8 +897,9 @@ async def _perform_incremental_check(task, celery_task_id: str | None) -> dict[s
             if not device_id:
                 continue
 
-            name = host.get("name")
-            result = summary.get("results", {}).get(name, {})
+            host_key = host.get("name")
+            display_name = (host.get("data") or {}).get("device_name") or host_key
+            result = summary.get("results", {}).get(host_key, {})
 
             if result.get("status") != "success":
                 continue
@@ -906,7 +920,7 @@ async def _perform_incremental_check(task, celery_task_id: str | None) -> dict[s
                 changed_devices.append(
                     {
                         "device_id": device_id,
-                        "device_name": name,
+                        "device_name": display_name,
                         "old_md5": old_md5,
                         "new_md5": new_md5,
                         "config": config,
@@ -1074,7 +1088,14 @@ def async_backup_devices(
         total_hosts = len(inventory.hosts)  # 更新为实际 inventory 数量
         progress_lock = asyncio.Lock()
         completed = 0
-        name_to_id = {h.get("name"): h.get("device_id") for h in hosts_data if h.get("name")}
+        name_to_id: dict[str, str] = {}
+        for host in hosts_data:
+            host_name = host.get("name")
+            if not host_name:
+                continue
+            device_id_val = host.get("device_id") or (host.get("data") or {}).get("device_id")
+            if device_id_val:
+                name_to_id[str(host_name)] = str(device_id_val)
         otp_notice_sent = False
 
         # 关键：在主线程中预先获取 task_id，避免在后台线程中访问 self.request
@@ -1090,24 +1111,38 @@ def async_backup_devices(
                 otp_notice_sent = True
                 device_id = name_to_id.get(host_name)
                 otp_exc = _result.exception
-                otp_meta = {
-                    "otp_required": True,
-                    "otp_dept_id": str(otp_exc.dept_id),
-                    "otp_device_group": otp_exc.device_group,
-                    "otp_failed_device_ids": [str(device_id)] if device_id else [],
-                }
-                await safe_update_state_async(
-                    celery_task,
-                    celery_task_id,
-                    state="PROGRESS",
-                    meta={
-                        "stage": "otp_required",
-                        "message": "需要重新输入 OTP 验证码",
-                        "completed": completed,
-                        "total": total_hosts,
-                        **otp_meta,
-                    },
-                )
+                try:
+                    can_notify = await otp_coordinator.should_notify_group(
+                        otp_exc.dept_id,
+                        str(otp_exc.device_group),
+                        task_id=celery_task_id,
+                        pending_device_ids=[str(device_id)] if device_id else None,
+                    )
+                except Exception:
+                    can_notify = True
+                if can_notify:
+                    wait_status = None
+                    if isinstance(otp_exc.details, dict):
+                        wait_status = otp_exc.details.get("otp_wait_status")
+                    otp_meta = {
+                        "otp_required": True,
+                        "otp_dept_id": str(otp_exc.dept_id),
+                        "otp_device_group": otp_exc.device_group,
+                        "otp_failed_device_ids": [str(device_id)] if device_id else [],
+                        "otp_wait_status": wait_status,
+                    }
+                    await safe_update_state_async(
+                        celery_task,
+                        celery_task_id,
+                        state="PROGRESS",
+                        meta={
+                            "stage": "otp_required",
+                            "message": "需要重新输入 OTP 验证码",
+                            "completed": completed,
+                            "total": total_hosts,
+                            **otp_meta,
+                        },
+                    )
 
             async with progress_lock:
                 completed += 1
@@ -1153,7 +1188,6 @@ def async_backup_devices(
                 async_collect_config,
                 num_workers=num_workers,
                 progress_callback=_progress_callback,
-                otp_wait_timeout=settings.OTP_WAIT_TIMEOUT_SECONDS,
             )
         )
 

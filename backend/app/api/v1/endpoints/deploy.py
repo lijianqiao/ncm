@@ -25,7 +25,11 @@ from fastapi.responses import JSONResponse
 from app.api import deps
 from app.api.deps import CurrentUser, DeployServiceDep, require_permissions
 from app.core.enums import TaskStatus
-from app.core.otp_notice import build_otp_required_response
+from app.core.otp_notice import (
+    build_otp_required_response,
+    build_otp_required_response_from_result,
+    build_otp_timeout_response,
+)
 from app.core.permissions import PermissionCode
 from app.schemas.common import (
     BatchDeleteRequest,
@@ -254,16 +258,12 @@ async def get_deploy_task(task_id: UUID, service: DeployServiceDep) -> ResponseB
     task = await service.get_task(task_id)
     data = DeployTaskResponse.model_validate(task)
     data.device_results = await service.get_device_results(task)
-    if data.result and data.result.get("otp_required"):
-        return build_otp_required_response(
-            message=data.error_message or "需要重新输入 OTP 验证码",
-            details={
-                "otp_required": True,
-                "otp_required_groups": data.result.get("otp_required_groups"),
-                "expires_in": data.result.get("expires_in"),
-                "next_action": data.result.get("next_action"),
-            },
-        )
+    required_response = build_otp_required_response_from_result(data.result, message=data.error_message)
+    if required_response:
+        return required_response
+    timeout_response = build_otp_timeout_response(data.result)
+    if timeout_response:
+        return timeout_response
     return ResponseBase(data=data)
 
 
@@ -351,16 +351,15 @@ async def execute_task(task_id: UUID, service: DeployServiceDep) -> ResponseBase
     """
     task = await service.execute_task(task_id)
     task_response = DeployTaskResponse.model_validate(task)
-    if task_response.result and task_response.result.get("otp_required"):
-        return build_otp_required_response(
-            message=task_response.error_message or "需要重新输入 OTP 验证码",
-            details={
-                "otp_required": True,
-                "otp_required_groups": task_response.result.get("otp_required_groups"),
-                "expires_in": task_response.result.get("expires_in"),
-                "next_action": task_response.result.get("next_action"),
-            },
-        )
+    required_response = build_otp_required_response_from_result(
+        task_response.result,
+        message=task_response.error_message,
+    )
+    if required_response:
+        return required_response
+    timeout_response = build_otp_timeout_response(task_response.result)
+    if timeout_response:
+        return timeout_response
     return ResponseBase(data=task_response)
 
 
@@ -469,16 +468,15 @@ async def preview_rollback(
     if result.summary == "需要输入 OTP 验证码":
         # 获取任务的 OTP 详情
         task = await service.get_task(task_id)
-        if task.result and isinstance(task.result, dict) and task.result.get("otp_required"):
-            return build_otp_required_response(
-                message=task.error_message or "回滚预检需要输入 OTP 验证码",
-                details={
-                    "otp_required": True,
-                    "otp_required_groups": task.result.get("otp_required_groups"),
-                    "expires_in": task.result.get("expires_in"),
-                    "next_action": "cache_otp_and_retry_preview",
-                },
-            )
+        required_response = build_otp_required_response_from_result(
+            task.result,
+            message=task.error_message or "回滚预检需要输入 OTP 验证码",
+        )
+        if required_response:
+            return required_response
+        timeout_response = build_otp_timeout_response(task.result)
+        if timeout_response:
+            return timeout_response
 
     return ResponseBase(data=result)
 
@@ -513,16 +511,15 @@ async def rollback_task(
     task = await service.validate_rollback(task_id)
 
     # 检查是否需要 OTP
-    if task.result and isinstance(task.result, dict) and task.result.get("otp_required"):
-        return build_otp_required_response(
-            message=task.error_message or "回滚需要输入 OTP 验证码",
-            details={
-                "otp_required": True,
-                "otp_required_groups": task.result.get("otp_required_groups"),
-                "expires_in": task.result.get("expires_in"),
-                "next_action": task.result.get("next_action"),
-            },
-        )
+    required_response = build_otp_required_response_from_result(
+        task.result,
+        message=task.error_message or "回滚需要输入 OTP 验证码",
+    )
+    if required_response:
+        return required_response
+    timeout_response = build_otp_timeout_response(task.result)
+    if timeout_response:
+        return timeout_response
 
     from app.celery.tasks.deploy import rollback_task
 

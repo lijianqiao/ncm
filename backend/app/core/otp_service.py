@@ -22,14 +22,9 @@ from app.core.encryption import decrypt_otp_seed, decrypt_password
 from app.core.enums import AuthType
 from app.core.exceptions import DeviceCredentialNotFoundException, OTPRequiredException
 from app.core.logger import logger
+from app.core.otp import otp_coordinator
+from app.core.otp.storage import otp_cache_key
 from app.schemas.credential import DeviceCredential
-
-# OTP 缓存配置
-OTP_CACHE_PREFIX = "ncm:otp"
-OTP_CACHE_TTL = settings.OTP_CACHE_TTL_SECONDS
-
-redis_client = None
-
 
 class OTPService:
     """
@@ -38,7 +33,7 @@ class OTPService:
     提供 TOTP 验证码生成、OTP 缓存管理、设备凭据获取等功能。
     """
 
-    def __init__(self, cache_ttl: int = OTP_CACHE_TTL):
+    def __init__(self, cache_ttl: int = settings.OTP_CACHE_TTL_SECONDS):
         """
         初始化 OTP 服务。
 
@@ -90,11 +85,6 @@ class OTPService:
             return str(device_group.value)
         return str(device_group)
 
-    def _get_cache_key(self, dept_id: UUID, device_group: str | Enum) -> str:
-        """生成 OTP 缓存键。"""
-        device_group_value = self._normalize_device_group(device_group)
-        return f"{OTP_CACHE_PREFIX}:{dept_id}:{device_group_value}"
-
     async def cache_otp(
         self,
         dept_id: UUID,
@@ -117,20 +107,7 @@ class OTPService:
             - TTL: 由配置项控制
             - 同一部门下不同设备分组的 OTP 相互隔离
         """
-        client = redis_client or cache_module.redis_client
-        if client is None:
-            logger.warning("Redis 未连接，OTP 缓存功能不可用")
-            return 0
-
-        cache_key = self._get_cache_key(dept_id, device_group)
-
-        try:
-            await client.setex(cache_key, self.cache_ttl, otp_code)
-            logger.info(f"OTP 已缓存: {cache_key}, TTL={self.cache_ttl}s")
-            return self.cache_ttl
-        except Exception as e:
-            logger.error(f"OTP 缓存失败: {e}")
-            return 0
+        return await otp_coordinator.cache_otp(dept_id, self._normalize_device_group(device_group), otp_code)
 
     async def get_cached_otp(self, dept_id: UUID, device_group: str | Enum) -> str | None:
         """
@@ -143,20 +120,7 @@ class OTPService:
         Returns:
             缓存的 OTP 验证码，不存在或过期返回 None
         """
-        client = redis_client or cache_module.redis_client
-        if client is None:
-            return None
-
-        cache_key = self._get_cache_key(dept_id, device_group)
-
-        try:
-            otp_code = await client.get(cache_key)
-            if otp_code:
-                logger.debug(f"OTP 缓存命中: {cache_key}")
-            return otp_code
-        except Exception as e:
-            logger.error(f"OTP 缓存读取失败: {e}")
-            return None
+        return await otp_coordinator.get_cached_otp(dept_id, self._normalize_device_group(device_group))
 
     async def get_otp_ttl(self, dept_id: UUID, device_group: str | Enum) -> int:
         """
@@ -169,15 +133,12 @@ class OTPService:
         Returns:
             剩余秒数，不存在返回 -2，无过期时间返回 -1
         """
-        client = redis_client or cache_module.redis_client
+        client = cache_module.redis_client
         if client is None:
             return -2
-
-        cache_key = self._get_cache_key(dept_id, device_group)
-
+        cache_key = otp_cache_key(dept_id, self._normalize_device_group(device_group))
         try:
-            ttl = await client.ttl(cache_key)
-            return ttl
+            return await client.ttl(cache_key)
         except Exception as e:
             logger.error(f"获取 OTP TTL 失败: {e}")
             return -2
@@ -193,78 +154,9 @@ class OTPService:
         Returns:
             是否成功删除
         """
-        client = redis_client or cache_module.redis_client
-        if client is None:
-            return False
-
-        cache_key = self._get_cache_key(dept_id, device_group)
-
-        try:
-            deleted = await client.delete(cache_key)
-            if deleted:
-                logger.info(f"OTP 缓存已失效: {cache_key}")
-            return bool(deleted)
-        except Exception as e:
-            logger.error(f"OTP 缓存失效失败: {e}")
-            return False
-
-    async def wait_for_otp(
-        self,
-        dept_id: UUID,
-        device_group: str | Enum,
-        timeout: int | None = None,
-        poll_interval: float = 1.0,
-    ) -> str | None:
-        """
-        轮询等待 OTP 缓存刷新。
-
-        当检测到 OTP 过期/认证失败时调用，阻塞等待前端输入新 OTP。
-
-        Args:
-            dept_id: 部门 ID
-            device_group: 设备分组
-            timeout: 等待超时时间（秒），默认使用 OTP_WAIT_TIMEOUT_SECONDS
-            poll_interval: 轮询间隔（秒）
-
-        Returns:
-            新的 OTP 验证码，超时返回 None
-        """
-        import anyio
-
-        if timeout is None:
-            timeout = settings.OTP_WAIT_TIMEOUT_SECONDS
-
-        device_group_value = self._normalize_device_group(device_group)
-
-        logger.info(
-            "开始等待新 OTP",
-            dept_id=str(dept_id),
-            device_group=device_group_value,
-            timeout=timeout,
-        )
-
-        elapsed = 0.0
-        while elapsed < timeout:
-            otp_code = await self.get_cached_otp(dept_id, device_group_value)
-            if otp_code:
-                logger.info(
-                    "检测到新 OTP",
-                    dept_id=str(dept_id),
-                    device_group=device_group_value,
-                    waited_seconds=elapsed,
-                )
-                return otp_code
-
-            await anyio.sleep(poll_interval)
-            elapsed += poll_interval
-
-        logger.warning(
-            "等待新 OTP 超时",
-            dept_id=str(dept_id),
-            device_group=device_group_value,
-            timeout=timeout,
-        )
-        return None
+        await otp_coordinator.invalidate_otp(dept_id, self._normalize_device_group(device_group))
+        logger.info("OTP 缓存已失效", dept_id=str(dept_id), device_group=str(device_group))
+        return True
 
     # ===== 设备凭据获取 =====
 
@@ -335,19 +227,26 @@ class OTPService:
             OTPRequiredException: 缓存中没有有效 OTP，需要用户输入
         """
         device_group_value = self._normalize_device_group(device_group)
-        otp_code = await self.get_cached_otp(dept_id, device_group_value)
+        result = await otp_coordinator.get_or_require_otp(
+            dept_id,
+            device_group_value,
+            pending_device_ids=failed_devices,
+        )
 
-        if otp_code is None:
+        if result["status"] != "ready" or not result["otp_code"]:
+            message = "用户未提供 OTP 验证码，连接失败" if result["status"] == "timeout" else "需要输入 OTP 验证码"
             raise OTPRequiredException(
                 dept_id=dept_id,
                 device_group=device_group_value,
                 failed_devices=failed_devices,
-                message=f"需要输入 OTP 验证码 (部门={dept_id}, 分组={device_group_value})",
+                pending_device_ids=failed_devices,
+                message=message,
+                otp_wait_status=result["status"],
             )
 
         return DeviceCredential(
             username=username,
-            password=otp_code,
+            password=result["otp_code"],
             auth_type=AuthType.OTP_MANUAL,
         )
 
