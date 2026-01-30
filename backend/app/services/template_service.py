@@ -35,6 +35,12 @@ from app.services.base import BaseService
 
 
 class TemplateService(BaseService):
+    """
+    模板服务类。
+
+    提供模板的创建、更新、删除、审批等功能。
+    """
+
     def __init__(
         self,
         db: AsyncSession,
@@ -42,6 +48,15 @@ class TemplateService(BaseService):
         template_approval_crud: CRUDTemplateApprovalStep,
         template_parameter_crud: CRUDTemplateParameter | None = None,
     ):
+        """
+        初始化模板服务。
+
+        Args:
+            db: 异步数据库会话
+            template_crud: 模板 CRUD 实例
+            template_approval_crud: 模板审批步骤 CRUD 实例
+            template_parameter_crud: 模板参数 CRUD 实例（可选）
+        """
         super().__init__(db)
         self.template_crud = template_crud
         self.template_approval_crud = template_approval_crud
@@ -56,6 +71,19 @@ class TemplateService(BaseService):
         template_type: str | None = None,
         status: str | None = None,
     ) -> tuple[list[Template], int]:
+        """
+        获取分页过滤的模板列表。
+
+        Args:
+            page: 页码（从 1 开始）
+            page_size: 每页记录数
+            vendor: 厂商过滤（可选）
+            template_type: 模板类型过滤（可选）
+            status: 模板状态过滤（可选）
+
+        Returns:
+            tuple[list[Template], int]: (模板列表, 总数)
+        """
         from app.models.template import Template
 
         # 构建 JSONB contains 条件
@@ -75,14 +103,38 @@ class TemplateService(BaseService):
             status=status,
         )
 
-    async def get_template(self, template_id: UUID):
+    async def get_template(self, template_id: UUID) -> Template:
+        """
+        根据 ID 获取模板。
+
+        Args:
+            template_id: 模板 ID
+
+        Returns:
+            Template: 模板对象
+
+        Raises:
+            NotFoundException: 模板不存在
+        """
         template = await self.template_crud.get(self.db, id=template_id)
         if not template:
             raise NotFoundException("模板不存在")
         return template
 
     @transactional()
-    async def delete_template(self, template_id: UUID):
+    async def delete_template(self, template_id: UUID) -> Template:
+        """
+        删除模板（软删除）。
+
+        Args:
+            template_id: 模板 ID
+
+        Returns:
+            Template: 删除的模板对象
+
+        Raises:
+            NotFoundException: 模板不存在
+        """
         template = await self.template_crud.get(self.db, id=template_id)
         if not template:
             raise NotFoundException("模板不存在")
@@ -95,7 +147,15 @@ class TemplateService(BaseService):
 
     @transactional()
     async def batch_delete_templates(self, ids: list[UUID]) -> BatchOperationResult:
-        """批量删除模板（软删除）。"""
+        """
+        批量删除模板（软删除）。
+
+        Args:
+            ids: 模板 ID 列表
+
+        Returns:
+            BatchOperationResult: 批量操作结果
+        """
         success_count, failed_ids = await self.template_crud.batch_remove(self.db, ids=ids, hard_delete=False)
         return self._build_batch_result(success_count, failed_ids, message="批量删除完成")
 
@@ -105,7 +165,17 @@ class TemplateService(BaseService):
         page_size: int = 20,
         keyword: str | None = None,
     ) -> tuple[list[Template], int]:
-        """获取回收站模板列表（分页）。"""
+        """
+        获取回收站模板列表（分页）。
+
+        Args:
+            page: 页码（从 1 开始）
+            page_size: 每页记录数
+            keyword: 关键词搜索（模板名称、描述）
+
+        Returns:
+            tuple[list[Template], int]: (已删除模板列表, 总数)
+        """
         from app.models.template import Template
 
         return await self.template_crud.get_paginated(
@@ -122,7 +192,18 @@ class TemplateService(BaseService):
 
     @transactional()
     async def restore_template(self, template_id: UUID) -> Template:
-        """恢复已删除的模板。"""
+        """
+        恢复已删除的模板。
+
+        Args:
+            template_id: 模板 ID
+
+        Returns:
+            Template: 恢复的模板对象
+
+        Raises:
+            NotFoundException: 模板不存在或未被删除
+        """
         template = await self.template_crud.get(self.db, template_id, is_deleted=True)
         if not template:
             raise NotFoundException("模板不存在或未被删除")
@@ -136,13 +217,29 @@ class TemplateService(BaseService):
 
     @transactional()
     async def batch_restore_templates(self, ids: list[UUID]) -> BatchOperationResult:
-        """批量恢复已删除的模板。"""
+        """
+        批量恢复已删除的模板。
+
+        Args:
+            ids: 模板 ID 列表
+
+        Returns:
+            BatchOperationResult: 批量操作结果
+        """
         success_count, failed_ids = await self.template_crud.batch_restore(self.db, ids=ids)
         return self._build_batch_result(success_count, failed_ids, message="批量恢复完成")
 
     @transactional()
     async def hard_delete_template(self, template_id: UUID) -> None:
-        """彻底删除模板（硬删除）。"""
+        """
+        彻底删除模板（硬删除）。
+
+        Args:
+            template_id: 模板 ID
+
+        Raises:
+            NotFoundException: 模板不存在或未被软删除
+        """
         template = await self.template_crud.get(self.db, template_id, is_deleted=True)
         if not template:
             raise NotFoundException("模板不存在或未被软删除")
@@ -153,13 +250,33 @@ class TemplateService(BaseService):
 
     @transactional()
     async def batch_hard_delete_templates(self, ids: list[UUID]) -> BatchOperationResult:
-        """批量彻底删除模板（硬删除）。"""
+        """
+        批量彻底删除模板（硬删除）。
+
+        Args:
+            ids: 模板 ID 列表
+
+        Returns:
+            BatchOperationResult: 批量操作结果
+        """
         success_count, failed_ids = await self.template_crud.batch_remove(self.db, ids=ids, hard_delete=True)
         return self._build_batch_result(success_count, failed_ids, message="彻底删除完成")
 
     @transactional()
     async def create_template(self, data: TemplateCreate, creator_id: UUID) -> Template:
-        """创建模板草稿。"""
+        """
+        创建模板草稿。
+
+        Args:
+            data: 模板创建数据
+            creator_id: 创建者用户 ID
+
+        Returns:
+            Template: 创建的模板对象
+
+        Raises:
+            BadRequestException: parameters 不是有效的 JSON Schema
+        """
         # 校验 parameters 必须是有效的 JSON Schema
         parameters = data.parameters
         if parameters:
@@ -192,7 +309,20 @@ class TemplateService(BaseService):
         return obj
 
     @transactional()
-    async def update_template(self, template_id: UUID, data: TemplateUpdate):
+    async def update_template(self, template_id: UUID, data: TemplateUpdate) -> Template:
+        """
+        更新模板。
+
+        Args:
+            template_id: 模板 ID
+            data: 模板更新数据
+
+        Returns:
+            Template: 更新后的模板对象
+
+        Raises:
+            NotFoundException: 模板不存在
+        """
         template = await self.get_template(template_id)
         update_data = data.model_dump(exclude_unset=True)
         if "vendors" in update_data and update_data["vendors"] is not None:
@@ -210,7 +340,21 @@ class TemplateService(BaseService):
     async def new_version(
         self, template_id: UUID, *, name: str | None = None, description: str | None = None
     ) -> Template:
-        """基于现有模板创建新版本（草稿）。"""
+        """
+        基于现有模板创建新版本（草稿）。
+
+        Args:
+            template_id: 基础模板 ID
+            name: 新版本名称（可选，默认使用基础模板名称）
+            description: 新版本描述（可选，默认使用基础模板描述）
+
+        Returns:
+            Template: 创建的新版本模板对象
+
+        Raises:
+            NotFoundException: 基础模板不存在
+            BadRequestException: 当前模板状态不允许创建新版本
+        """
         base = await self.get_template(template_id)
 
         # 允许草稿/已审批/已废弃派生新版本
@@ -255,7 +399,21 @@ class TemplateService(BaseService):
         comment: str | None = None,
         approver_ids: list[UUID] | None = None,
     ) -> Template:
-        """提交模板审批。"""
+        """
+        提交模板审批。
+
+        Args:
+            template_id: 模板 ID
+            comment: 提交备注（可选）
+            approver_ids: 审批人 ID 列表（可选，必须为 3 个，对应三级审批）
+
+        Returns:
+            Template: 提交后的模板对象
+
+        Raises:
+            NotFoundException: 模板不存在
+            BadRequestException: 仅草稿/已拒绝模板可提交审批，或 approver_ids 数量不正确
+        """
         template = await self.get_template(template_id)
 
         allowed_statuses = {TemplateStatus.DRAFT.value, TemplateStatus.REJECTED.value}
@@ -306,6 +464,25 @@ class TemplateService(BaseService):
         actor_user_id: UUID,
         is_superuser: bool = False,
     ) -> Template:
+        """
+        审批模板步骤。
+
+        Args:
+            template_id: 模板 ID
+            level: 审批级别（1-3）
+            approve: 是否通过（True=通过，False=拒绝）
+            comment: 审批意见（可选）
+            actor_user_id: 操作者用户 ID
+            is_superuser: 是否为超级管理员（可选，超级管理员可代审）
+
+        Returns:
+            Template: 审批后的模板对象
+
+        Raises:
+            NotFoundException: 模板或审批步骤不存在
+            BadRequestException: 模板已完成审批、不在审批阶段或审批级别不正确
+            ForbiddenException: 当前用户不是该级审批人
+        """
         template = await self.get_template(template_id)
 
         if template.approval_status in {ApprovalStatus.APPROVED.value, ApprovalStatus.REJECTED.value}:
@@ -445,7 +622,10 @@ class TemplateService(BaseService):
             content: Jinja2 模板内容
 
         Returns:
-            提取的变量列表（含推断类型）
+            list[ExtractedVariable]: 提取的变量列表（含推断类型）
+
+        Raises:
+            BadRequestException: 模板语法错误
         """
         variables = self.extract_variables(content)
         return [

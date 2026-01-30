@@ -319,6 +319,17 @@ class ImportExportService:
         max_upload_mb: int = 20,
         lock_ttl_seconds: int = 300,
     ):
+        """
+        初始化导入导出服务。
+
+        Args:
+            db: 数据库对象（会原样传递给 handler）
+            redis_client: Redis 客户端（可选，用于加锁）
+            config: 导入导出配置（可选）
+            base_dir: 工作目录根路径（可选，会覆盖 config.base_dir）
+            max_upload_mb: 最大上传文件大小（MB，默认 20）
+            lock_ttl_seconds: Redis 锁 TTL（秒，默认 300）
+        """
         self.db = db
         self.redis_client = redis_client
         self.config = config or resolve_config(base_dir=base_dir)
@@ -345,8 +356,10 @@ class ImportExportService:
                 异步函数：返回待导出的 Polars DataFrame。
 
         Returns:
-            ExportResult including path/filename/media_type.
-                返回 ExportResult（path/filename/media_type）。
+            ExportResult: 包含 path/filename/media_type 的导出结果
+
+        Raises:
+            RuntimeError: Workbook.active 为 None（XLSX 导出时）
 
         Examples:
             >>> async def df_fn(_db):
@@ -400,8 +413,7 @@ class ImportExportService:
                 写模板文件的函数（入参为目标路径）。
 
         Returns:
-            ExportResult including path/filename/media_type.
-                返回 ExportResult（path/filename/media_type）。
+            ExportResult: 包含 path/filename/media_type 的导出结果
         """
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"{filename_prefix}_{ts}.xlsx"
@@ -450,12 +462,10 @@ class ImportExportService:
                 覆盖标志（透传给业务校验逻辑）。
 
         Returns:
-            ImportValidateResponse.
-                校验响应。
+            ImportValidateResponse: 校验响应
 
         Raises:
-            ValueError: When file is too large.
-                上传文件过大时抛出。
+            ImportExportError: 上传文件过大时抛出
         """
         import_id = new_import_id()
         paths = get_import_paths(import_id, config=self.config)
@@ -559,8 +569,10 @@ class ImportExportService:
                 "all" 预览全量解析数据；"valid" 只预览通过校验的数据。
 
         Returns:
-            ImportPreviewResponse with rows.
-                预览响应（包含 rows）。
+            ImportPreviewResponse: 预览响应（包含 rows）
+
+        Raises:
+            ImportExportError: page/page_size/kind 参数非法或 checksum 不匹配时抛出
         """
         paths = get_import_paths(import_id, config=self.config)
         if page < 1:
@@ -631,8 +643,10 @@ class ImportExportService:
                 锁 key 的命名空间前缀。
 
         Returns:
-            ImportCommitResponse including imported_rows.
-                提交响应（包含 imported_rows）。
+            ImportCommitResponse: 提交响应（包含 imported_rows）
+
+        Raises:
+            ImportExportError: checksum 为空/不匹配、import_id 不存在、状态非法、存在校验错误、锁获取失败或数据库完整性错误时抛出
         """
         paths = get_import_paths(body.import_id, config=self.config)
         if not str(body.checksum).strip():

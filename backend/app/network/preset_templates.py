@@ -910,12 +910,23 @@ end
 
 
 def get_preset(preset_id: str) -> dict[str, Any] | None:
-    """获取预设模板定义。"""
+    """获取预设模板定义。
+
+    Args:
+        preset_id: 预设模板 ID
+
+    Returns:
+        dict[str, Any] | None: 预设模板定义字典，不存在返回 None
+    """
     return PRESET_TEMPLATES.get(preset_id)
 
 
 def list_presets() -> list[dict[str, Any]]:
-    """列出所有预设模板（简要信息）。"""
+    """列出所有预设模板（简要信息）。
+
+    Returns:
+        list[dict[str, Any]]: 预设模板列表，每项包含 id、name、description、category、supported_vendors 字段
+    """
     result = []
     for preset_id, preset in PRESET_TEMPLATES.items():
         result.append(

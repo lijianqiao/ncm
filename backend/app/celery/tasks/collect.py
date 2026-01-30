@@ -125,8 +125,11 @@ def scheduled_collect_all(self) -> dict[str, Any]:
 
     采集所有活跃设备的 ARP/MAC 表。
 
+    Args:
+        self: Celery 任务实例。
+
     Returns:
-        dict: 采集结果
+        dict[str, Any]: 采集结果字典。
     """
     celery_task_logger.info("定时采集任务开始")
 

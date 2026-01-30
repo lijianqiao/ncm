@@ -20,7 +20,19 @@ if TYPE_CHECKING:
 
 
 class Role(AuditableModel):
-    """角色模型。"""
+    """角色模型。
+
+    系统角色表，用于权限管理和数据权限控制。
+
+    Attributes:
+        name (str): 角色名称，唯一。
+        code (str): 角色编码，唯一，用于程序识别。
+        description (str | None): 角色描述。
+        sort (int): 排序权重。
+        data_scope (str): 数据权限范围（ALL/CUSTOM/DEPT_AND_CHILDREN/DEPT/SELF）。
+        users (list[User]): 拥有此角色的用户列表。
+        menus (list[Menu]): 角色关联的菜单/权限列表。
+    """
 
     __tablename__ = "sys_role"
 
@@ -43,7 +55,25 @@ class Role(AuditableModel):
 
 
 class Menu(AuditableModel):
-    """菜单/权限模型。"""
+    """菜单/权限模型。
+
+    系统菜单和权限表，支持树形结构，用于前端菜单展示和权限控制。
+
+    Attributes:
+        title (str): 菜单标题。
+        name (str): 前端路由名称。
+        parent_id (UUID | None): 父菜单 ID，支持多级菜单。
+        path (str | None): 路由路径。
+        component (str | None): 前端组件路径。
+        icon (str | None): 菜单图标。
+        sort (int): 排序权重。
+        type (str): 菜单类型（MENU/BUTTON/DIRECTORY）。
+        is_hidden (bool): 是否隐藏。
+        permission (str | None): 权限标识（如 user:list）。
+        children (list[Menu]): 子菜单列表。
+        parent (Menu | None): 父菜单对象。
+        roles (list[Role]): 拥有此菜单权限的角色列表。
+    """
 
     __tablename__ = "sys_menu"
 
@@ -72,7 +102,14 @@ class Menu(AuditableModel):
 
 
 class UserRole(Base, UUIDMixin, TimestampMixin):
-    """用户-角色关联表。"""
+    """用户-角色关联表。
+
+    多对多关联表，用于建立用户和角色之间的关系。
+
+    Attributes:
+        user_id (UUID): 用户 ID。
+        role_id (UUID): 角色 ID。
+    """
 
     __tablename__ = "sys_user_role"
     __table_args__ = (
@@ -89,7 +126,14 @@ class UserRole(Base, UUIDMixin, TimestampMixin):
 
 
 class RoleMenu(Base, UUIDMixin, TimestampMixin):
-    """角色-菜单关联表。"""
+    """角色-菜单关联表。
+
+    多对多关联表，用于建立角色和菜单/权限之间的关系。
+
+    Attributes:
+        role_id (UUID): 角色 ID。
+        menu_id (UUID): 菜单 ID。
+    """
 
     __tablename__ = "sys_role_menu"
     __table_args__ = (

@@ -23,7 +23,25 @@ if TYPE_CHECKING:
 
 
 class TemplateParameter(AuditableModel):
-    """模板参数定义（表单化）。"""
+    """模板参数定义模型（表单化）。
+
+    模板参数定义表，用于存储模板的参数定义，替代 JSON Schema 字符串，降低用户使用门槛。
+
+    Attributes:
+        template_id (UUID): 关联模板 ID。
+        name (str): 变量名（用于 Jinja2）。
+        label (str): 显示名称。
+        param_type (str): 参数类型（STRING/NUMBER/BOOLEAN/SELECT/TEXTAREA）。
+        required (bool): 是否必填。
+        default_value (str | None): 默认值。
+        description (str | None): 参数说明。
+        options (list[str] | None): 下拉选项（select 类型时使用）。
+        min_value (int | None): 最小值（数值类型）。
+        max_value (int | None): 最大值（数值类型）。
+        pattern (str | None): 正则校验表达式。
+        order (int): 显示顺序。
+        template (Template): 关联的模板对象。
+    """
 
     __tablename__ = "ncm_template_parameter"
     __table_args__ = (

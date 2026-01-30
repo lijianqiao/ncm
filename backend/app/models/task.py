@@ -28,7 +28,45 @@ if TYPE_CHECKING:
 
 
 class Task(AuditableModel):
-    """任务模型。"""
+    """任务模型。
+
+    任务表，用于管理配置下发、备份等异步任务的状态跟踪和审批流程。
+
+    Attributes:
+        name (str): 任务名称。
+        task_type (str): 任务类型（DEPLOY/BACKUP/COLLECT）。
+        description (str | None): 任务描述。
+        celery_task_id (str | None): Celery 任务 ID。
+        status (str): 任务状态（PENDING/RUNNING/SUCCESS/FAILED/PAUSED/CANCELLED）。
+        progress (int): 执行进度（0-100）。
+        target_devices (dict | None): 目标设备列表（JSONB）。
+        total_devices (int): 设备总数。
+        success_count (int): 成功数。
+        failed_count (int): 失败数。
+        result (dict | None): 执行结果（JSONB）。
+        error_message (str | None): 错误信息。
+        template_id (UUID | None): 模板 ID。
+        template_params (dict | None): 模板参数（JSONB）。
+        template (Template | None): 关联的模板对象。
+        approval_status (str): 审批状态（NONE/PENDING/APPROVED/REJECTED）。
+        change_description (str | None): 变更说明。
+        impact_scope (str | None): 影响范围。
+        rollback_plan (str | None): 回退方案。
+        submitter_id (UUID | None): 提交人 ID。
+        approver_id (UUID | None): 审批人 ID。
+        approved_at (datetime | None): 审批时间。
+        approval_comment (str | None): 审批意见。
+        approval_required (bool): 是否需要审批。
+        current_approval_level (int): 当前已通过的审批级别（0-3）。
+        deploy_plan (dict | None): 下发计划（JSONB）。
+        started_at (datetime | None): 开始执行时间。
+        finished_at (datetime | None): 完成时间。
+        rollback_backup_id (UUID | None): 变更前配置备份 ID（用于回滚）。
+        submitter (User | None): 提交人对象。
+        approver (User | None): 审批人对象。
+        rollback_backup (Backup | None): 回滚备份对象。
+        approval_steps (list[TaskApprovalStep]): 审批步骤列表。
+    """
 
     __tablename__ = "ncm_task"
     __table_args__ = (

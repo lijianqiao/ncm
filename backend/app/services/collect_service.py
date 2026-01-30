@@ -57,6 +57,14 @@ class CollectService(DeviceCredentialMixin, CacheMixin):
     """
 
     def __init__(self, db: AsyncSession, device_crud: CRUDDevice, credential_crud: CRUDCredential):
+        """
+        初始化采集服务。
+
+        Args:
+            db: 异步数据库会话
+            device_crud: 设备 CRUD 实例
+            credential_crud: 凭据 CRUD 实例
+        """
         self.db = db
         self.device_crud = device_crud
         self.credential_crud = credential_crud
@@ -445,7 +453,13 @@ class CollectService(DeviceCredentialMixin, CacheMixin):
     # ===== 内部方法 =====
 
     async def _save_arp_cache(self, device_id: UUID, entries: list[dict[str, Any]]) -> None:
-        """保存 ARP 表到 Redis 缓存（使用 CacheMixin）。"""
+        """
+        保存 ARP 表到 Redis 缓存（使用 CacheMixin）。
+
+        Args:
+            device_id: 设备 ID
+            entries: ARP 条目列表
+        """
         cache_key = f"{ARP_CACHE_PREFIX}:{device_id}"
         now = datetime.now()
 
@@ -472,7 +486,13 @@ class CollectService(DeviceCredentialMixin, CacheMixin):
         await self._cache_set(cache_key, json.dumps(cache_data), settings.COLLECT_CACHE_TTL)
 
     async def _save_mac_cache(self, device_id: UUID, entries: list[dict[str, Any]]) -> None:
-        """保存 MAC 表到 Redis 缓存（使用 CacheMixin）。"""
+        """
+        保存 MAC 表到 Redis 缓存（使用 CacheMixin）。
+
+        Args:
+            device_id: 设备 ID
+            entries: MAC 条目列表
+        """
         cache_key = f"{MAC_CACHE_PREFIX}:{device_id}"
         now = datetime.now()
 
@@ -498,7 +518,12 @@ class CollectService(DeviceCredentialMixin, CacheMixin):
         await self._cache_set(cache_key, json.dumps(cache_data), settings.COLLECT_CACHE_TTL)
 
     async def _update_last_collect_time(self, device_id: UUID) -> None:
-        """更新设备最后采集时间（使用 CacheMixin）。"""
+        """
+        更新设备最后采集时间（使用 CacheMixin）。
+
+        Args:
+            device_id: 设备 ID
+        """
         cache_key = f"{COLLECT_LAST_PREFIX}:{device_id}"
         await self._cache_set(
             cache_key,

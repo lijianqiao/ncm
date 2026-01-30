@@ -33,7 +33,10 @@ def init_celery_async_runtime() -> None:
     目标：
     - Celery 在 Windows 或 threads pool 下可能在不同线程中执行任务。
     - 直接在调用线程创建/复用事件循环容易导致 asyncpg 的连接 Future 绑定到不同 loop。
-    - 这里用“单后台线程 + 单事件循环”，所有协程都提交到该 loop 执行。
+    - 这里用"单后台线程 + 单事件循环"，所有协程都提交到该 loop 执行。
+
+    Returns:
+        None: 无返回值。
     """
 
     global _ASYNC_LOOP, _ASYNC_THREAD
@@ -70,7 +73,11 @@ def init_celery_async_runtime() -> None:
 
 
 def close_celery_async_runtime() -> None:
-    """关闭 Celery Worker 进程异步运行时。"""
+    """关闭 Celery Worker 进程异步运行时。
+
+    Returns:
+        None: 无返回值。
+    """
 
     global _ASYNC_LOOP, _ASYNC_THREAD
 
@@ -268,7 +275,17 @@ class BaseTask(Task):
     reject_on_worker_lost = True
 
     def on_success(self, retval, task_id: str, args, kwargs) -> None:
-        """任务成功完成时的回调。"""
+        """任务成功完成时的回调。
+
+        Args:
+            retval: 任务返回值。
+            task_id (str): 任务 ID。
+            args: 任务位置参数。
+            kwargs: 任务关键字参数。
+
+        Returns:
+            None: 无返回值。
+        """
         celery_task_logger.info(
             "任务执行成功",
             task_id=task_id,
@@ -277,7 +294,18 @@ class BaseTask(Task):
         )
 
     def on_failure(self, exc, task_id: str, args, kwargs, einfo) -> None:
-        """任务失败时的回调。"""
+        """任务失败时的回调。
+
+        Args:
+            exc: 异常对象。
+            task_id (str): 任务 ID。
+            args: 任务位置参数。
+            kwargs: 任务关键字参数。
+            einfo: 异常信息对象。
+
+        Returns:
+            None: 无返回值。
+        """
         celery_details_logger.error(
             "任务执行失败",
             task_id=task_id,
@@ -287,7 +315,18 @@ class BaseTask(Task):
         )
 
     def on_retry(self, exc, task_id: str, args, kwargs, einfo) -> None:
-        """任务重试时的回调。"""
+        """任务重试时的回调。
+
+        Args:
+            exc: 异常对象。
+            task_id (str): 任务 ID。
+            args: 任务位置参数。
+            kwargs: 任务关键字参数。
+            einfo: 异常信息对象。
+
+        Returns:
+            None: 无返回值。
+        """
         celery_details_logger.warning(
             "任务重试中",
             task_id=task_id,
@@ -297,7 +336,16 @@ class BaseTask(Task):
         )
 
     def before_start(self, task_id: str, args, kwargs) -> None:
-        """任务开始前的回调。"""
+        """任务开始前的回调。
+
+        Args:
+            task_id (str): 任务 ID。
+            args: 任务位置参数。
+            kwargs: 任务关键字参数。
+
+        Returns:
+            None: 无返回值。
+        """
         celery_task_logger.info(
             "任务开始执行",
             task_id=task_id,

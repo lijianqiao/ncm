@@ -36,12 +36,22 @@ class NmapScanService:
 
     @staticmethod
     def is_nmap_available() -> bool:
-        """检查 Nmap 是否可用。"""
+        """
+        检查 Nmap 是否可用。
+
+        Returns:
+            bool: Nmap 是否在 PATH 中
+        """
         return shutil.which("nmap") is not None
 
     @staticmethod
     def is_masscan_available() -> bool:
-        """检查 Masscan 是否可用。"""
+        """
+        检查 Masscan 是否可用。
+
+        Returns:
+            bool: Masscan 是否在 PATH 中
+        """
         return shutil.which("masscan") is not None
 
     def resolve_scan_type(self, scan_type: str) -> str:
@@ -161,7 +171,18 @@ class NmapScanService:
         return result
 
     def _run_nmap_ping_scan(self, subnet: str) -> list[ScanHost]:
-        """运行 Nmap Ping 扫描（同步方法）。"""
+        """
+        运行 Nmap Ping 扫描（同步方法）。
+
+        Args:
+            subnet: 网段（CIDR 格式）
+
+        Returns:
+            list[ScanHost]: 扫描到的主机列表
+
+        Raises:
+            RuntimeError: Nmap 未安装或超时
+        """
         cmd = [
             "nmap",
             "-sn",
@@ -204,7 +225,17 @@ class NmapScanService:
         return hosts
 
     def _run_nmap_scan(self, subnet: str, ports: str, arguments: str) -> dict[str, Any]:
-        """运行 Nmap 扫描（同步方法，在线程池中执行）。"""
+        """
+        运行 Nmap 扫描（同步方法，在线程池中执行）。
+
+        Args:
+            subnet: 网段（CIDR 格式）
+            ports: 扫描端口
+            arguments: Nmap 参数
+
+        Returns:
+            dict[str, Any]: 扫描结果字典
+        """
         nm = nmap.PortScanner()
         nm.scan(hosts=subnet, ports=ports, arguments=arguments, timeout=settings.SCAN_TIMEOUT)
         return {
@@ -216,7 +247,15 @@ class NmapScanService:
         }
 
     def _parse_nmap_result(self, scan_result: dict[str, Any]) -> list[ScanHost]:
-        """解析 Nmap 扫描结果。"""
+        """
+        解析 Nmap 扫描结果。
+
+        Args:
+            scan_result: Nmap 扫描结果字典
+
+        Returns:
+            list[ScanHost]: 解析后的主机列表
+        """
         hosts: list[ScanHost] = []
         raw_data = scan_result.get("raw", {})
 
@@ -358,7 +397,20 @@ class NmapScanService:
         return result
 
     def _run_masscan(self, subnet: str, ports: str, rate: int) -> list[ScanHost]:
-        """运行 Masscan 扫描（同步方法）。"""
+        """
+        运行 Masscan 扫描（同步方法）。
+
+        Args:
+            subnet: 网段（CIDR 格式）
+            ports: 扫描端口
+            rate: 扫描速率（packets/sec）
+
+        Returns:
+            list[ScanHost]: 扫描到的主机列表
+
+        Raises:
+            RuntimeError: Masscan 未安装
+        """
         hosts: list[ScanHost] = []
 
         try:

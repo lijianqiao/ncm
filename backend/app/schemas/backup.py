@@ -17,13 +17,32 @@ from app.schemas.device import DeviceResponse
 
 
 class BackupBase(BaseModel):
-    """备份基础模型。"""
+    """备份基础 Schema。
+
+    备份的基础字段定义。
+
+    Attributes:
+        backup_type (BackupType): 备份类型，默认 MANUAL。
+    """
 
     backup_type: BackupType = Field(default=BackupType.MANUAL, description="备份类型")
 
 
 class BackupCreate(BackupBase):
-    """创建备份请求（内部使用）。"""
+    """创建备份请求 Schema（内部使用）。
+
+    用于创建新备份的请求体，主要在内部使用。
+
+    Attributes:
+        device_id (UUID): 设备 ID。
+        content (str | None): 配置内容（小配置直接存储）。
+        content_path (str | None): MinIO 存储路径（大配置）。
+        content_size (int): 配置大小（字节），默认 0。
+        md5_hash (str | None): MD5 哈希值。
+        status (BackupStatus): 备份状态，默认 SUCCESS。
+        operator_id (UUID | None): 操作人 ID。
+        error_message (str | None): 错误信息。
+    """
 
     device_id: UUID = Field(..., description="设备ID")
     content: str | None = Field(default=None, description="配置内容")
@@ -36,7 +55,24 @@ class BackupCreate(BackupBase):
 
 
 class BackupResponse(BaseModel):
-    """备份响应模型。"""
+    """备份响应 Schema。
+
+    用于返回备份信息的响应体，包含备份基本信息和关联设备。
+
+    Attributes:
+        id (UUID): 备份 ID。
+        device_id (UUID): 设备 ID。
+        backup_type (BackupType): 备份类型。
+        status (BackupStatus): 备份状态。
+        content_size (int): 配置大小（字节）。
+        md5_hash (str | None): MD5 哈希值。
+        error_message (str | None): 错误信息。
+        operator_id (str | None): 操作人（昵称(用户名)）。
+        created_at (datetime): 创建时间。
+        updated_at (datetime): 更新时间。
+        device (DeviceResponse | None): 关联的设备对象。
+        has_content (bool): 是否有配置内容（计算字段）。
+    """
 
     id: UUID
     device_id: UUID
@@ -59,14 +95,28 @@ class BackupResponse(BaseModel):
     @computed_field
     @property
     def has_content(self) -> bool:
-        """是否有配置内容（不直接返回内容，需要单独接口获取）。"""
+        """是否有配置内容（不直接返回内容，需要单独接口获取）。
+
+        Returns:
+            bool: 如果有配置内容则返回 True。
+        """
         return bool(self.content or self.content_path)
 
     model_config = ConfigDict(from_attributes=True, use_enum_values=True)
 
 
 class BackupContentResponse(BaseModel):
-    """备份配置内容响应。"""
+    """备份配置内容响应 Schema。
+
+    用于返回备份配置内容的响应体。
+
+    Attributes:
+        id (UUID): 备份 ID。
+        device_id (UUID): 设备 ID。
+        content (str): 配置内容。
+        content_size (int): 配置大小（字节）。
+        md5_hash (str | None): MD5 哈希值。
+    """
 
     id: UUID
     device_id: UUID
@@ -76,7 +126,22 @@ class BackupContentResponse(BaseModel):
 
 
 class BackupListQuery(PaginatedQuery):
-    """备份列表查询参数。"""
+    """备份列表查询参数 Schema。
+
+    用于备份列表查询的请求参数，包含分页和筛选条件。
+
+    Attributes:
+        device_id (UUID | None): 设备 ID 筛选。
+        backup_type (BackupType | None): 备份类型筛选。
+        status (BackupStatus | None): 备份状态筛选。
+        start_date (datetime | None): 开始时间。
+        end_date (datetime | None): 结束时间。
+        keyword (str | None): 关键字搜索（设备名称/IP地址）。
+        device_group (str | None): 设备分组筛选。
+        auth_type (str | None): 认证方式筛选。
+        device_status (str | None): 设备状态筛选。
+        vendor (str | None): 厂商筛选。
+    """
 
     device_id: UUID | None = Field(default=None, description="设备ID筛选")
     backup_type: BackupType | None = Field(default=None, description="备份类型筛选")
@@ -95,14 +160,30 @@ class BackupListQuery(PaginatedQuery):
 
 
 class BackupDeviceRequest(BaseModel):
-    """单设备备份请求。"""
+    """单设备备份请求 Schema。
+
+    用于单设备备份的请求体。
+
+    Attributes:
+        backup_type (BackupType): 备份类型，默认 MANUAL。
+        otp_code (str | None): OTP 验证码（手动输入模式可选），长度 6-8 位。
+    """
 
     backup_type: BackupType = Field(default=BackupType.MANUAL, description="备份类型")
     otp_code: str | None = Field(default=None, min_length=6, max_length=8, description="OTP 验证码（手动输入模式可选）")
 
 
 class BackupBatchRequest(BaseModel):
-    """批量备份请求。"""
+    """批量备份请求 Schema。
+
+    用于批量备份设备的请求体，支持断点续传。
+
+    Attributes:
+        device_ids (list[UUID]): 设备 ID 列表，数量范围 1-500。
+        backup_type (BackupType): 备份类型，默认 MANUAL。
+        resume_task_id (str | None): 断点续传任务 ID。
+        skip_device_ids (list[UUID] | None): 跳过已成功的设备 ID。
+    """
 
     device_ids: list[UUID] = Field(..., min_length=1, max_length=500, description="设备ID列表")
     backup_type: BackupType = Field(default=BackupType.MANUAL, description="备份类型")
@@ -113,7 +194,16 @@ class BackupBatchRequest(BaseModel):
 
 
 class BackupBatchByGroupRequest(BaseModel):
-    """按设备分组批量备份请求。"""
+    """按设备分组批量备份请求 Schema。
+
+    用于按设备分组批量备份的请求体。
+
+    Attributes:
+        dept_id (UUID): 部门 ID。
+        device_group (DeviceGroup): 设备分组。
+        backup_type (BackupType): 备份类型，默认 MANUAL。
+        otp_code (str | None): OTP 验证码（手动输入模式），长度 6-8 位。
+    """
 
     dept_id: UUID = Field(..., description="部门ID")
     device_group: DeviceGroup = Field(..., description="设备分组")

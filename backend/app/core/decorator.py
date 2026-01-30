@@ -20,13 +20,16 @@ RT = TypeVar("RT")
 
 
 def with_db_retry(max_retries: int = 3, initial_delay: float = 0.1) -> Callable:
-    """
-    数据库操作重试装饰器。
+    """数据库操作重试装饰器。
+
     处理 SQLAlchemy 操作性错误（如连接断开、死锁）。
 
     Args:
-        max_retries: 最大重试次数
-        initial_delay: 初始延迟秒数 (指数退避)
+        max_retries (int): 最大重试次数，默认为 3。
+        initial_delay (float): 初始延迟秒数（指数退避），默认为 0.1。
+
+    Returns:
+        Callable: 装饰器函数。
     """
 
     def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
@@ -55,8 +58,7 @@ def with_db_retry(max_retries: int = 3, initial_delay: float = 0.1) -> Callable:
 
 
 def transactional() -> Callable:
-    """
-    事务管理装饰器。
+    """事务管理装饰器。
 
     自动管理事务提交和回滚：
     1. 成功执行后自动 commit。
@@ -66,6 +68,9 @@ def transactional() -> Callable:
     被装饰的函数必须包含一个名为 'self' 的参数（用于类方法），
     且该实例必须有一个名为 'db' 的属性，是 AsyncSession 类型。
     或者，被装饰函数直接包含名为 'db' 的 AsyncSession 参数。
+
+    Returns:
+        Callable: 装饰器函数。
 
     Usage:
         @transactional()

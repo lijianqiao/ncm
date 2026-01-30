@@ -15,7 +15,7 @@ from app.core.permissions import PermissionCode
 from app.schemas.common import ResponseBase
 from app.schemas.diff import DiffResponse
 
-router = APIRouter()
+router = APIRouter(tags=["配置差异"])
 
 
 @router.get(

@@ -158,9 +158,14 @@ def send_command_with_paging(
         command: 命令
         timeout_ops: 超时秒数
         more_prompt: 分页提示关键词
+        prompt: 设备提示符（可选，自动获取）
+        max_pages: 最大分页数
 
     Returns:
-        str: 命令输出
+        str: 命令输出（已清理分页标记）
+
+    Raises:
+        Exception: 命令执行异常
     """
     output_parts: list[str] = []
     current_input = command
@@ -273,7 +278,10 @@ async def send_command_with_paging_async(
         max_pages: 最大分页数
 
     Returns:
-        str: 命令输出
+        str: 命令输出（已清理分页标记）
+
+    Raises:
+        Exception: 命令执行异常
     """
     output_parts: list[str] = []
     current_input = command
@@ -333,7 +341,13 @@ def save_device_config(conn: Any, vendor: str, timeout_ops: int = 30) -> dict[st
         timeout_ops: 操作超时时间（秒）
 
     Returns:
-        dict: {"success": bool, "output": str, "error": str | None}
+        dict[str, Any]: 保存结果：
+        - success (bool): 是否成功
+        - output (str): 保存命令输出
+        - error (str | None): 错误信息（失败时）
+
+    Raises:
+        Exception: 保存配置时发生异常（已转换为返回字典）
     """
     vendor_lower = (vendor or "").lower()
 

@@ -25,11 +25,35 @@ from app.services.base import BaseService
 
 
 class SnmpCredentialService(BaseService):
+    """
+    部门 SNMP 凭据服务类。
+
+    提供 SNMP 凭据的创建、查询、更新、删除等功能。
+    """
+
     def __init__(self, db: AsyncSession, snmp_cred_crud: CRUDDeptSnmpCredential):
+        """
+        初始化 SNMP 凭据服务。
+
+        Args:
+            db: 异步数据库会话
+            snmp_cred_crud: SNMP 凭据 CRUD 实例
+        """
         super().__init__(db)
         self.snmp_cred_crud = snmp_cred_crud
 
     async def get_multi_paginated(self, *, page: int = 1, page_size: int = 20, dept_id: UUID | None = None):
+        """
+        获取分页 SNMP 凭据列表。
+
+        Args:
+            page: 页码（从 1 开始）
+            page_size: 每页记录数
+            dept_id: 部门 ID 过滤（可选）
+
+        Returns:
+            tuple[list[DeptSnmpCredential], int]: (SNMP 凭据列表, 总数)
+        """
         from sqlalchemy.orm import selectinload
 
         from app.models.snmp_credential import DeptSnmpCredential
@@ -45,12 +69,36 @@ class SnmpCredentialService(BaseService):
         )
 
     async def get(self, *, snmp_cred_id: UUID) -> DeptSnmpCredentialResponse:
+        """
+        获取 SNMP 凭据详情。
+
+        Args:
+            snmp_cred_id: SNMP 凭据 ID
+
+        Returns:
+            DeptSnmpCredentialResponse: SNMP 凭据响应对象
+
+        Raises:
+            NotFoundException: SNMP 凭据不存在
+        """
         obj = await self.snmp_cred_crud.get(self.db, id=snmp_cred_id)
         if not obj or obj.is_deleted:
             raise NotFoundException(message="SNMP 凭据不存在")
         return await self._to_response(obj)
 
     async def create(self, *, data: DeptSnmpCredentialCreate) -> DeptSnmpCredentialResponse:
+        """
+        创建 SNMP 凭据。
+
+        Args:
+            data: SNMP 凭据创建数据
+
+        Returns:
+            DeptSnmpCredentialResponse: 创建的 SNMP 凭据响应对象
+
+        Raises:
+            BadRequestException: 该部门已存在 SNMP 凭据
+        """
         existing = await self.snmp_cred_crud.get_by_dept_id(self.db, dept_id=data.dept_id)
         if existing:
             raise BadRequestException(message="该部门已存在 SNMP 凭据")
@@ -75,6 +123,19 @@ class SnmpCredentialService(BaseService):
         return await self._to_response(obj)
 
     async def update(self, *, snmp_cred_id: UUID, data: DeptSnmpCredentialUpdate) -> DeptSnmpCredentialResponse:
+        """
+        更新 SNMP 凭据。
+
+        Args:
+            snmp_cred_id: SNMP 凭据 ID
+            data: SNMP 凭据更新数据
+
+        Returns:
+            DeptSnmpCredentialResponse: 更新后的 SNMP 凭据响应对象
+
+        Raises:
+            NotFoundException: SNMP 凭据不存在
+        """
         obj = await self.snmp_cred_crud.get(self.db, id=snmp_cred_id)
         if not obj or obj.is_deleted:
             raise NotFoundException(message="SNMP 凭据不存在")
@@ -98,6 +159,15 @@ class SnmpCredentialService(BaseService):
         return await self._to_response(obj)
 
     async def delete(self, *, snmp_cred_id: UUID) -> None:
+        """
+        删除 SNMP 凭据（软删除）。
+
+        Args:
+            snmp_cred_id: SNMP 凭据 ID
+
+        Raises:
+            NotFoundException: SNMP 凭据不存在
+        """
         obj = await self.snmp_cred_crud.get(self.db, id=snmp_cred_id)
         if not obj:
             raise NotFoundException(message="SNMP 凭据不存在")
@@ -106,7 +176,15 @@ class SnmpCredentialService(BaseService):
             raise NotFoundException(message="SNMP 凭据不存在")
 
     async def batch_delete(self, ids: list[UUID]) -> BatchOperationResult:
-        """批量删除 SNMP 凭据（软删除）。"""
+        """
+        批量删除 SNMP 凭据（软删除）。
+
+        Args:
+            ids: SNMP 凭据 ID 列表
+
+        Returns:
+            BatchOperationResult: 批量操作结果
+        """
         success_count, failed_ids = await self.snmp_cred_crud.batch_remove(self.db, ids=ids, hard_delete=False)
         return self._build_batch_result(success_count, failed_ids, message="删除完成")
 
@@ -116,7 +194,17 @@ class SnmpCredentialService(BaseService):
         page_size: int = 20,
         keyword: str | None = None,
     ) -> tuple[list[DeptSnmpCredential], int]:
-        """获取回收站 SNMP 凭据列表（分页）。"""
+        """
+        获取回收站 SNMP 凭据列表（分页）。
+
+        Args:
+            page: 页码（从 1 开始）
+            page_size: 每页记录数
+            keyword: 搜索关键字（可选）
+
+        Returns:
+            tuple[list[DeptSnmpCredential], int]: (已删除 SNMP 凭据列表, 总数)
+        """
         from sqlalchemy.orm import selectinload
 
         from app.models.snmp_credential import DeptSnmpCredential
@@ -133,7 +221,18 @@ class SnmpCredentialService(BaseService):
         )
 
     async def restore(self, snmp_cred_id: UUID) -> DeptSnmpCredential:
-        """恢复已删除的 SNMP 凭据。"""
+        """
+        恢复已删除的 SNMP 凭据。
+
+        Args:
+            snmp_cred_id: SNMP 凭据 ID
+
+        Returns:
+            DeptSnmpCredential: 恢复的 SNMP 凭据对象
+
+        Raises:
+            NotFoundException: SNMP 凭据不存在或未被删除
+        """
         obj = await self.snmp_cred_crud.get(self.db, snmp_cred_id, is_deleted=True)
         if not obj:
             raise NotFoundException(message="SNMP 凭据不存在或未被删除")
@@ -146,12 +245,28 @@ class SnmpCredentialService(BaseService):
         return obj
 
     async def batch_restore(self, ids: list[UUID]) -> BatchOperationResult:
-        """批量恢复已删除的 SNMP 凭据。"""
+        """
+        批量恢复已删除的 SNMP 凭据。
+
+        Args:
+            ids: SNMP 凭据 ID 列表
+
+        Returns:
+            BatchOperationResult: 批量操作结果
+        """
         success_count, failed_ids = await self.snmp_cred_crud.batch_restore(self.db, ids=ids)
         return self._build_batch_result(success_count, failed_ids, message="恢复完成")
 
     async def hard_delete(self, snmp_cred_id: UUID) -> None:
-        """彻底删除 SNMP 凭据（硬删除）。"""
+        """
+        彻底删除 SNMP 凭据（硬删除）。
+
+        Args:
+            snmp_cred_id: SNMP 凭据 ID
+
+        Raises:
+            NotFoundException: SNMP 凭据不存在或未被软删除
+        """
         obj = await self.snmp_cred_crud.get(self.db, snmp_cred_id, is_deleted=True)
         if not obj:
             raise NotFoundException(message="SNMP 凭据不存在或未被软删除")
@@ -161,14 +276,40 @@ class SnmpCredentialService(BaseService):
             raise NotFoundException(message="彻底删除失败")
 
     async def batch_hard_delete(self, ids: list[UUID]) -> BatchOperationResult:
-        """批量彻底删除 SNMP 凭据（硬删除）。"""
+        """
+        批量彻底删除 SNMP 凭据（硬删除）。
+
+        Args:
+            ids: SNMP 凭据 ID 列表
+
+        Returns:
+            BatchOperationResult: 批量操作结果
+        """
         success_count, failed_ids = await self.snmp_cred_crud.batch_remove(self.db, ids=ids, hard_delete=True)
         return self._build_batch_result(success_count, failed_ids, message="彻底删除完成")
 
     async def to_response(self, obj) -> DeptSnmpCredentialResponse:
+        """
+        将 ORM 对象转为响应对象（公开方法）。
+
+        Args:
+            obj: SNMP 凭据 ORM 对象
+
+        Returns:
+            DeptSnmpCredentialResponse: SNMP 凭据响应对象
+        """
         return await self._to_response(obj)
 
     async def _to_response(self, obj) -> DeptSnmpCredentialResponse:
+        """
+        将 ORM 对象转为响应对象（内部方法）。
+
+        Args:
+            obj: SNMP 凭据 ORM 对象
+
+        Returns:
+            DeptSnmpCredentialResponse: SNMP 凭据响应对象
+        """
         dept_name = None
         dept = await dept_crud.get(self.db, id=obj.dept_id)
         if dept:

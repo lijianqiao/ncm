@@ -18,7 +18,7 @@ from app.schemas.common import ResponseBase
 from app.schemas.token import Token, TokenAccess
 from app.schemas.user import UserResponse
 
-router = APIRouter()
+router = APIRouter(tags=["认证授权"])
 
 
 @router.post("/login", response_model=TokenAccess, summary="用户登录")

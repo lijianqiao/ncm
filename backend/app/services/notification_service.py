@@ -21,10 +21,19 @@ from app.models.alert import Alert
 
 
 class NotificationService:
-    """告警通知服务。"""
+    """
+    告警通知服务类。
+
+    提供 Webhook 和邮件通知功能。
+    """
 
     async def send_webhook(self, alert: Alert) -> None:
-        """发送 Webhook 通知（按配置决定是否启用）。"""
+        """
+        发送 Webhook 通知（按配置决定是否启用）。
+
+        Args:
+            alert: 告警对象
+        """
         if not settings.ALERT_WEBHOOK_ENABLED:
             return
 
@@ -63,8 +72,10 @@ class NotificationService:
         """
         发送邮件通知（默认禁用）。
 
-        注意：你当前没有邮件服务器，因此我们仅支持配置但不启用；
-        只有当 ALERT_EMAIL_ENABLED=true 时才会实际发送。
+        注意：只有当 ALERT_EMAIL_ENABLED=true 时才会实际发送。
+
+        Args:
+            alert: 告警对象
         """
         if not settings.ALERT_EMAIL_ENABLED:
             return

@@ -186,6 +186,13 @@ async def _auto_close_recovered_offline_alerts(
     自动关闭已恢复设备的离线告警。
 
     设备 offline_days < 阈值时，认为设备已恢复在线。
+
+    Args:
+        db (AsyncSession): 数据库会话。
+        service (AlertService): 告警服务。
+
+    Returns:
+        int: 关闭的告警数量。
     """
     closed = 0
     last_id: UUID | None = None
@@ -226,6 +233,13 @@ async def _auto_close_matched_shadow_alerts(
     自动关闭已纳管的影子资产告警。
 
     Discovery.status == MATCHED 时，关闭相关影子资产告警。
+
+    Args:
+        db (AsyncSession): 数据库会话。
+        service (AlertService): 告警服务。
+
+    Returns:
+        int: 关闭的告警数量。
     """
     closed = 0
     last_id: UUID | None = None
@@ -271,6 +285,12 @@ def scheduled_offline_alerts(self) -> dict[str, Any]:
 
     - 离线阈值：settings.ALERT_OFFLINE_DAYS_THRESHOLD（默认 3 天）
     - 影子资产：Discovery.status == SHADOW
+
+    Args:
+        self: Celery 任务实例。
+
+    Returns:
+        dict[str, Any]: 扫描和告警结果字典。
     """
     task_id = self.request.id
     started_at = datetime.now(UTC)

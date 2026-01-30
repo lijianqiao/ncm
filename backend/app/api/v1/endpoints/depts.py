@@ -21,7 +21,7 @@ from app.schemas.common import (
 )
 from app.schemas.dept import DeptCreate, DeptResponse, DeptUpdate
 
-router = APIRouter()
+router = APIRouter(tags=["部门管理"])
 
 
 @router.get("/tree", response_model=ResponseBase[list[DeptResponse]], summary="获取部门树")

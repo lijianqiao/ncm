@@ -19,7 +19,25 @@ if TYPE_CHECKING:
 
 
 class DeptSnmpCredential(AuditableModel):
-    """部门 SNMP 凭据模型。"""
+    """部门 SNMP 凭据模型。
+
+    按部门管理 SNMP 凭据，支持 SNMPv2c 和 SNMPv3 两种版本。
+    每个部门只能有一个 SNMP 凭据配置。
+
+    Attributes:
+        dept_id (UUID): 部门 ID，唯一。
+        snmp_version (str): SNMP 版本（v2c/v3）。
+        port (int): SNMP 端口，默认 161。
+        community_encrypted (str | None): SNMP 团体字串（加密存储，v2c 使用）。
+        v3_username (str | None): SNMPv3 用户名。
+        v3_auth_key_encrypted (str | None): SNMPv3 Auth Key（加密）。
+        v3_priv_key_encrypted (str | None): SNMPv3 Priv Key（加密）。
+        v3_auth_proto (str | None): SNMPv3 Auth 协议（MD5/SHA）。
+        v3_priv_proto (str | None): SNMPv3 Priv 协议（DES/AES）。
+        v3_security_level (str | None): SNMPv3 安全级别（noAuthNoPriv/authNoPriv/authPriv）。
+        description (str | None): 描述。
+        dept (Department | None): 所属部门对象。
+    """
 
     __tablename__ = "ncm_dept_snmp_credential"
     __table_args__ = (

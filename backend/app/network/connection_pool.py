@@ -26,7 +26,18 @@ from app.core.logger import logger
 
 @dataclass
 class PooledConnection:
-    """连接池中的连接包装。"""
+    """连接池中的连接包装。
+
+    Attributes:
+        conn: AsyncScrapli 连接对象
+        host: 设备 IP 地址或主机名
+        port: SSH 端口
+        username: SSH 用户名
+        platform: Scrapli 平台标识
+        created_at: 连接创建时间（monotonic 时间戳）
+        last_used_at: 最后使用时间（monotonic 时间戳）
+        use_count: 使用次数
+    """
 
     conn: AsyncScrapli
     host: str
@@ -106,11 +117,27 @@ class AsyncConnectionPool:
         self._closed = False
 
     def _make_key(self, host: str, port: int, username: str) -> str:
-        """生成连接缓存键。"""
+        """生成连接缓存键。
+
+        Args:
+            host: 设备 IP 地址或主机名
+            port: SSH 端口
+            username: SSH 用户名
+
+        Returns:
+            str: 连接缓存键（格式：host:port:username）
+        """
         return f"{host}:{port}:{username}"
 
     async def _is_connection_healthy(self, pooled: PooledConnection) -> bool:
-        """检查连接是否健康（带超时控制）。"""
+        """检查连接是否健康（带超时控制）。
+
+        Args:
+            pooled: 连接池包装对象
+
+        Returns:
+            bool: 连接是否健康
+        """
         if pooled.age > self.max_age:
             logger.debug("连接超过最大存活时间", host=pooled.host, age=pooled.age, max_age=self.max_age)
             return False
@@ -141,7 +168,11 @@ class AsyncConnectionPool:
         return True
 
     async def _close_connection(self, pooled: PooledConnection) -> None:
-        """安全关闭连接。"""
+        """安全关闭连接。
+
+        Args:
+            pooled: 连接池包装对象
+        """
         try:
             await pooled.conn.close()
             logger.debug(
@@ -285,7 +316,10 @@ class AsyncConnectionPool:
         return await self.acquire(host, username, password, platform, port, **kwargs)
 
     async def _evict_oldest(self) -> None:
-        """移除最旧的空闲连接。"""
+        """移除最旧的空闲连接。
+
+        当连接池达到最大连接数时，移除最久未使用的连接。
+        """
         if not self._pool:
             return
 
@@ -370,7 +404,14 @@ class AsyncConnectionPool:
 
 
 class PooledConnectionContext:
-    """连接池连接的上下文管理器。"""
+    """连接池连接的上下文管理器。
+
+    用于管理从连接池获取的连接，支持自动释放和异常时丢弃连接。
+
+    Attributes:
+        conn (AsyncScrapli): 底层 AsyncScrapli 连接对象（只读属性）
+        reused (bool): 是否为复用的连接（只读属性）
+    """
 
     def __init__(
         self,
@@ -418,6 +459,8 @@ async def get_connection_pool() -> AsyncConnectionPool:
     """
     获取全局连接池实例（懒加载）。
 
+    首次调用时创建连接池，后续调用返回同一实例。
+
     Returns:
         AsyncConnectionPool: 连接池实例
     """
@@ -446,7 +489,10 @@ async def get_connection_pool() -> AsyncConnectionPool:
 
 
 async def close_connection_pool() -> None:
-    """关闭全局连接池。"""
+    """关闭全局连接池。
+
+    释放所有连接并清空连接池。
+    """
     global _global_pool
 
     if _global_pool is not None:

@@ -20,17 +20,35 @@ if TYPE_CHECKING:
 
 
 class User(AuditableModel):
+    """用户模型。
+
+    系统用户表，存储用户基本信息、认证信息和权限关联。
+
+    Attributes:
+        username (str): 用户名，唯一，用于登录。
+        password (str): 密码哈希值。
+        nickname (str | None): 昵称。
+        email (str | None): 邮箱地址，唯一。
+        phone (str): 手机号，唯一，用于登录。
+        gender (str | None): 性别。
+        avatar (str | None): 头像 URL。
+        is_superuser (bool): 是否为超级管理员。
+        dept_id (UUID | None): 所属部门 ID。
+        dept (Department | None): 所属部门对象。
+        roles (list[Role]): 用户关联的角色列表。
+    """
+
     __tablename__ = "sys_user"
 
-    username: Mapped[str] = mapped_column(String(50), unique=True, index=True, nullable=False)
-    password: Mapped[str] = mapped_column(String(255), nullable=False)
-    nickname: Mapped[str | None] = mapped_column(String(50), nullable=True)
-    email: Mapped[str | None] = mapped_column(String(100), unique=True, index=True, nullable=True)
-    phone: Mapped[str] = mapped_column(String(20), unique=True, index=True, nullable=False)
-    gender: Mapped[str | None] = mapped_column(String(10), nullable=True)
-    avatar: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    username: Mapped[str] = mapped_column(String(50), unique=True, index=True, nullable=False, comment="用户名")
+    password: Mapped[str] = mapped_column(String(255), nullable=False, comment="密码哈希值")
+    nickname: Mapped[str | None] = mapped_column(String(50), nullable=True, comment="昵称")
+    email: Mapped[str | None] = mapped_column(String(100), unique=True, index=True, nullable=True, comment="邮箱地址")
+    phone: Mapped[str] = mapped_column(String(20), unique=True, index=True, nullable=False, comment="手机号")
+    gender: Mapped[str | None] = mapped_column(String(10), nullable=True, comment="性别")
+    avatar: Mapped[str | None] = mapped_column(String(255), nullable=True, comment="头像 URL")
 
-    is_superuser: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    is_superuser: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, comment="是否为超级管理员")
 
     # 部门关联
     dept_id: Mapped[uuid.UUID | None] = mapped_column(

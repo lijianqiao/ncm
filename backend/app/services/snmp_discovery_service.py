@@ -53,6 +53,13 @@ class SnmpDiscoveryService:
         discovery_crud: CRUDDiscovery,
         device_crud: CRUDDevice,
     ):
+        """
+        初始化 SNMP 设备发现服务。
+
+        Args:
+            discovery_crud: 发现记录 CRUD 实例
+            device_crud: 设备 CRUD 实例
+        """
         self.discovery_crud = discovery_crud
         self.device_crud = device_crud
 
@@ -104,7 +111,17 @@ class SnmpDiscoveryService:
         scan_result: ScanResult,
         snmp_cred_id: UUID | None,
     ) -> dict[str, dict[str, Any]]:
-        """使用 SNMP 补全扫描结果。"""
+        """
+        使用 SNMP 补全扫描结果。
+
+        Args:
+            db: 数据库会话
+            scan_result: 扫描结果
+            snmp_cred_id: SNMP 凭据 ID（可选）
+
+        Returns:
+            dict[str, dict[str, Any]]: IP 地址到 SNMP 补全数据的映射
+        """
         snmp_results: dict[str, dict[str, Any]] = {}
 
         if not snmp_cred_id:
@@ -162,7 +179,17 @@ class SnmpDiscoveryService:
         snmp_results: dict[str, dict[str, Any]],
         scan_task_id: str | None,
     ) -> list[DiscoveryCreate]:
-        """构建发现数据列表。"""
+        """
+        构建发现数据列表。
+
+        Args:
+            scan_result: 扫描结果
+            snmp_results: SNMP 补全数据映射
+            scan_task_id: 扫描任务 ID（可选）
+
+        Returns:
+            list[DiscoveryCreate]: 发现数据创建对象列表
+        """
         data_list: list[DiscoveryCreate] = []
 
         for host in scan_result.hosts:

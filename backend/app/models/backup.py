@@ -21,7 +21,24 @@ if TYPE_CHECKING:
 
 
 class Backup(AuditableModel):
-    """配置备份模型。"""
+    """配置备份模型。
+
+    网络设备配置备份表，存储设备配置内容和备份元信息。
+    支持小配置直接存储，大配置存储到 MinIO。
+
+    Attributes:
+        device_id (UUID): 设备 ID。
+        content (str | None): 配置内容（小配置直接存储）。
+        content_path (str | None): MinIO 存储路径（大配置）。
+        content_size (int): 配置大小（字节）。
+        backup_type (str): 备份类型（MANUAL/SCHEDULED/INCREMENTAL）。
+        status (str): 备份状态（SUCCESS/FAILED/PENDING）。
+        md5_hash (str | None): MD5 哈希值，用于配置变更检测。
+        operator_id (UUID | None): 操作人 ID。
+        error_message (str | None): 错误信息。
+        device (Device | None): 关联的设备对象。
+        operator (User | None): 操作人对象。
+    """
 
     __tablename__ = "ncm_backup"
     __table_args__ = (

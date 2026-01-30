@@ -22,12 +22,34 @@ from app.core.metrics import record_request_metrics
 
 
 class RequestLogMiddleware:
-    """全局请求日志中间件（ASGI 级别）。"""
+    """全局请求日志中间件（ASGI 级别）。
+
+    功能：
+    - 为每个请求生成唯一请求 ID
+    - 记录请求和响应日志
+    - 发布操作日志事件到事件总线
+    - 记录请求指标
+    """
 
     def __init__(self, app) -> None:
+        """初始化请求日志中间件。
+
+        Args:
+            app: ASGI 应用实例。
+        """
         self.app = app
 
     async def __call__(self, scope, receive, send) -> None:
+        """处理 ASGI 请求。
+
+        Args:
+            scope: ASGI 作用域字典。
+            receive: 接收消息的异步函数。
+            send: 发送消息的异步函数。
+
+        Returns:
+            None: 无返回值。
+        """
         if scope.get("type") != "http":
             await self.app(scope, receive, send)
             return

@@ -47,7 +47,16 @@ SUPPORTED_ROLLBACK_VENDORS: set[str] = {"h3c", "huawei", "cisco"}
 
 
 async def _mark_task_paused(task_id: str, message: str, details: dict[str, Any] | None = None) -> None:
-    """将任务标记为暂停状态（OTP 认证失败时使用）。"""
+    """将任务标记为暂停状态（OTP 认证失败时使用）。
+
+    Args:
+        task_id (str): 任务 ID。
+        message (str): 暂停原因消息。
+        details (dict[str, Any] | None): 暂停详情字典。
+
+    Returns:
+        None: 无返回值。
+    """
     async with AsyncSessionLocal() as db:
         task = await db.get(Task, UUID(task_id))
         if not task:
@@ -60,7 +69,15 @@ async def _mark_task_paused(task_id: str, message: str, details: dict[str, Any] 
 
 
 async def _mark_task_failed(task_id: str, error_message: str) -> None:
-    """将任务标记为失败状态。"""
+    """将任务标记为失败状态。
+
+    Args:
+        task_id (str): 任务 ID。
+        error_message (str): 错误消息。
+
+    Returns:
+        None: 无返回值。
+    """
     async with AsyncSessionLocal() as db:
         task = await db.get(Task, UUID(task_id))
         if not task:
@@ -155,7 +172,20 @@ def _check_otp_exception_in_results(results) -> OTPRequiredException | None:
 
 
 async def _get_device_credential(db, device: Device, failed_devices: list[str] | None = None):
-    """获取设备凭据（使用 match-case 进行认证类型匹配）。"""
+    """获取设备凭据（使用 match-case 进行认证类型匹配）。
+
+    Args:
+        db: 数据库会话。
+        device (Device): 设备对象。
+        failed_devices (list[str] | None): 失败设备列表，用于记录。
+
+    Returns:
+        DeviceCredential: 设备凭据对象。
+
+    Raises:
+        ValueError: 当设备缺少必要的认证配置时。
+        OTPRequiredException: 当需要 OTP 验证码时。
+    """
     auth_type = AuthType(device.auth_type)
 
     match auth_type:
@@ -199,6 +229,16 @@ async def _get_device_credential(db, device: Device, failed_devices: list[str] |
 
 
 async def _save_pre_change_backup(db, device: Device, config_content: str) -> Backup:
+    """保存变更前的配置备份。
+
+    Args:
+        db: 数据库会话。
+        device (Device): 设备对象。
+        config_content (str): 配置内容字符串。
+
+    Returns:
+        Backup: 创建的备份记录对象。
+    """
     content_size = len(config_content.encode("utf-8"))
     md5_hash = hashlib.md5(config_content.encode("utf-8")).hexdigest()
     backup = Backup(
@@ -228,6 +268,16 @@ def rollback_task(self, task_id: str) -> dict[str, Any]:
     """回滚下发任务（best-effort，先限定 H3C）。
 
     若遇到 OTP 认证失败，会将任务状态置为 PAUSED 并返回 otp_required 信息。
+
+    Args:
+        self: Celery 任务实例。
+        task_id (str): 下发任务 ID。
+
+    Returns:
+        dict[str, Any]: 回滚结果字典，包含状态和摘要信息。
+
+    Raises:
+        OTPRequiredException: 当需要 OTP 验证码时。
     """
     celery_task_logger.info("开始回滚任务", task_id=self.request.id, deploy_task_id=task_id)
     try:
@@ -251,7 +301,19 @@ def rollback_task(self, task_id: str) -> dict[str, Any]:
 
 
 async def _rollback_task_async(self, task_id: str) -> dict[str, Any]:
-    """回滚任务的核心实现（纯异步）。"""
+    """回滚任务的核心实现（纯异步）。
+
+    Args:
+        self: Celery 任务实例。
+        task_id (str): 任务 ID。
+
+    Returns:
+        dict[str, Any]: 回滚结果字典。
+
+    Raises:
+        NotFoundException: 当任务不存在时。
+        OTPRequiredException: 当需要 OTP 验证码时。
+    """
     from app.network.async_runner import run_async_tasks
     from app.network.async_tasks import async_collect_config, async_deploy_from_host_data
     from app.network.nornir_config import init_nornir_async
@@ -612,7 +674,20 @@ def async_deploy_task(self, task_id: str) -> dict[str, Any]:
 
 
 async def _async_deploy_task_impl(self, task_id: str, *, celery_task_id: str | None) -> dict[str, Any]:
-    """异步下发任务的核心实现（纯异步）。"""
+    """异步下发任务的核心实现（纯异步）。
+
+    Args:
+        self: Celery 任务实例。
+        task_id (str): 任务 ID。
+        celery_task_id (str | None): Celery 任务 ID，用于更新进度。
+
+    Returns:
+        dict[str, Any]: 下发结果字典。
+
+    Raises:
+        NotFoundException: 当任务不存在时。
+        OTPRequiredException: 当需要 OTP 验证码时。
+    """
     from app.network.async_runner import run_async_tasks
     from app.network.async_tasks import async_collect_config, async_deploy_from_host_data
     from app.network.nornir_config import init_nornir_async

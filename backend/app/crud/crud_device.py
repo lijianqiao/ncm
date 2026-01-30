@@ -34,7 +34,17 @@ class CRUDDevice(CRUDBase[Device, DeviceCreate, DeviceUpdate]):
         is_deleted: bool | None = False,
         options: Sequence[Any] | None = None,
     ) -> Device | None:
-        """通过 ID 获取设备（预加载部门关联）。"""
+        """通过 ID 获取设备（预加载部门关联）。
+
+        Args:
+            db (AsyncSession): 数据库会话。
+            id (UUID): 设备 ID。
+            is_deleted (bool | None): 软删除过滤，默认为 False。
+            options (Sequence[Any] | None): 查询选项列表，默认为 None（使用默认选项）。
+
+        Returns:
+            Device | None: 设备对象或 None。
+        """
         return await super().get(db, id, is_deleted=is_deleted, options=options or self._DEVICE_OPTIONS)
 
     async def get_by_ip(self, db: AsyncSession, ip_address: str) -> Device | None:

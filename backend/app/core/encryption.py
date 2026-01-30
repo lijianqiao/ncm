@@ -28,6 +28,11 @@ class EncryptionError(BadRequestException):
     """加密/解密异常。"""
 
     def __init__(self, message: str = "加密操作失败"):
+        """初始化加密异常。
+
+        Args:
+            message (str): 错误消息，默认为 "加密操作失败"。
+        """
         super().__init__(message=message)
 
 
@@ -35,6 +40,11 @@ class DecryptionError(BadRequestException):
     """解密异常。"""
 
     def __init__(self, message: str = "解密操作失败"):
+        """初始化解密异常。
+
+        Args:
+            message (str): 错误消息，默认为 "解密操作失败"。
+        """
         super().__init__(message=message)
 
 
@@ -226,10 +236,32 @@ def decrypt_otp_seed(ciphertext: str) -> str:
 
 
 def encrypt_snmp_secret(plaintext: str) -> str:
+    """加密 SNMP 密钥（使用 NCM_SNMP_KEY）。
+
+    Args:
+        plaintext (str): 明文 SNMP 密钥。
+
+    Returns:
+        str: Base64 编码的密文。
+
+    Raises:
+        EncryptionError: 加密失败。
+    """
     return encrypt_credential(plaintext, settings.NCM_SNMP_KEY)
 
 
 def decrypt_snmp_secret(ciphertext: str) -> str:
+    """解密 SNMP 密钥（使用 NCM_SNMP_KEY）。
+
+    Args:
+        ciphertext (str): 加密后的 SNMP 密钥。
+
+    Returns:
+        str: 明文 SNMP 密钥。
+
+    Raises:
+        DecryptionError: 解密失败。
+    """
     return decrypt_credential(ciphertext, settings.NCM_SNMP_KEY)
 
 

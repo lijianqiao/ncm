@@ -87,6 +87,18 @@ class CRUDBase[ModelType: Base, CreateSchemaType: BaseModel, UpdateSchemaType: B
 
     @classmethod
     def _ilike_contains(cls, column, keyword: str) -> ColumnElement[bool]:
+        """构建 ILIKE 包含查询条件（不区分大小写）。
+
+        Args:
+            column: SQLAlchemy 列对象。
+            keyword (str): 搜索关键词。
+
+        Returns:
+            ColumnElement[bool]: ILIKE 查询条件。
+
+        Raises:
+            ValueError: 当 keyword 为空时。
+        """
         kw = cls._normalize_keyword(keyword)
         if not kw:
             raise ValueError("keyword 不能为空")
@@ -95,6 +107,15 @@ class CRUDBase[ModelType: Base, CreateSchemaType: BaseModel, UpdateSchemaType: B
 
     @classmethod
     def _or_ilike_contains(cls, keyword: str | None, columns: Sequence[Any]) -> ColumnElement[bool] | None:
+        """构建多个列的 OR ILIKE 包含查询条件。
+
+        Args:
+            keyword (str | None): 搜索关键词。
+            columns (Sequence[Any]): SQLAlchemy 列对象列表。
+
+        Returns:
+            ColumnElement[bool] | None: OR ILIKE 查询条件，如果 keyword 为空则返回 None。
+        """
         kw = cls._normalize_keyword(keyword)
         if not kw:
             return None
@@ -125,6 +146,16 @@ class CRUDBase[ModelType: Base, CreateSchemaType: BaseModel, UpdateSchemaType: B
         true_values: set[str] | None = None,
         false_values: set[str] | None = None,
     ) -> bool | None:
+        """解析关键词为布尔值。
+
+        Args:
+            keyword (str | None): 要解析的关键词。
+            true_values (set[str] | None): 真值集合，默认为 None（使用默认值）。
+            false_values (set[str] | None): 假值集合，默认为 None（使用默认值）。
+
+        Returns:
+            bool | None: 解析后的布尔值，如果无法解析则返回 None。
+        """
         kw = cls._normalize_keyword(keyword)
         if not kw:
             return None
@@ -146,6 +177,17 @@ class CRUDBase[ModelType: Base, CreateSchemaType: BaseModel, UpdateSchemaType: B
         true_values: set[str] | None = None,
         false_values: set[str] | None = None,
     ) -> ColumnElement[bool] | None:
+        """从关键词构建布尔列查询条件。
+
+        Args:
+            keyword (str | None): 要解析的关键词。
+            column: SQLAlchemy 布尔列对象。
+            true_values (set[str] | None): 真值集合，默认为 None。
+            false_values (set[str] | None): 假值集合，默认为 None。
+
+        Returns:
+            ColumnElement[bool] | None: 布尔查询条件，如果无法解析则返回 None。
+        """
         value = cls._parse_bool_keyword(keyword, true_values=true_values, false_values=false_values)
         if value is None:
             return None
@@ -303,8 +345,13 @@ class CRUDBase[ModelType: Base, CreateSchemaType: BaseModel, UpdateSchemaType: B
         return (result.scalar() or 0) > 0
 
     async def count(self, db: AsyncSession) -> int:
-        """
-        获取记录总数 (支持软删除过滤)。
+        """获取记录总数（支持软删除过滤）。
+
+        Args:
+            db (AsyncSession): 数据库会话。
+
+        Returns:
+            int: 记录总数（仅统计未删除的记录）。
         """
         query = select(func.count()).select_from(self.model)
 
@@ -500,8 +547,14 @@ class CRUDBase[ModelType: Base, CreateSchemaType: BaseModel, UpdateSchemaType: B
         return list(result.scalars().all()), int(total)
 
     async def create(self, db: AsyncSession, *, obj_in: CreateSchemaType) -> ModelType:
-        """
-        创建新记录。
+        """创建新记录。
+
+        Args:
+            db (AsyncSession): 数据库会话。
+            obj_in (CreateSchemaType): 创建数据对象。
+
+        Returns:
+            ModelType: 创建后的记录对象。
         """
         obj_in_data = obj_in.model_dump(exclude_unset=True)
         db_obj = self.model(**obj_in_data)
@@ -513,8 +566,15 @@ class CRUDBase[ModelType: Base, CreateSchemaType: BaseModel, UpdateSchemaType: B
     async def update(
         self, db: AsyncSession, *, db_obj: ModelType, obj_in: UpdateSchemaType | dict[str, Any]
     ) -> ModelType:
-        """
-        更新记录。
+        """更新记录。
+
+        Args:
+            db (AsyncSession): 数据库会话。
+            db_obj (ModelType): 要更新的记录对象。
+            obj_in (UpdateSchemaType | dict[str, Any]): 更新数据对象或字典。
+
+        Returns:
+            ModelType: 更新后的记录对象。
         """
         obj_data = obj_in if isinstance(obj_in, dict) else obj_in.model_dump(exclude_unset=True)
 

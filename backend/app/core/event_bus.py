@@ -59,15 +59,26 @@ class EventBus:
         self._pending_tasks: set[asyncio.Task] = set()
 
     def subscribe(self, event_type: type[Event], handler: EventHandler) -> None:
-        """
-        订阅指定类型的事件。
+        """订阅指定类型的事件。
+
+        Args:
+            event_type (type[Event]): 事件类型。
+            handler (EventHandler): 事件处理函数。
+
+        Returns:
+            None: 无返回值。
         """
         self._handlers[event_type].append(handler)
         logger.info(f"已订阅事件: {event_type.__name__} -> {handler.__name__}")
 
     async def publish(self, event: Event) -> None:
-        """
-        发布事件。所有订阅者将异步执行。
+        """发布事件。所有订阅者将异步执行。
+
+        Args:
+            event (Event): 要发布的事件对象。
+
+        Returns:
+            None: 无返回值。
         """
         event_type = type(event)
         handlers = self._handlers.get(event_type, [])
@@ -100,8 +111,14 @@ class EventBus:
             logger.warning(f"事件总线 drain 超时，剩余任务数: {len(self._pending_tasks)}")
 
     async def _safe_call(self, handler: EventHandler, event: Event) -> None:
-        """
-        安全调用 handler，捕获异常防止影响其他 handler。
+        """安全调用 handler，捕获异常防止影响其他 handler。
+
+        Args:
+            handler (EventHandler): 事件处理函数。
+            event (Event): 事件对象。
+
+        Returns:
+            None: 无返回值。
         """
         try:
             await handler(event)

@@ -22,8 +22,13 @@ from fastapi_import_export.exceptions import ImportExportError
 
 
 def _format_validation_errors(errors: Sequence[Any]) -> list[dict]:
-    """
-    格式化验证错误列表，提取更友好的错误信息。
+    """格式化验证错误列表，提取更友好的错误信息。
+
+    Args:
+        errors (Sequence[Any]): 验证错误列表。
+
+    Returns:
+        list[dict]: 格式化后的错误列表，每个错误包含 field 和 message。
     """
     formatted = []
     for error in errors:
@@ -37,11 +42,17 @@ def _format_validation_errors(errors: Sequence[Any]) -> list[dict]:
 
 
 async def custom_exception_handler(request: Request, exc: CustomException):
-    """
-    自定义业务异常处理器。
+    """自定义业务异常处理器。
 
     返回格式与 ResponseBase 保持一致：
     {"code": xxx, "message": "...", "data": null/details}
+
+    Args:
+        request (Request): FastAPI 请求对象。
+        exc (CustomException): 自定义异常对象。
+
+    Returns:
+        JSONResponse: JSON 响应对象。
     """
     if isinstance(exc, OTPRequiredException):
         return build_otp_required_response(exc)
@@ -52,10 +63,16 @@ async def custom_exception_handler(request: Request, exc: CustomException):
 
 
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
-    """
-    请求参数验证异常处理器。
+    """请求参数验证异常处理器。
 
     返回格式与 ResponseBase 保持一致。
+
+    Args:
+        request (Request): FastAPI 请求对象。
+        exc (RequestValidationError): 请求验证异常对象。
+
+    Returns:
+        JSONResponse: JSON 响应对象。
     """
     errors = _format_validation_errors(exc.errors())
 
@@ -79,10 +96,16 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 
 
 async def pydantic_validation_exception_handler(request: Request, exc: ValidationError):
-    """
-    Pydantic 模型验证异常处理器 (捕获 Schema 层校验错误)。
+    """Pydantic 模型验证异常处理器（捕获 Schema 层校验错误）。
 
     返回格式与 ResponseBase 保持一致。
+
+    Args:
+        request (Request): FastAPI 请求对象。
+        exc (ValidationError): Pydantic 验证异常对象。
+
+    Returns:
+        JSONResponse: JSON 响应对象。
     """
     errors = _format_validation_errors(exc.errors())
 
@@ -106,11 +129,17 @@ async def pydantic_validation_exception_handler(request: Request, exc: Validatio
 
 
 async def generic_exception_handler(request: Request, exc: Exception):
-    """
-    通用异常处理器，捕获所有未处理的异常。
+    """通用异常处理器，捕获所有未处理的异常。
 
     生产环境中不暴露详细错误信息，仅返回统一的 500 错误。
     返回格式与 ResponseBase 保持一致。
+
+    Args:
+        request (Request): FastAPI 请求对象。
+        exc (Exception): 异常对象。
+
+    Returns:
+        JSONResponse: JSON 响应对象。
     """
     try:
         client_ip = request.client.host if request.client else None
@@ -133,7 +162,15 @@ async def generic_exception_handler(request: Request, exc: Exception):
 
 
 async def import_export_exception_handler(request: Request, exc: ImportExportError):
-    """导入导出异常处理器，返回格式与 ResponseBase 保持一致。"""
+    """导入导出异常处理器，返回格式与 ResponseBase 保持一致。
+
+    Args:
+        request (Request): FastAPI 请求对象。
+        exc (ImportExportError): 导入导出异常对象。
+
+    Returns:
+        JSONResponse: JSON 响应对象。
+    """
     return JSONResponse(
         status_code=int(exc.status_code),
         content=jsonable_encoder(
@@ -143,8 +180,13 @@ async def import_export_exception_handler(request: Request, exc: ImportExportErr
 
 
 def register_exception_handlers(app: FastAPI) -> None:
-    """
-    注册所有全局异常处理器。
+    """注册所有全局异常处理器。
+
+    Args:
+        app (FastAPI): FastAPI 应用实例。
+
+    Returns:
+        None: 无返回值。
     """
     app.add_exception_handler(CustomException, custom_exception_handler)  # type: ignore
     app.add_exception_handler(ImportExportError, import_export_exception_handler)  # type: ignore

@@ -120,7 +120,15 @@ def _discover_templates() -> dict[str, str]:
 
 
 def _build_template_key(platform: str, command: str) -> str:
-    """构建模板查找键。"""
+    """构建模板查找键。
+
+    Args:
+        platform: 设备平台标识
+        command: 命令字符串
+
+    Returns:
+        str: 模板查找键（格式：platform_command_key）
+    """
     command_key = _normalize_command_for_key(command)
     return f"{platform}_{command_key}"
 
@@ -202,6 +210,9 @@ def register_template(platform: str, command: str, path: str) -> None:
         platform: 平台标识
         command: 命令
         path: 模板文件路径
+
+    Raises:
+        FileNotFoundError: 模板文件不存在（不会显式抛出，但会在 get_template_path 时返回 None）
     """
     template_key = _build_template_key(platform, command)
     CUSTOM_TEMPLATES[template_key] = path

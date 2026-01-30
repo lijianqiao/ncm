@@ -81,6 +81,14 @@ class OTPService:
     # ===== OTP 缓存管理 =====
 
     def _normalize_device_group(self, device_group: str | Enum) -> str:
+        """标准化设备分组值。
+
+        Args:
+            device_group (str | Enum): 设备分组值。
+
+        Returns:
+            str: 标准化后的字符串。
+        """
         if isinstance(device_group, Enum):
             return str(device_group.value)
         return str(device_group)

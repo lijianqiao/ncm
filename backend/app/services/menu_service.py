@@ -29,12 +29,28 @@ class MenuService(BaseService, PermissionCacheMixin):
     """
 
     def __init__(self, db: AsyncSession, menu_crud: CRUDMenu):
+        """
+        初始化菜单服务。
+
+        Args:
+            db: 异步数据库会话
+            menu_crud: 菜单 CRUD 实例
+        """
         super().__init__(db)
         self.menu_crud = menu_crud
 
     @staticmethod
     def _to_menu_response(menu: Menu, *, children: list[MenuResponse] | None = None) -> MenuResponse:
-        """将 ORM Menu 转为响应对象，避免访问关系属性触发隐式 IO。"""
+        """
+        将 ORM Menu 转为响应对象，避免访问关系属性触发隐式 IO。
+
+        Args:
+            menu: 菜单 ORM 对象
+            children: 子菜单列表（可选）
+
+        Returns:
+            MenuResponse: 菜单响应对象
+        """
 
         return MenuResponse(
             id=menu.id,
@@ -57,6 +73,15 @@ class MenuService(BaseService, PermissionCacheMixin):
 
     @staticmethod
     def _normalize_path(path: str | None) -> str | None:
+        """
+        规范化路径字符串。
+
+        Args:
+            path: 路径字符串（可选）
+
+        Returns:
+            str | None: 规范化后的路径，空字符串转为 None
+        """
         if path is None:
             return None
         p = path.strip()
@@ -64,12 +89,32 @@ class MenuService(BaseService, PermissionCacheMixin):
 
     @staticmethod
     def _is_permission_code_registered(code: str) -> bool:
+        """
+        检查权限码是否已注册。
+
+        Args:
+            code: 权限码
+
+        Returns:
+            bool: 是否已注册
+        """
         return code in {c.value for c in PermissionCode}
 
     async def _validate_menu_fields(
         self, *, menu_type: MenuType, path: str | None, permission: str | None, menu_id=None
     ) -> None:
-        """按 MenuType 校验字段组合，尽量在写库前拦截无效数据。"""
+        """
+        按 MenuType 校验字段组合，尽量在写库前拦截无效数据。
+
+        Args:
+            menu_type: 菜单类型
+            path: 路径（可选）
+            permission: 权限码（可选）
+            menu_id: 菜单 ID（可选，用于排除自身检查唯一性）
+
+        Raises:
+            DomainValidationException: 字段组合不符合规则时抛出
+        """
 
         normalized_path = self._normalize_path(path)
 
@@ -104,19 +149,41 @@ class MenuService(BaseService, PermissionCacheMixin):
             return
 
     async def get_menus(self) -> list[Menu]:
+        """
+        获取所有菜单列表（分页查询，最多 100 条）。
+
+        Returns:
+            list[Menu]: 菜单列表
+        """
         # 使用分页查询替代 get_multi
         menus, _ = await self.menu_crud.get_multi_paginated(self.db, page=1, page_size=100)
         return menus
 
     async def get_menu(self, menu_id: UUID) -> MenuResponse:
-        """获取单个菜单详情。"""
+        """
+        获取单个菜单详情。
+
+        Args:
+            menu_id: 菜单 ID
+
+        Returns:
+            MenuResponse: 菜单响应对象
+
+        Raises:
+            NotFoundException: 菜单不存在
+        """
         menu = await self.menu_crud.get(self.db, id=menu_id)
         if not menu:
             raise NotFoundException(message="菜单不存在")
         return self._to_menu_response(menu, children=[])
 
     async def get_menu_options_tree(self) -> list[MenuResponse]:
-        """获取可分配菜单 options 树（用于角色创建/编辑时选择菜单）。"""
+        """
+        获取可分配菜单 options 树（用于角色创建/编辑时选择菜单）。
+
+        Returns:
+            list[MenuResponse]: 菜单树列表（已排序）
+        """
 
         menus = await self.menu_crud.get_all_not_deleted(self.db)
         if not menus:
@@ -162,7 +229,17 @@ class MenuService(BaseService, PermissionCacheMixin):
         return roots
 
     async def get_my_menus_tree(self, current_user: User) -> list[MenuResponse]:
-        """获取当前用户可见的导航菜单树（不返回隐藏权限点）。"""
+        """
+        获取当前用户可见的导航菜单树（不返回隐藏权限点）。
+
+        根据用户角色和权限过滤菜单，超级管理员可见所有菜单。
+
+        Args:
+            current_user: 当前用户对象
+
+        Returns:
+            list[MenuResponse]: 用户可见的菜单树列表
+        """
 
         menus = await self.menu_crud.get_all_not_deleted(self.db)
         if not menus:
@@ -256,6 +333,17 @@ class MenuService(BaseService, PermissionCacheMixin):
     ) -> tuple[list[MenuResponse], int]:
         """
         获取分页菜单列表。
+
+        Args:
+            page: 页码（从 1 开始）
+            page_size: 每页记录数
+            keyword: 关键词搜索（可选）
+            is_active: 是否激活过滤（可选）
+            is_hidden: 是否隐藏过滤（可选）
+            type: 菜单类型过滤（可选）
+
+        Returns:
+            tuple[list[MenuResponse], int]: (菜单列表, 总数)
         """
         menus, total = await self.menu_crud.get_multi_paginated(
             self.db,
@@ -279,7 +367,18 @@ class MenuService(BaseService, PermissionCacheMixin):
         type: MenuType | None = None,
     ) -> tuple[list[MenuResponse], int]:
         """
-        获取已删除菜单列表 (回收站 - 分页)。
+        获取已删除菜单列表（回收站 - 分页）。
+
+        Args:
+            page: 页码（从 1 开始）
+            page_size: 每页记录数
+            keyword: 关键词搜索（可选）
+            is_active: 是否激活过滤（可选）
+            is_hidden: 是否隐藏过滤（可选）
+            type: 菜单类型过滤（可选）
+
+        Returns:
+            tuple[list[MenuResponse], int]: (已删除菜单列表, 总数)
         """
         menus, total = await self.menu_crud.get_multi_deleted_paginated(
             self.db,
@@ -294,6 +393,18 @@ class MenuService(BaseService, PermissionCacheMixin):
 
     @transactional()
     async def create_menu(self, obj_in: MenuCreate) -> MenuResponse:
+        """
+        创建菜单。
+
+        Args:
+            obj_in: 菜单创建数据
+
+        Returns:
+            MenuResponse: 创建的菜单响应对象
+
+        Raises:
+            DomainValidationException: 字段组合不符合规则时抛出
+        """
         await self._validate_menu_fields(menu_type=obj_in.type, path=obj_in.path, permission=obj_in.permission)
         menu = await self.menu_crud.create(self.db, obj_in=obj_in)
         self._invalidate_permissions_cache_after_commit([])
@@ -301,6 +412,20 @@ class MenuService(BaseService, PermissionCacheMixin):
 
     @transactional()
     async def update_menu(self, id: UUID, obj_in: MenuUpdate) -> MenuResponse:
+        """
+        更新菜单。
+
+        Args:
+            id: 菜单 ID
+            obj_in: 菜单更新数据
+
+        Returns:
+            MenuResponse: 更新后的菜单响应对象
+
+        Raises:
+            NotFoundException: 菜单不存在
+            DomainValidationException: 字段组合不符合规则时抛出
+        """
         menu = await self.menu_crud.get(self.db, id=id)
         if not menu:
             raise NotFoundException(message="菜单不存在")
@@ -323,6 +448,18 @@ class MenuService(BaseService, PermissionCacheMixin):
 
     @transactional()
     async def delete_menu(self, id: UUID) -> MenuResponse:
+        """
+        删除菜单（软删除）。
+
+        Args:
+            id: 菜单 ID
+
+        Returns:
+            MenuResponse: 删除的菜单响应对象
+
+        Raises:
+            NotFoundException: 菜单不存在或删除失败
+        """
         menu = await self.menu_crud.get(self.db, id=id)
         if not menu:
             raise NotFoundException(message="菜单不存在")
@@ -360,7 +497,16 @@ class MenuService(BaseService, PermissionCacheMixin):
 
     @transactional()
     async def batch_delete_menus(self, ids: list[UUID], hard_delete: bool = False) -> BatchOperationResult:
-        """批量删除菜单。"""
+        """
+        批量删除菜单。
+
+        Args:
+            ids: 菜单 ID 列表
+            hard_delete: 是否硬删除（默认 False，软删除）
+
+        Returns:
+            BatchOperationResult: 批量操作结果
+        """
         affected_user_ids = await self.menu_crud.get_affected_user_ids_by_menu_ids(self.db, menu_ids=ids)
         success_count, failed_ids = await self.menu_crud.batch_remove(self.db, ids=ids, hard_delete=hard_delete)
         self._invalidate_permissions_cache_after_commit(affected_user_ids)
@@ -368,7 +514,18 @@ class MenuService(BaseService, PermissionCacheMixin):
 
     @transactional()
     async def restore_menu(self, id: UUID) -> MenuResponse:
-        """恢复已删除菜单。"""
+        """
+        恢复已删除菜单。
+
+        Args:
+            id: 菜单 ID
+
+        Returns:
+            MenuResponse: 恢复的菜单响应对象
+
+        Raises:
+            NotFoundException: 菜单不存在
+        """
         affected_user_ids = await self.menu_crud.get_affected_user_ids(self.db, menu_id=id)
         result = await self.batch_restore_menus(ids=[id])
         if result.success_count == 0:
@@ -383,7 +540,15 @@ class MenuService(BaseService, PermissionCacheMixin):
 
     @transactional()
     async def batch_restore_menus(self, ids: list[UUID]) -> BatchOperationResult:
-        """批量恢复菜单。"""
+        """
+        批量恢复菜单。
+
+        Args:
+            ids: 菜单 ID 列表
+
+        Returns:
+            BatchOperationResult: 批量操作结果
+        """
         affected_user_ids = await self.menu_crud.get_affected_user_ids_by_menu_ids(self.db, menu_ids=ids)
         success_count, failed_ids = await self.menu_crud.batch_restore(self.db, ids=ids)
         self._invalidate_permissions_cache_after_commit(affected_user_ids)

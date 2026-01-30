@@ -19,7 +19,22 @@ if TYPE_CHECKING:
 
 
 class Department(AuditableModel):
-    """部门模型。"""
+    """部门模型。
+
+    系统部门表，支持树形结构，用于组织架构管理和数据权限控制。
+
+    Attributes:
+        name (str): 部门名称。
+        code (str): 部门编码，唯一。
+        parent_id (UUID | None): 父部门 ID，支持多级部门。
+        sort (int): 排序权重。
+        leader (str | None): 负责人。
+        phone (str | None): 联系电话。
+        email (str | None): 联系邮箱。
+        children (list[Department]): 子部门列表。
+        parent (Department | None): 父部门对象。
+        users (list[User]): 部门下的用户列表。
+    """
 
     __tablename__ = "sys_dept"
     __table_args__ = (

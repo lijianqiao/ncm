@@ -34,7 +34,7 @@ from app.schemas.backup import BackupBatchRequest
 from app.schemas.common import ResponseBase
 from app.core.enums import BackupType
 
-router = APIRouter()
+router = APIRouter(tags=["任务管理"])
 
 # 超级管理员依赖注解
 SuperuserDep = Annotated[User, Depends(get_current_active_superuser)]
@@ -161,6 +161,23 @@ async def resume_task_group(
     dept_id: UUID = Query(..., description="部门ID"),
     group: str = Query(..., description="设备分组"),
 ) -> ResponseBase[dict]:
+    """恢复指定任务中某个分组的执行。
+
+    Args:
+        task_id: 任务 ID。
+        backup_service: 备份服务依赖。
+        deploy_service: 下发服务依赖。
+        _: 超级管理员权限依赖。
+        dept_id: 部门 ID。
+        group: 设备分组。
+
+    Returns:
+        ResponseBase[dict]: 恢复结果与任务 ID 信息。
+
+    Raises:
+        NotFoundException: 任务不存在或不支持恢复。
+        BadRequestException: 找不到可恢复的设备或任务类型不支持。
+    """
     batch_info = await otp_coordinator.registry.get_batch(task_id)
     if not batch_info:
         raise NotFoundException(message="任务不存在或不支持恢复")

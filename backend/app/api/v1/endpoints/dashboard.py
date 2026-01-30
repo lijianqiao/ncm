@@ -12,7 +12,7 @@ from app.api import deps
 from app.schemas.common import ResponseBase
 from app.schemas.dashboard import DashboardStats
 
-router = APIRouter()
+router = APIRouter(tags=["仪表盘"])
 
 
 @router.get("/summary", response_model=ResponseBase[DashboardStats], summary="获取仪表盘统计")

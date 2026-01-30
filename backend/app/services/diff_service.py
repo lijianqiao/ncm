@@ -25,9 +25,20 @@ LARGE_TEXT_THRESHOLD = 100 * 1024  # 100KB
 
 
 class DiffService:
-    """配置差异服务。"""
+    """
+    配置差异服务。
+
+    基于备份内容生成 unified diff，用于配置变更告警与差异查看。
+    """
 
     def __init__(self, db: AsyncSession, backup_crud: CRUDBackup):
+        """
+        初始化配置差异服务。
+
+        Args:
+            db: 异步数据库会话
+            backup_crud: 备份 CRUD 实例
+        """
         self.db = db
         self.backup_crud = backup_crud
 
@@ -35,8 +46,11 @@ class DiffService:
         """
         获取用于对比的两份备份（最新与上一份成功备份）。
 
+        Args:
+            device_id: 设备 ID
+
         Returns:
-            (new_backup, old_backup)
+            tuple[Backup | None, Backup | None]: (最新备份, 上一份备份)，如果只有一份则返回 (backup, None)，如果没有则返回 (None, None)
         """
         query = (
             select(Backup)
@@ -61,6 +75,12 @@ class DiffService:
         预处理文本行：
         - 去除行尾空白
         - 去除空行（避免无意义变更）
+
+        Args:
+            text: 原始文本
+
+        Returns:
+            list[str]: 规范化后的行列表
         """
         lines = []
         for line in text.splitlines():
@@ -73,6 +93,14 @@ class DiffService:
     def compute_unified_diff(self, old_text: str, new_text: str, *, context_lines: int = 3) -> str:
         """
         计算 unified diff（同步版本，适用于小文本）。
+
+        Args:
+            old_text: 旧文本内容
+            new_text: 新文本内容
+            context_lines: 上下文行数（默认 3）
+
+        Returns:
+            str: unified diff 字符串
         """
         old_lines = self._normalize_lines(old_text)
         new_lines = self._normalize_lines(new_text)
@@ -92,6 +120,14 @@ class DiffService:
         计算 unified diff（异步版本）。
 
         对于大文本（超过 100KB），使用线程池执行以避免阻塞事件循环。
+
+        Args:
+            old_text: 旧文本内容
+            new_text: 新文本内容
+            context_lines: 上下文行数（默认 3）
+
+        Returns:
+            str: unified diff 字符串
         """
         total_size = len(old_text) + len(new_text)
         if total_size > LARGE_TEXT_THRESHOLD:
@@ -102,5 +138,15 @@ class DiffService:
 
     @staticmethod
     def should_alert(diff_text: str) -> bool:
-        """diff 不为空则认为需要告警。"""
+        """
+        判断 diff 是否需要告警。
+
+        diff 不为空则认为需要告警。
+
+        Args:
+            diff_text: diff 文本内容
+
+        Returns:
+            bool: 是否需要告警
+        """
         return bool(diff_text.strip())

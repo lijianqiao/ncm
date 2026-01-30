@@ -52,10 +52,11 @@ from app.schemas.snmp_credential import (
 )
 from app.services.snmp_credential_service import SnmpCredentialService
 
-router = APIRouter()
+router = APIRouter(tags=["SNMP 凭据"])
 
 
 def _get_service(db: deps.SessionDep) -> SnmpCredentialService:
+    """获取 SNMP 凭据服务实例。"""
     return SnmpCredentialService(db, snmp_cred_crud)
 
 
@@ -260,6 +261,17 @@ async def export_snmp_credentials(
     _: deps.User = Depends(deps.require_permissions([PermissionCode.SNMP_CRED_EXPORT.value])),
     fmt: str = Query("csv", pattern="^(csv|xlsx)$", description="导出格式"),
 ):
+    """导出 SNMP 凭据。
+
+    Args:
+        db (Session): 数据库会话。
+        current_user (User): 当前登录用户。
+        _: 权限依赖。
+        fmt (str): 导出格式，支持 csv 或 xlsx。
+
+    Returns:
+        FileResponse: 文件响应。
+    """
     svc = ImportExportService(db=db, redis_client=None, base_dir=str(settings.IMPORT_EXPORT_TMP_DIR or "") or None)
     result = await svc.export_table(fmt=fmt, filename_prefix="snmp_credentials", df_fn=export_snmp_credentials_df)
     return FileResponse(
@@ -348,6 +360,21 @@ async def preview_snmp_credential_import(
     page_size: int = Query(20, ge=1, le=200, description="每页数量"),
     kind: str = Query("all", pattern="^(all|valid)$", description="预览类型"),
 ) -> ResponseBase[ImportPreviewResponse]:
+    """预览 SNMP 凭据导入数据。
+
+    Args:
+        db (Session): 数据库会话。
+        current_user (User): 当前登录用户。
+        _: 权限依赖。
+        import_id (UUID): 导入任务 ID。
+        checksum (str): 文件校验和。
+        page (int): 页码。
+        page_size (int): 每页数量。
+        kind (str): 预览类型 (all/valid)。
+
+    Returns:
+        ResponseBase[ImportPreviewResponse]: 预览数据。
+    """
     svc = ImportExportService(db=db, redis_client=None, base_dir=str(settings.IMPORT_EXPORT_TMP_DIR or "") or None)
     resp = await svc.preview(import_id=import_id, checksum=checksum, page=page, page_size=page_size, kind=kind)
     return ResponseBase(data=resp)

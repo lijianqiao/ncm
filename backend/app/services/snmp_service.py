@@ -78,16 +78,39 @@ class SnmpEnrichResult:
 
 
 class SnmpService:
+    """
+    SNMP v2c 客户端封装类。
+
+    提供 SNMP GET 和 WALK 操作，以及基础信息补全功能。
+    """
+
     def __init__(
         self,
         *,
         timeout_seconds: int | None = None,
         retries: int | None = None,
     ):
+        """
+        初始化 SNMP 服务。
+
+        Args:
+            timeout_seconds: 超时时间（秒，可选）
+            retries: 重试次数（可选）
+        """
         self.timeout_seconds = timeout_seconds if timeout_seconds is not None else settings.SNMP_TIMEOUT_SECONDS
         self.retries = retries if retries is not None else settings.SNMP_RETRIES
 
     async def _create_target(self, host: str, cred: SnmpV2cCredential) -> UdpTransportTarget:
+        """
+        创建 SNMP 传输目标。
+
+        Args:
+            host: 主机地址
+            cred: SNMP v2c 凭据
+
+        Returns:
+            UdpTransportTarget: UDP 传输目标
+        """
         return await UdpTransportTarget.create(
             (host, cred.port),
             timeout=self.timeout_seconds,
@@ -95,12 +118,32 @@ class SnmpService:
         )
 
     def _close_engine(self, engine: SnmpEngine) -> None:
+        """
+        关闭 SNMP 引擎。
+
+        Args:
+            engine: SNMP 引擎对象
+        """
         try:
             engine.close_dispatcher()
         except Exception:
             pass
 
     async def get_many(self, host: str, cred: SnmpV2cCredential, oids: Iterable[str]) -> dict[str, object]:
+        """
+        批量获取 SNMP OID 值。
+
+        Args:
+            host: 主机地址
+            cred: SNMP v2c 凭据
+            oids: OID 列表
+
+        Returns:
+            dict[str, object]: OID 到值的映射
+
+        Raises:
+            RuntimeError: SNMP 操作失败
+        """
         engine = SnmpEngine()
         try:
             oid_list = list(oids)
@@ -134,6 +177,21 @@ class SnmpService:
     async def walk(
         self, host: str, cred: SnmpV2cCredential, root_oid: str, *, max_rows: int = 2000
     ) -> list[tuple[str, object]]:
+        """
+        执行 SNMP WALK 操作。
+
+        Args:
+            host: 主机地址
+            cred: SNMP v2c 凭据
+            root_oid: 根 OID
+            max_rows: 最大返回行数（默认 2000）
+
+        Returns:
+            list[tuple[str, object]]: (OID, 值) 元组列表
+
+        Raises:
+            RuntimeError: SNMP 操作失败
+        """
         engine = SnmpEngine()
         try:
             target = await self._create_target(host, cred)
@@ -162,6 +220,16 @@ class SnmpService:
             self._close_engine(engine)
 
     async def enrich_basic(self, host: str, cred: SnmpV2cCredential) -> SnmpEnrichResult:
+        """
+        获取设备基础 SNMP 信息（补全）。
+
+        Args:
+            host: 主机地址
+            cred: SNMP v2c 凭据
+
+        Returns:
+            SnmpEnrichResult: SNMP 补全结果
+        """
         try:
             values = await self.get_many(host, cred, [SYS_NAME_OID, SYS_DESCR_OID])
             bridge_mac_value = None
@@ -257,6 +325,16 @@ class SnmpService:
             return SnmpEnrichResult(ok=False, error=str(e))
 
     async def _get_ifindex_by_ip(self, ip: str, cred: SnmpV2cCredential) -> int | None:
+        """
+        根据 IP 地址获取接口索引。
+
+        Args:
+            ip: IP 地址
+            cred: SNMP v2c 凭据
+
+        Returns:
+            int | None: 接口索引，如果不存在则返回 None
+        """
         parts = ip.split(".")
         if len(parts) != 4:
             return None

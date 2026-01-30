@@ -13,7 +13,15 @@ from typing import Any
 
 
 class VendorType(str, Enum):
-    """设备厂商类型。"""
+    """设备厂商类型枚举。
+
+    Attributes:
+        H3C: H3C 厂商
+        HUAWEI: 华为厂商
+        CISCO: 思科厂商
+        ARISTA: Arista 厂商
+        JUNIPER: Juniper 厂商
+    """
 
     H3C = "h3c"
     HUAWEI = "huawei"
@@ -23,7 +31,16 @@ class VendorType(str, Enum):
 
 
 class ScrapliPlatform(str, Enum):
-    """Scrapli 平台标识。"""
+    """Scrapli 平台标识枚举。
+
+    Attributes:
+        HP_COMWARE: H3C Comware 平台
+        HUAWEI_VRP: 华为 VRP 平台
+        CISCO_IOSXE: 思科 IOS XE 平台
+        CISCO_NXOS: 思科 NX-OS 平台
+        ARISTA_EOS: Arista EOS 平台
+        JUNIPER_JUNOS: Juniper JunOS 平台
+    """
 
     HP_COMWARE = "hp_comware"
     HUAWEI_VRP = "huawei_vrp"
@@ -60,7 +77,14 @@ NTC_PLATFORM_MAP: dict[str, str] = {
 
 
 def _expand_cisco_commands(cmd_map: dict[str, str]) -> dict[str, str]:
-    """将 cisco_iosxe 命令自动复制到 cisco_ios（两者命令相同）。"""
+    """将 cisco_iosxe 命令自动复制到 cisco_ios（两者命令相同）。
+
+    Args:
+        cmd_map: 命令映射字典
+
+    Returns:
+        dict[str, str]: 更新后的命令映射字典
+    """
     if "cisco_iosxe" in cmd_map and "cisco_ios" not in cmd_map:
         cmd_map["cisco_ios"] = cmd_map["cisco_iosxe"]
     return cmd_map
@@ -405,7 +429,7 @@ def detect_vendor_from_version(version_output: str) -> str | None:
         version_output: display version / show version 命令输出
 
     Returns:
-        str | None: 识别出的厂商，未识别返回 None
+        str | None: 识别出的厂商（h3c、huawei、cisco、arista、juniper），未识别返回 None
     """
     output_lower = version_output.lower()
 

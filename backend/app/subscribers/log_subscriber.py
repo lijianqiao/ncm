@@ -15,8 +15,13 @@ from app.models.log import OperationLog
 
 
 async def handle_operation_log_event(event: Event) -> None:
-    """
-    处理操作日志事件，写入数据库。
+    """处理操作日志事件，写入数据库。
+
+    Args:
+        event: 事件对象，需为 OperationLogEvent 类型
+
+    Raises:
+        Exception: 数据库操作异常（已记录日志）
     """
     if not isinstance(event, OperationLogEvent):
         return
@@ -61,5 +66,7 @@ async def handle_operation_log_event(event: Event) -> None:
 def register_log_subscribers() -> None:
     """
     注册日志相关的事件订阅者。应在应用启动时调用。
+
+    将 handle_operation_log_event 注册为 OperationLogEvent 的订阅者。
     """
     event_bus.subscribe(OperationLogEvent, handle_operation_log_event)

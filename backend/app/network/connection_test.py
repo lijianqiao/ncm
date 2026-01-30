@@ -39,7 +39,14 @@ from app.network.scrapli_utils import (
 
 @dataclass
 class ConnectionTestResult:
-    """连接测试结果。"""
+    """连接测试结果。
+
+    Attributes:
+        success: 是否连接成功
+        message: 结果消息
+        device_info: 设备信息字典（成功时包含 host, platform, port, version_output, detected_vendor）
+        error_type: 错误类型（auth_failed, timeout, connection_error, unknown）
+    """
 
     success: bool
     message: str
@@ -68,6 +75,11 @@ async def test_device_connection(
 
     Returns:
         ConnectionTestResult: 连接测试结果
+
+    Raises:
+        ScrapliAuthenticationFailed: 认证失败（已转换为 ConnectionTestResult）
+        ScrapliTimeout: 连接超时（已转换为 ConnectionTestResult）
+        ScrapliConnectionError: 连接错误（已转换为 ConnectionTestResult）
     """
     logger.info(
         "开始设备连接测试",
@@ -153,6 +165,12 @@ async def test_device_connection_by_vendor(
 
     Returns:
         ConnectionTestResult: 连接测试结果
+
+    Raises:
+        ValueError: 不支持的厂商类型
+        ScrapliAuthenticationFailed: 认证失败（已转换为 ConnectionTestResult）
+        ScrapliTimeout: 连接超时（已转换为 ConnectionTestResult）
+        ScrapliConnectionError: 连接错误（已转换为 ConnectionTestResult）
     """
     platform = get_platform_for_vendor(vendor)
     return await test_device_connection(
@@ -185,9 +203,18 @@ async def execute_command_on_device(
         platform: Scrapli 平台
         port: SSH 端口
         timeout: 命令执行超时时间（秒）
-     disable_paging(conn, platform)
+
     Returns:
-        dict: 执行结果 {"success": bool, "output": str, "error": str | None}
+        dict[str, Any]: 执行结果：
+        - success (bool): 是否成功
+        - output (str): 命令输出
+        - error (str | None): 错误信息（失败时）
+
+    Raises:
+        ScrapliAuthenticationFailed: 认证失败
+        ScrapliTimeout: 命令执行超时（已转换为返回字典）
+        ScrapliConnectionNotOpened: 连接未打开（已转换为返回字典）
+        ScrapliConnectionError: 连接错误（已转换为返回字典）
     """
 
     def _is_cisco_backup_command(cmd: str, plat: str) -> bool:
@@ -341,7 +368,10 @@ async def execute_commands_on_device(
         vendor: 设备厂商（用于保存配置，h3c/huawei/cisco）
 
     Returns:
-        dict: {"success": bool, "output": str, "error": str | None, "save_output": str | None}
+        dict[str, Any]: {"success": bool, "output": str, "error": str | None, "save_output": str | None}
+
+    Raises:
+        ScrapliAuthenticationFailed: 认证失败时抛出
     """
     safe_commands = [c.strip() for c in (commands or []) if isinstance(c, str) and c.strip()]
     if not safe_commands:
@@ -507,7 +537,12 @@ async def batch_test_connections(
         concurrency: 并发数
 
     Returns:
-        list[dict]: 测试结果列表
+        list[dict[str, Any]]: 测试结果列表，每项包含：
+        - host (str): 设备地址
+        - success (bool): 是否成功
+        - message (str): 结果消息
+        - device_info (dict | None): 设备信息
+        - error_type (str | None): 错误类型
     """
     semaphore = asyncio.Semaphore(concurrency)
 
@@ -565,6 +600,23 @@ def test_connection_sync(
     同步版本的连接测试（内部使用 asyncio.run）。
 
     注意：不要在已有事件循环的环境中调用此方法。
+
+    Args:
+        host: 设备 IP 地址或主机名
+        username: SSH 用户名
+        password: SSH 密码
+        platform: Scrapli 平台
+        port: SSH 端口
+        timeout: 连接超时时间（秒）
+
+    Returns:
+        ConnectionTestResult: 连接测试结果
+
+    Raises:
+        RuntimeError: 当前存在运行中的事件循环
+        ScrapliAuthenticationFailed: 认证失败（已转换为 ConnectionTestResult）
+        ScrapliTimeout: 连接超时（已转换为 ConnectionTestResult）
+        ScrapliConnectionError: 连接错误（已转换为 ConnectionTestResult）
     """
     return asyncio.run(
         test_device_connection(

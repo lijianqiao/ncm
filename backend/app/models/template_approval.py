@@ -22,7 +22,21 @@ if TYPE_CHECKING:
 
 
 class TemplateApprovalStep(AuditableModel):
-    """模板审批步骤（用于三级审批）。"""
+    """模板审批步骤模型（用于三级审批）。
+
+    模板审批步骤表，用于管理模板的三级审批流程。
+
+    Attributes:
+        template_id (UUID): 模板 ID。
+        level (int): 审批级别（1-3）。
+        approver_id (UUID | None): 审批人 ID。
+        status (str): 审批状态（PENDING/APPROVED/REJECTED）。
+        comment (str | None): 审批意见。
+        approved_at (datetime | None): 审批时间。
+        is_active (bool): 是否启用（保留字段）。
+        template (Template): 关联的模板对象。
+        approver (User | None): 审批人对象。
+    """
 
     __tablename__ = "ncm_template_approval_step"
     __table_args__ = (UniqueConstraint("template_id", "level", name="uq_template_level"),)

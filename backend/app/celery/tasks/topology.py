@@ -25,7 +25,11 @@ from app.services.topology_service import TopologyService
 
 
 def _create_topology_service() -> TopologyService:
-    """创建 TopologyService 实例的工厂函数。"""
+    """创建 TopologyService 实例的工厂函数。
+
+    Returns:
+        TopologyService: 拓扑服务实例。
+    """
     return TopologyService(
         topology_crud=topology_crud,
         device_crud=device_crud,
@@ -124,10 +128,11 @@ def collect_device_topology(self, device_id: str) -> dict[str, Any]:
     采集单个设备拓扑 - Celery 任务。
 
     Args:
-        device_id: 设备ID
+        self: Celery 任务实例。
+        device_id (str): 设备 ID。
 
     Returns:
-        采集结果，如果需要 OTP 则返回 otp_required 状态
+        dict[str, Any]: 采集结果，如果需要 OTP 则返回 otp_required 状态。
     """
 
     async def _collect_single():
@@ -181,14 +186,17 @@ def collect_device_topology(self, device_id: str) -> dict[str, Any]:
 )
 def scheduled_topology_refresh(self) -> dict[str, Any]:
     """
-    定时拓扑刷新任务 (通过 Celery Beat 调度)
+    定时拓扑刷新任务 (通过 Celery Beat 调度)。
 
     采集所有活跃设备的 LLDP 信息并更新拓扑数据。
 
     注意：OTP 手动认证的设备在定时任务中会被跳过（定时任务无法等待用户输入）。
 
+    Args:
+        self: Celery 任务实例。
+
     Returns:
-        刷新结果
+        dict[str, Any]: 刷新结果字典。
     """
     # 在同步上下文中获取 Celery 任务 ID（在进入异步之前）
     celery_task_id = self.request.id
@@ -257,8 +265,11 @@ def build_topology_cache(self) -> dict[str, Any]:
 
     从数据库构建 vis.js 格式的拓扑数据并缓存到 Redis。
 
+    Args:
+        self: Celery 任务实例。
+
     Returns:
-        构建结果
+        dict[str, Any]: 构建结果字典。
     """
 
     async def _build_cache():

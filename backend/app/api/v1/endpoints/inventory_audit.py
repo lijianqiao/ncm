@@ -34,7 +34,7 @@ from app.schemas.common import (
 from app.schemas.inventory_audit import InventoryAuditCreate, InventoryAuditResponse
 from app.utils.user_display import format_user_display_name
 
-router = APIRouter()
+router = APIRouter(tags=["资产盘点"])
 
 
 def _build_audit_response(audit) -> InventoryAuditResponse:

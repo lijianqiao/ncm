@@ -18,7 +18,24 @@ from app.utils.validators import validate_ip_address
 
 
 class DeviceBase(BaseModel):
-    """设备基础模型。"""
+    """设备基础 Schema。
+
+    设备的基础字段定义，用于创建和更新设备。
+
+    Attributes:
+        name (str): 设备名称/主机名。
+        ip_address (str): IP 地址。
+        vendor (DeviceVendor): 厂商，默认 H3C。
+        model (str | None): 设备型号。
+        platform (str | None): 平台类型。
+        location (str | None): 物理位置。
+        description (str | None): 设备描述。
+        ssh_port (int): SSH 端口，默认 22。
+        auth_type (AuthType): 认证类型，默认 OTP_SEED。
+        dept_id (UUID | None): 所属部门 ID。
+        device_group (DeviceGroup): 设备分组，默认 ACCESS。
+        status (DeviceStatus): 设备状态，默认 IN_USE。
+    """
 
     name: str = Field(..., min_length=1, max_length=100, description="设备名称/主机名")
     ip_address: str = Field(..., min_length=7, max_length=45, description="IP 地址")
@@ -36,12 +53,33 @@ class DeviceBase(BaseModel):
     @field_validator("ip_address")
     @classmethod
     def validate_ip(cls, v: str) -> str:
-        """验证 IP 地址格式。"""
+        """验证 IP 地址格式。
+
+        Args:
+            v (str): IP 地址字符串。
+
+        Returns:
+            str: 验证后的 IP 地址。
+
+        Raises:
+            ValueError: 当 IP 地址格式无效时。
+        """
         return validate_ip_address(v)
 
 
 class DeviceCreate(DeviceBase):
-    """创建设备请求体。"""
+    """创建设备请求 Schema。
+
+    用于创建新设备的请求体，包含静态认证的凭据字段和扩展信息。
+
+    Attributes:
+        username (str | None): SSH 用户名（仅 static 类型）。
+        password (str | None): SSH 密码（仅 static 类型，明文，存储时加密）。
+        serial_number (str | None): 序列号。
+        os_version (str | None): 操作系统版本。
+        stock_in_at (datetime | None): 入库时间。
+        assigned_to (str | None): 领用人。
+    """
 
     # 仅 static 类型需要提供用户名和密码
     username: str | None = Field(default=None, max_length=100, description="SSH 用户名(仅 static 类型)")
@@ -55,7 +93,31 @@ class DeviceCreate(DeviceBase):
 
 
 class DeviceUpdate(BaseModel):
-    """更新设备请求体（所有字段可选）。"""
+    """更新设备请求 Schema（所有字段可选）。
+
+    用于更新设备信息的请求体，所有字段可选。
+
+    Attributes:
+        name (str | None): 设备名称。
+        ip_address (str | None): IP 地址。
+        vendor (DeviceVendor | None): 厂商。
+        model (str | None): 设备型号。
+        platform (str | None): 平台类型。
+        location (str | None): 物理位置。
+        description (str | None): 设备描述。
+        ssh_port (int | None): SSH 端口。
+        auth_type (AuthType | None): 认证类型。
+        username (str | None): SSH 用户名。
+        password (str | None): SSH 密码（明文，存储时加密）。
+        dept_id (UUID | None): 所属部门 ID。
+        device_group (DeviceGroup | None): 设备分组。
+        status (DeviceStatus | None): 设备状态。
+        serial_number (str | None): 序列号。
+        os_version (str | None): 操作系统版本。
+        stock_in_at (datetime | None): 入库时间。
+        assigned_to (str | None): 领用人。
+        retired_at (datetime | None): 报废时间。
+    """
 
     name: str | None = Field(default=None, min_length=1, max_length=100, description="设备名称")
     ip_address: str | None = Field(default=None, min_length=7, max_length=45, description="IP 地址")
@@ -80,14 +142,53 @@ class DeviceUpdate(BaseModel):
     @field_validator("ip_address")
     @classmethod
     def validate_ip(cls, v: str | None) -> str | None:
-        """验证 IP 地址格式。"""
+        """验证 IP 地址格式。
+
+        Args:
+            v (str | None): IP 地址字符串。
+
+        Returns:
+            str | None: 验证后的 IP 地址，如果为 None 则返回 None。
+
+        Raises:
+            ValueError: 当 IP 地址格式无效时。
+        """
         if v is None:
             return v
         return validate_ip_address(v)
 
 
 class DeviceResponse(BaseModel):
-    """设备响应模型。"""
+    """设备响应 Schema。
+
+    用于返回设备信息的响应体，包含设备的所有字段和关联信息。
+
+    Attributes:
+        id (UUID): 设备 ID。
+        name (str): 设备名称。
+        ip_address (str): IP 地址。
+        vendor (DeviceVendor): 厂商。
+        model (str | None): 设备型号。
+        platform (str | None): 平台类型。
+        location (str | None): 物理位置。
+        description (str | None): 设备描述。
+        ssh_port (int): SSH 端口。
+        auth_type (AuthType): 认证类型。
+        dept_id (UUID | None): 所属部门 ID。
+        device_group (DeviceGroup): 设备分组。
+        status (DeviceStatus): 设备状态。
+        serial_number (str | None): 序列号。
+        os_version (str | None): 操作系统版本。
+        stock_in_at (datetime | None): 入库时间。
+        assigned_to (str | None): 领用人。
+        retired_at (datetime | None): 报废时间。
+        last_backup_at (datetime | None): 最后备份时间。
+        last_online_at (datetime | None): 最后在线时间。
+        is_deleted (bool): 是否删除。
+        created_at (datetime): 创建时间。
+        updated_at (datetime): 更新时间。
+        dept (DeptSimpleResponse | None): 所属部门简要信息。
+    """
 
     id: UUID
     name: str
@@ -120,7 +221,17 @@ class DeviceResponse(BaseModel):
 
 
 class DeviceListQuery(PaginatedQuery):
-    """设备列表查询参数。"""
+    """设备列表查询参数 Schema。
+
+    用于设备列表查询的请求参数，包含分页和筛选条件。
+
+    Attributes:
+        keyword (str | None): 搜索关键词（名称/IP）。
+        vendor (DeviceVendor | None): 厂商筛选。
+        status (DeviceStatus | None): 状态筛选。
+        device_group (DeviceGroup | None): 设备分组筛选。
+        dept_id (UUID | None): 部门筛选。
+    """
 
     keyword: str | None = Field(default=None, max_length=100, description="搜索关键词(名称/IP)")
     vendor: DeviceVendor | None = Field(default=None, description="厂商筛选")
@@ -130,19 +241,39 @@ class DeviceListQuery(PaginatedQuery):
 
 
 class DeviceBatchCreate(BaseModel):
-    """批量创建设备请求体。"""
+    """批量创建设备请求 Schema。
+
+    用于批量创建设备的请求体。
+
+    Attributes:
+        devices (list[DeviceCreate]): 设备列表，数量范围 1-500。
+    """
 
     devices: list[DeviceCreate] = Field(..., min_length=1, max_length=500, description="设备列表")
 
 
 class DeviceBatchDeleteRequest(BaseModel):
-    """批量删除设备请求体。"""
+    """批量删除设备请求 Schema。
+
+    用于批量删除设备的请求体。
+
+    Attributes:
+        ids (list[UUID]): 设备 ID 列表，数量范围 1-100。
+    """
 
     ids: list[UUID] = Field(..., min_length=1, max_length=100, description="设备ID列表")
 
 
 class DeviceBatchResult(BaseModel):
-    """批量操作结果。"""
+    """批量操作结果 Schema。
+
+    用于批量操作（创建、删除等）的响应 Schema。
+
+    Attributes:
+        success_count (int): 成功数量。
+        failed_count (int): 失败数量。
+        failed_items (list[dict]): 失败项详情。
+    """
 
     success_count: int = Field(..., description="成功数量")
     failed_count: int = Field(..., description="失败数量")
@@ -150,14 +281,29 @@ class DeviceBatchResult(BaseModel):
 
 
 class DeviceStatusTransitionRequest(BaseModel):
-    """设备状态流转请求体。"""
+    """设备状态流转请求 Schema。
+
+    用于设备状态流转的请求体。
+
+    Attributes:
+        to_status (DeviceStatus): 目标状态。
+        reason (str | None): 流转原因（可选）。
+    """
 
     to_status: DeviceStatus = Field(..., description="目标状态")
     reason: str | None = Field(default=None, max_length=500, description="流转原因(可选)")
 
 
 class DeviceStatusBatchTransitionRequest(BaseModel):
-    """批量状态流转请求体。"""
+    """批量状态流转请求 Schema。
+
+    用于批量设备状态流转的请求体。
+
+    Attributes:
+        ids (list[UUID]): 设备 ID 列表，数量范围 1-500。
+        to_status (DeviceStatus): 目标状态。
+        reason (str | None): 流转原因（可选）。
+    """
 
     ids: list[UUID] = Field(..., min_length=1, max_length=500, description="设备ID列表")
     to_status: DeviceStatus = Field(..., description="目标状态")

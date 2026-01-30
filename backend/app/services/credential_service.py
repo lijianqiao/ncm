@@ -38,6 +38,13 @@ class CredentialService(BaseService):
     """
 
     def __init__(self, db: AsyncSession, credential_crud: CRUDCredential):
+        """
+        初始化凭据服务。
+
+        Args:
+            db: 异步数据库会话
+            credential_crud: 凭据 CRUD 实例
+        """
         super().__init__(db)
         self.credential_crud = credential_crud
 

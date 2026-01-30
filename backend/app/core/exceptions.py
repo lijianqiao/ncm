@@ -16,6 +16,13 @@ class CustomException(Exception):
     """
 
     def __init__(self, code: int, message: str, details: Any = None):
+        """初始化业务异常。
+
+        Args:
+            code (int): HTTP 状态码。
+            message (str): 错误消息。
+            details (Any): 错误详情，默认为 None。
+        """
         super().__init__(message)
         self.code = code
         self.message = message
@@ -28,6 +35,11 @@ class NotFoundException(CustomException):
     """
 
     def __init__(self, message: str = "Not Found"):
+        """初始化资源不存在异常。
+
+        Args:
+            message (str): 错误消息，默认为 "Not Found"。
+        """
         super().__init__(code=404, message=message)
 
 
@@ -37,6 +49,11 @@ class ForbiddenException(CustomException):
     """
 
     def __init__(self, message: str = "Forbidden"):
+        """初始化禁止访问异常。
+
+        Args:
+            message (str): 错误消息，默认为 "Forbidden"。
+        """
         super().__init__(code=403, message=message)
 
 
@@ -46,6 +63,11 @@ class UnauthorizedException(CustomException):
     """
 
     def __init__(self, message: str = "Unauthorized"):
+        """初始化未授权异常。
+
+        Args:
+            message (str): 错误消息，默认为 "Unauthorized"。
+        """
         super().__init__(code=401, message=message)
 
 
@@ -55,6 +77,11 @@ class BadRequestException(CustomException):
     """
 
     def __init__(self, message: str = "Bad Request"):
+        """初始化无效请求异常。
+
+        Args:
+            message (str): 错误消息，默认为 "Bad Request"。
+        """
         super().__init__(code=400, message=message)
 
 
@@ -65,6 +92,12 @@ class DomainValidationException(CustomException):
     """
 
     def __init__(self, message: str = "Validation Error", details: Any = None):
+        """初始化领域数据验证错误异常。
+
+        Args:
+            message (str): 错误消息，默认为 "Validation Error"。
+            details (Any): 错误详情，默认为 None。
+        """
         super().__init__(code=422, message=message, details=details)
 
 
@@ -127,18 +160,30 @@ class OTPRequiredException(CustomException):
 
     @property
     def dept_id(self) -> UUID:
-        """返回 UUID 类型的 dept_id（向后兼容）。"""
+        """返回 UUID 类型的 dept_id（向后兼容）。
+
+        Returns:
+            UUID: 部门 ID。
+        """
         return self._dept_id
 
     def __reduce__(self):
-        """支持 pickle 序列化（Celery 需要）。"""
+        """支持 pickle 序列化（Celery 需要）。
+
+        Returns:
+            tuple: 用于 pickle 序列化的元组。
+        """
         return (
             self.__class__,
             (self.dept_id_str, self.device_group, self.failed_devices, self.message),
         )
 
     def to_dict(self) -> dict:
-        """转换为字典格式（用于 API 返回）。"""
+        """转换为字典格式（用于 API 返回）。
+
+        Returns:
+            dict: 包含异常信息的字典。
+        """
         return {
             "dept_id": self.dept_id_str,
             "device_group": self.device_group,
@@ -155,5 +200,11 @@ class DeviceCredentialNotFoundException(NotFoundException):
     """
 
     def __init__(self, dept_id: UUID | None, device_group: str):
+        """初始化设备凭据未找到异常。
+
+        Args:
+            dept_id (UUID | None): 部门 ID。
+            device_group (str): 设备分组。
+        """
         message = f"未找到凭据配置: dept_id={dept_id}, device_group={device_group}"
         super().__init__(message=message)

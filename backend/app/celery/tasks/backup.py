@@ -44,7 +44,14 @@ from app.utils.validators import (
 )
 
 def _get_keep_count(bt: BackupType) -> int:
-    """根据备份类型获取保留数量（使用 match-case 进行模式匹配）。"""
+    """根据备份类型获取保留数量（使用 match-case 进行模式匹配）。
+
+    Args:
+        bt (BackupType): 备份类型枚举。
+
+    Returns:
+        int: 该类型备份的保留数量。
+    """
     match bt:
         case BackupType.SCHEDULED:
             return getattr(settings, "BACKUP_RETENTION_SCHEDULED_KEEP", 0)
@@ -59,7 +66,15 @@ def _get_keep_count(bt: BackupType) -> int:
 
 
 async def _enforce_retention_for_device(db: Any, device_id: str) -> None:
-    """按条数+按天数清理备份，保证每台设备至少保留 1 条（优先保留最新成功备份）。"""
+    """按条数+按天数清理备份，保证每台设备至少保留 1 条（优先保留最新成功备份）。
+
+    Args:
+        db (Any): 数据库会话。
+        device_id (str): 设备 ID 字符串。
+
+    Returns:
+        None: 无返回值。
+    """
     did = UUID(device_id)
     keep_ids: set[UUID] = set()
 
@@ -141,7 +156,14 @@ async def _enforce_retention_for_device(db: Any, device_id: str) -> None:
 
 
 def _normalize_lines(text: str) -> list[str]:
-    """差异预处理：去行尾空白、去空行。"""
+    """差异预处理：去行尾空白、去空行。
+
+    Args:
+        text (str): 原始文本内容。
+
+    Returns:
+        list[str]: 处理后的行列表（去除行尾空白和空行）。
+    """
     lines: list[str] = []
     for line in text.splitlines():
         s = line.rstrip()
@@ -152,7 +174,16 @@ def _normalize_lines(text: str) -> list[str]:
 
 
 def _compute_unified_diff(old_text: str, new_text: str, context_lines: int = 3) -> str:
-    """计算 unified diff（用于告警详情）。"""
+    """计算 unified diff（用于告警详情）。
+
+    Args:
+        old_text (str): 旧文本内容。
+        new_text (str): 新文本内容。
+        context_lines (int): 上下文行数，默认为 3。
+
+    Returns:
+        str: unified diff 格式的差异字符串。
+    """
     old_lines = _normalize_lines(old_text)
     new_lines = _normalize_lines(new_text)
     diff_iter = difflib.unified_diff(
@@ -331,7 +362,17 @@ async def _save_backup_results(
     backup_type: str = BackupType.MANUAL.value,
     operator_id: str | None = None,
 ) -> None:
-    """保存备份结果到数据库（支持指定备份类型、md5 去重、保留策略）。"""
+    """保存备份结果到数据库（支持指定备份类型、md5 去重、保留策略）。
+
+    Args:
+        hosts_data (list[dict]): 主机数据列表。
+        summary (dict): 备份结果汇总字典。
+        backup_type (str): 备份类型，默认为手动备份。
+        operator_id (str | None): 操作员 ID。
+
+    Returns:
+        None: 无返回值。
+    """
     async with AsyncSessionLocal() as db:
         try:
             bt = BackupType(backup_type)
@@ -564,8 +605,11 @@ def scheduled_backup_all(self) -> dict[str, Any]:
     - OTP_MANUAL 类型的设备会被跳过（需要人工输入 OTP）
     - OTP_SEED 类型的设备可以自动备份
 
+    Args:
+        self: Celery 任务实例。
+
     Returns:
-        dict: 备份结果摘要
+        dict[str, Any]: 备份结果摘要字典。
     """
     task_id = self.request.id
     start_time = datetime.now(UTC)
@@ -780,8 +824,11 @@ def incremental_backup_check(self) -> dict[str, Any]:
 
     典型配置：每 4 小时执行一次。
 
+    Args:
+        self: Celery 任务实例。
+
     Returns:
-        dict: 检查结果摘要
+        dict[str, Any]: 检查结果摘要字典。
     """
     task_id = self.request.id
     start_time = datetime.now(UTC)
@@ -838,8 +885,12 @@ async def _perform_incremental_check(task, celery_task_id: str | None) -> dict[s
     """
     执行增量配置检查。
 
+    Args:
+        task: Celery 任务实例。
+        celery_task_id (str | None): Celery 任务 ID，用于更新进度。
+
     Returns:
-        dict: 检查结果
+        dict[str, Any]: 检查结果字典。
     """
     total_checked = 0
     changed_count = 0
@@ -1050,12 +1101,14 @@ def async_backup_devices(
     相比 ThreadedRunner 显著降低资源开销。
 
     Args:
-        hosts_data: 主机数据列表
-        num_workers: 最大并发连接数（默认 100）
-        backup_type: 备份类型
+        self: Celery 任务实例。
+        hosts_data (list[dict[str, Any]]): 主机数据列表。
+        num_workers (int): 最大并发连接数，默认为 100。
+        backup_type (str): 备份类型，默认为手动备份。
+        operator_id (str | None): 操作员 ID，默认为 None。
 
     Returns:
-        dict: 包含备份结果的字典
+        dict[str, Any]: 包含备份结果的字典。
     """
     from app.network.async_runner import run_async_tasks
     from app.network.async_tasks import async_collect_config

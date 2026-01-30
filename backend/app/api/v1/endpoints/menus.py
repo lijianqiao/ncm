@@ -22,7 +22,7 @@ from app.schemas.common import (
 )
 from app.schemas.menu import MenuCreate, MenuResponse, MenuUpdate
 
-router = APIRouter()
+router = APIRouter(tags=["菜单管理"])
 
 
 # ===== 列表查询 =====

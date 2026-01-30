@@ -26,25 +26,65 @@ class RoleService(BaseService, PermissionCacheMixin):
     """
 
     def __init__(self, db: AsyncSession, role_crud: CRUDRole, menu_crud: CRUDMenu):
+        """
+        初始化角色服务。
+
+        Args:
+            db: 异步数据库会话
+            role_crud: 角色 CRUD 实例
+            menu_crud: 菜单 CRUD 实例
+        """
         super().__init__(db)
         self.role_crud = role_crud
         self.menu_crud = menu_crud
 
     async def get_roles(self, skip: int = 0, limit: int = 100) -> list[Role]:
+        """
+        获取角色列表（分页查询）。
+
+        Args:
+            skip: 跳过的记录数
+            limit: 每页记录数
+
+        Returns:
+            list[Role]: 角色列表
+        """
         # 使用分页查询替代 get_multi
         page = (skip // limit) + 1 if limit > 0 else 1
         roles, _ = await self.role_crud.get_multi_paginated(self.db, page=page, page_size=limit)
         return roles
 
     async def get_role(self, role_id: UUID) -> Role:
-        """获取单个角色详情。"""
+        """
+        获取单个角色详情。
+
+        Args:
+            role_id: 角色 ID
+
+        Returns:
+            Role: 角色对象
+
+        Raises:
+            NotFoundException: 角色不存在
+        """
         role = await self.role_crud.get(self.db, id=role_id)
         if not role:
             raise NotFoundException(message="角色不存在")
         return role
 
     async def get_role_menu_ids(self, role_id: UUID) -> list[UUID]:
-        """获取角色已分配的菜单ID列表（仅未删除菜单）。"""
+        """
+        获取角色已分配的菜单ID列表（仅未删除菜单）。
+
+        Args:
+            role_id: 角色 ID
+
+        Returns:
+            list[UUID]: 菜单 ID 列表
+
+        Raises:
+            NotFoundException: 角色不存在
+        """
 
         role = await self.role_crud.get(self.db, id=role_id)
         if not role:
@@ -61,6 +101,15 @@ class RoleService(BaseService, PermissionCacheMixin):
     ) -> tuple[list[Role], int]:
         """
         获取分页角色列表。
+
+        Args:
+            page: 页码（从 1 开始）
+            page_size: 每页记录数
+            keyword: 关键词搜索（可选）
+            is_active: 是否激活过滤（可选）
+
+        Returns:
+            tuple[list[Role], int]: (角色列表, 总数)
         """
         return await self.role_crud.get_multi_paginated(
             self.db,
@@ -79,7 +128,16 @@ class RoleService(BaseService, PermissionCacheMixin):
         is_active: bool | None = None,
     ) -> tuple[list[Role], int]:
         """
-        获取已删除角色列表 (回收站 - 分页)。
+        获取已删除角色列表（回收站 - 分页）。
+
+        Args:
+            page: 页码（从 1 开始）
+            page_size: 每页记录数
+            keyword: 关键词搜索（可选）
+            is_active: 是否激活过滤（可选）
+
+        Returns:
+            tuple[list[Role], int]: (已删除角色列表, 总数)
         """
         return await self.role_crud.get_multi_deleted_paginated(
             self.db,
@@ -91,6 +149,18 @@ class RoleService(BaseService, PermissionCacheMixin):
 
     @transactional()
     async def create_role(self, obj_in: RoleCreate) -> Role:
+        """
+        创建角色。
+
+        Args:
+            obj_in: 角色创建数据
+
+        Returns:
+            Role: 创建的角色对象
+
+        Raises:
+            BadRequestException: 角色编码已存在
+        """
         existing_role = await self.role_crud.get_by_code(self.db, code=obj_in.code)
         if existing_role:
             raise BadRequestException(message="角色编码已存在")
@@ -101,7 +171,20 @@ class RoleService(BaseService, PermissionCacheMixin):
 
     @transactional()
     async def set_role_menus(self, role_id: UUID, menu_ids: list[UUID]) -> list[UUID]:
-        """设置角色菜单（全量覆盖，幂等）。"""
+        """
+        设置角色菜单（全量覆盖，幂等）。
+
+        Args:
+            role_id: 角色 ID
+            menu_ids: 菜单 ID 列表
+
+        Returns:
+            list[UUID]: 设置后的菜单 ID 列表
+
+        Raises:
+            NotFoundException: 角色不存在
+            BadRequestException: 存在无效的菜单 ID
+        """
 
         role = await self.role_crud.get(self.db, id=role_id)
         if not role:
@@ -122,6 +205,20 @@ class RoleService(BaseService, PermissionCacheMixin):
 
     @transactional()
     async def update_role(self, id: UUID, obj_in: RoleUpdate) -> Role:
+        """
+        更新角色。
+
+        Args:
+            id: 角色 ID
+            obj_in: 角色更新数据
+
+        Returns:
+            Role: 更新后的角色对象
+
+        Raises:
+            NotFoundException: 角色不存在
+            BadRequestException: 角色编码被占用
+        """
         role = await self.role_crud.get(self.db, id=id)
         if not role:
             raise NotFoundException(message="角色不存在")
@@ -139,6 +236,18 @@ class RoleService(BaseService, PermissionCacheMixin):
 
     @transactional()
     async def delete_role(self, id: UUID) -> RoleResponse:
+        """
+        删除角色（软删除）。
+
+        Args:
+            id: 角色 ID
+
+        Returns:
+            RoleResponse: 删除的角色响应对象
+
+        Raises:
+            NotFoundException: 角色不存在或删除失败
+        """
         role = await self.role_crud.get(self.db, id=id)
         if not role:
             raise NotFoundException(message="角色不存在")
@@ -166,7 +275,16 @@ class RoleService(BaseService, PermissionCacheMixin):
 
     @transactional()
     async def batch_delete_roles(self, ids: list[UUID], hard_delete: bool = False) -> BatchOperationResult:
-        """批量删除角色。"""
+        """
+        批量删除角色。
+
+        Args:
+            ids: 角色 ID 列表
+            hard_delete: 是否硬删除（默认 False，软删除）
+
+        Returns:
+            BatchOperationResult: 批量操作结果
+        """
         affected_user_ids = await self.role_crud.get_user_ids_by_roles(self.db, role_ids=ids)
         success_count, failed_ids = await self.role_crud.batch_remove(self.db, ids=ids, hard_delete=hard_delete)
         self._invalidate_permissions_cache_after_commit(affected_user_ids)
@@ -174,7 +292,18 @@ class RoleService(BaseService, PermissionCacheMixin):
 
     @transactional()
     async def restore_role(self, id: UUID) -> Role:
-        """恢复已删除角色。"""
+        """
+        恢复已删除角色。
+
+        Args:
+            id: 角色 ID
+
+        Returns:
+            Role: 恢复的角色对象
+
+        Raises:
+            NotFoundException: 角色不存在
+        """
         affected_user_ids = await self.role_crud.get_user_ids_by_roles(self.db, role_ids=[id])
         result = await self.batch_restore_roles(ids=[id])
         if result.success_count == 0:
@@ -189,7 +318,15 @@ class RoleService(BaseService, PermissionCacheMixin):
 
     @transactional()
     async def batch_restore_roles(self, ids: list[UUID]) -> BatchOperationResult:
-        """批量恢复角色。"""
+        """
+        批量恢复角色。
+
+        Args:
+            ids: 角色 ID 列表
+
+        Returns:
+            BatchOperationResult: 批量操作结果
+        """
         affected_user_ids = await self.role_crud.get_user_ids_by_roles(self.db, role_ids=ids)
         success_count, failed_ids = await self.role_crud.batch_restore(self.db, ids=ids)
         self._invalidate_permissions_cache_after_commit(affected_user_ids)

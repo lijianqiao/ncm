@@ -16,7 +16,18 @@ from app.schemas.common import PaginatedQuery
 
 
 class TemplateApprovalRecord(BaseModel):
-    """模板审批记录（单级）。"""
+    """模板审批记录 Schema（单级）。
+
+    用于表示模板的单个审批级别记录。
+
+    Attributes:
+        level (int): 审批级别（1-3）。
+        approver_id (UUID | None): 审批人 ID。
+        approver_name (str | None): 审批人名称。
+        status (ApprovalStatus): 审批状态，默认 PENDING。
+        comment (str | None): 审批意见。
+        approved_at (datetime | None): 审批时间。
+    """
 
     model_config = ConfigDict(from_attributes=True, use_enum_values=True)
 
@@ -29,7 +40,19 @@ class TemplateApprovalRecord(BaseModel):
 
 
 class TemplateBase(BaseModel):
-    """模板基础字段。"""
+    """模板基础 Schema。
+
+    模板的基础字段定义，用于创建和更新模板。
+
+    Attributes:
+        name (str): 模板名称。
+        description (str | None): 模板描述。
+        template_type (TemplateType): 模板类型，默认 CUSTOM。
+        content (str): Jinja2 模板内容。
+        vendors (list[DeviceVendor]): 适用厂商列表，至少包含 1 个。
+        device_type (DeviceType): 适用设备类型，默认 ALL。
+        parameters (str | None): 参数定义（JSON Schema 字符串）。
+    """
 
     name: str = Field(..., min_length=1, max_length=100, description="模板名称")
     description: str | None = Field(default=None, description="模板描述")
@@ -41,13 +64,29 @@ class TemplateBase(BaseModel):
 
 
 class TemplateCreate(TemplateBase):
-    """创建模板请求体。"""
+    """创建模板请求 Schema。
+
+    用于创建新模板的请求体，继承自 TemplateBase。
+    """
 
     pass
 
 
 class TemplateUpdate(BaseModel):
-    """更新模板请求体（字段均可选）。"""
+    """更新模板请求 Schema（字段均可选）。
+
+    用于更新模板信息的请求体，所有字段可选。
+
+    Attributes:
+        name (str | None): 模板名称。
+        description (str | None): 模板描述。
+        template_type (TemplateType | None): 模板类型。
+        content (str | None): Jinja2 模板内容。
+        vendors (list[DeviceVendor] | None): 适用厂商列表。
+        device_type (DeviceType | None): 适用设备类型。
+        parameters (str | None): 参数定义（JSON Schema 字符串）。
+        status (TemplateStatus | None): 模板状态。
+    """
 
     name: str | None = Field(default=None, min_length=1, max_length=100, description="模板名称")
     description: str | None = Field(default=None, description="模板描述")
@@ -60,7 +99,32 @@ class TemplateUpdate(BaseModel):
 
 
 class TemplateResponse(BaseModel):
-    """模板响应体。"""
+    """模板响应 Schema。
+
+    用于返回模板完整信息的响应体，包含审批记录。
+
+    Attributes:
+        id (UUID): 模板 ID。
+        name (str): 模板名称。
+        description (str | None): 模板描述。
+        template_type (TemplateType): 模板类型。
+        content (str): Jinja2 模板内容。
+        vendors (list[DeviceVendor]): 适用厂商列表。
+        device_type (DeviceType): 适用设备类型。
+        parameters (str | None): 参数定义（JSON Schema 字符串）。
+        version (int): 版本号。
+        parent_id (UUID | None): 父版本 ID。
+        status (TemplateStatus): 模板状态。
+        creator_id (UUID | None): 创建人 ID。
+        created_by (UUID | None): 创建人 ID（兼容字段）。
+        created_by_name (str | None): 创建人名称。
+        usage_count (int): 使用次数。
+        approval_status (ApprovalStatus | None): 审批状态。
+        current_approval_level (int | None): 当前已通过的审批级别。
+        approvals (list[TemplateApprovalRecord]): 审批记录列表。
+        created_at (datetime): 创建时间。
+        updated_at (datetime): 更新时间。
+    """
 
     model_config = ConfigDict(from_attributes=True, use_enum_values=True)
 
@@ -87,7 +151,15 @@ class TemplateResponse(BaseModel):
 
 
 class TemplateListQuery(PaginatedQuery):
-    """模板列表查询参数。"""
+    """模板列表查询参数 Schema。
+
+    用于模板列表查询的请求参数，包含分页和筛选条件。
+
+    Attributes:
+        vendor (DeviceVendor | None): 厂商筛选。
+        template_type (TemplateType | None): 模板类型筛选。
+        status (TemplateStatus | None): 模板状态筛选。
+    """
 
     vendor: DeviceVendor | None = None
     template_type: TemplateType | None = None
@@ -95,21 +167,43 @@ class TemplateListQuery(PaginatedQuery):
 
 
 class TemplateNewVersionRequest(BaseModel):
-    """基于某个模板版本创建新版本。"""
+    """基于某个模板版本创建新版本请求 Schema。
+
+    用于基于现有模板版本创建新版本的请求体。
+
+    Attributes:
+        name (str | None): 新版本名称（可选）。
+        description (str | None): 新版本描述（可选）。
+    """
 
     name: str | None = Field(default=None, description="新版本名称(可选)")
     description: str | None = Field(default=None, description="新版本描述(可选)")
 
 
 class TemplateSubmitRequest(BaseModel):
-    """提交模板审批。"""
+    """提交模板审批请求 Schema。
+
+    用于提交模板审批的请求体。
+
+    Attributes:
+        comment (str | None): 提交说明（可选）。
+        approver_ids (list[UUID] | None): 三级审批人 ID 列表（长度=3，可选）。
+    """
 
     comment: str | None = Field(default=None, description="提交说明(可选)")
     approver_ids: list[UUID] | None = Field(default=None, description="三级审批人ID列表（长度=3，可选）")
 
 
 class TemplateApproveRequest(BaseModel):
-    """审批某一级。"""
+    """审批某一级请求 Schema。
+
+    用于审批模板某一级别的请求体。
+
+    Attributes:
+        level (int): 审批级别（1-3）。
+        approve (bool): 是否通过（true=通过，false=拒绝）。
+        comment (str | None): 审批意见。
+    """
 
     level: int = Field(..., ge=1, le=3)
     approve: bool = Field(..., description="true=通过 false=拒绝")

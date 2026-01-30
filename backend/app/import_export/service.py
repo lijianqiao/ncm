@@ -41,6 +41,11 @@ from app.import_export.storage import (
 
 
 class RedisLike(Protocol):
+    """Redis 客户端协议。
+
+    定义 Redis 客户端需要实现的最小接口。
+    """
+
     def set(self, *args: Any, **kwargs: Any) -> Any: ...
 
     def delete(self, *args: Any, **kwargs: Any) -> Any: ...
@@ -51,6 +56,11 @@ BuildTemplateFn = Callable[[Path], None]
 
 
 class ValidateFn(Protocol):
+    """验证函数协议。
+
+    定义数据验证函数需要实现的接口。
+    """
+
     async def __call__(
         self,
         db: AsyncSession,
@@ -61,6 +71,11 @@ class ValidateFn(Protocol):
 
 
 class PersistFn(Protocol):
+    """持久化函数协议。
+
+    定义数据持久化函数需要实现的接口。
+    """
+
     async def __call__(
         self,
         db: AsyncSession,
@@ -72,12 +87,31 @@ class PersistFn(Protocol):
 
 @dataclass(frozen=True, slots=True)
 class ExportResult:
+    """导出结果。
+
+    Attributes:
+        path (Path): 导出文件路径。
+        filename (str): 文件名。
+        media_type (str): MIME 类型。
+    """
+
     path: Path
     filename: str
     media_type: str
 
 
 class ImportExportService:
+    """导入导出服务。
+
+    提供统一的导入导出功能，支持 CSV 和 Excel 格式。
+
+    Attributes:
+        db (AsyncSession): 数据库会话。
+        redis_client (RedisLike | None): Redis 客户端（可选）。
+        max_upload_mb (int): 最大上传文件大小（MB），默认 20。
+        lock_ttl_seconds (int): 锁的 TTL（秒），默认 300。
+    """
+
     def __init__(
         self,
         *,
@@ -98,6 +132,19 @@ class ImportExportService:
         filename_prefix: str,
         df_fn: ExportDfFn,
     ) -> ExportResult:
+        """导出表格数据。
+
+        Args:
+            fmt (str): 导出格式（csv 或 xlsx）。
+            filename_prefix (str): 文件名前缀。
+            df_fn (ExportDfFn): 获取 DataFrame 的函数。
+
+        Returns:
+            ExportResult: 导出结果。
+
+        Raises:
+            RuntimeError: 当 Workbook.active 为 None 时。
+        """
         df = await df_fn(self.db)
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"{filename_prefix}_{ts}.{fmt}"
@@ -133,6 +180,15 @@ class ImportExportService:
         filename_prefix: str,
         builder: BuildTemplateFn,
     ) -> ExportResult:
+        """构建导入模板文件。
+
+        Args:
+            filename_prefix (str): 文件名前缀。
+            builder (BuildTemplateFn): 构建模板的函数。
+
+        Returns:
+            ExportResult: 导出结果。
+        """
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"{filename_prefix}_{ts}.xlsx"
         file_path = create_export_path(filename)
@@ -151,6 +207,20 @@ class ImportExportService:
         validate_fn: ValidateFn,
         allow_overwrite: bool = False,
     ) -> ImportValidateResponse:
+        """上传、解析并验证导入文件。
+
+        Args:
+            file (UploadFile): 上传的文件。
+            column_aliases (dict[str, str]): 列名别名映射。
+            validate_fn (ValidateFn): 验证函数。
+            allow_overwrite (bool): 是否允许覆盖，默认 False。
+
+        Returns:
+            ImportValidateResponse: 验证响应。
+
+        Raises:
+            ValueError: 当上传文件过大时。
+        """
         import_id = new_import_id()
         paths = get_import_paths(import_id)
         paths.root.mkdir(parents=True, exist_ok=True)
@@ -224,6 +294,21 @@ class ImportExportService:
         page_size: int,
         kind: str,
     ) -> ImportPreviewResponse:
+        """预览导入数据。
+
+        Args:
+            import_id (UUID): 导入 ID。
+            checksum (str): 文件 SHA256 校验和。
+            page (int): 页码。
+            page_size (int): 每页大小。
+            kind (str): 预览类型（"valid" 或 "parsed"）。
+
+        Returns:
+            ImportPreviewResponse: 预览响应。
+
+        Raises:
+            ValueError: 当 checksum 不匹配时。
+        """
         paths = get_import_paths(import_id)
         meta = read_meta(paths)
         if str(meta.get("checksum")) != checksum:
@@ -264,6 +349,19 @@ class ImportExportService:
         persist_fn: PersistFn,
         lock_namespace: str = "import",
     ) -> ImportCommitResponse:
+        """提交导入数据。
+
+        Args:
+            body (ImportCommitRequest): 提交请求。
+            persist_fn (PersistFn): 持久化函数。
+            lock_namespace (str): 锁命名空间，默认 "import"。
+
+        Returns:
+            ImportCommitResponse: 提交响应。
+
+        Raises:
+            ValueError: 当 checksum 不匹配、存在校验错误或导入正在执行时。
+        """
         paths = get_import_paths(body.import_id)
         meta = read_meta(paths)
         if str(meta.get("checksum")) != body.checksum:

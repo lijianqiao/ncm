@@ -46,7 +46,7 @@ from app.schemas.user import (
     UserUpdate,
 )
 
-router = APIRouter()
+router = APIRouter(tags=["用户管理"])
 
 
 # =============================================================================

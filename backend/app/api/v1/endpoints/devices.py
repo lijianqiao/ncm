@@ -55,7 +55,7 @@ from app.schemas.device import (
     DeviceUpdate,
 )
 
-router = APIRouter()
+router = APIRouter(tags=["设备管理"])
 
 
 # ==============================================================================

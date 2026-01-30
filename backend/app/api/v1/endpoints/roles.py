@@ -30,7 +30,7 @@ from app.schemas.common import (
 )
 from app.schemas.role import RoleCreate, RoleMenusUpdateRequest, RoleResponse, RoleUpdate
 
-router = APIRouter()
+router = APIRouter(tags=["角色管理"])
 
 
 # =============================================================================

@@ -33,7 +33,11 @@ if TYPE_CHECKING:
 
 
 class PresetService(DeviceCredentialMixin):
-    """预设模板服务。"""
+    """
+    预设模板服务类。
+
+    提供预设模板的执行功能，支持配置类和查看类操作。
+    """
 
     def __init__(
         self,
@@ -42,18 +46,43 @@ class PresetService(DeviceCredentialMixin):
         credential_crud: CRUDCredential,
         backup_service: "BackupService | None" = None,
     ):
+        """
+        初始化预设模板服务。
+
+        Args:
+            db: 异步数据库会话
+            device_crud: 设备 CRUD 实例
+            credential_crud: 凭据 CRUD 实例
+            backup_service: 备份服务实例（可选，用于配置变更前后备份）
+        """
         self.db = db
         self.device_crud = device_crud
         self.credential_crud = credential_crud
         self.backup_service = backup_service
 
     async def list_presets(self) -> list[PresetInfo]:
-        """列出所有预设模板。"""
+        """
+        列出所有预设模板。
+
+        Returns:
+            list[PresetInfo]: 预设模板信息列表
+        """
         presets = list_presets()
         return [PresetInfo(**p) for p in presets]
 
     async def get_preset(self, preset_id: str) -> PresetDetail:
-        """获取预设详情。"""
+        """
+        获取预设详情。
+
+        Args:
+            preset_id: 预设 ID
+
+        Returns:
+            PresetDetail: 预设详情对象
+
+        Raises:
+            NotFoundException: 预设不存在
+        """
         preset = get_preset(preset_id)
         if not preset:
             raise NotFoundException(f"预设 {preset_id} 不存在")
@@ -72,7 +101,22 @@ class PresetService(DeviceCredentialMixin):
         device_id: UUID,
         params: dict[str, Any],
     ) -> PresetExecuteResult:
-        """执行预设操作。"""
+        """
+        执行预设操作。
+
+        Args:
+            preset_id: 预设 ID
+            device_id: 设备 ID
+            params: 预设参数
+
+        Returns:
+            PresetExecuteResult: 执行结果
+
+        Raises:
+            NotFoundException: 预设或设备不存在
+            BadRequestException: 厂商不支持或参数校验失败
+            OTPRequiredException: 需要 OTP 验证码
+        """
         # 1. 获取预设定义
         preset = get_preset(preset_id)
         if not preset:
@@ -259,6 +303,16 @@ class PresetService(DeviceCredentialMixin):
         )
 
     def _validate_params(self, preset: dict[str, Any], params: dict[str, Any]) -> None:
+        """
+        校验预设参数。
+
+        Args:
+            preset: 预设定义字典
+            params: 用户提供的参数
+
+        Raises:
+            BadRequestException: 参数校验失败
+        """
         schema = preset.get("parameters_schema") or {}
         required = schema.get("required") or []
         properties = schema.get("properties") or {}
@@ -299,7 +353,17 @@ class PresetService(DeviceCredentialMixin):
                     raise BadRequestException(f"参数 {key} 不能大于 {maximum}")
 
     def _select_parse_command(self, *, preset_id: str, params: dict[str, Any], parse_cmd_value: Any) -> str:
-        """根据预设与参数选择用于解析的命令（用于 ntc-templates/TextFSM）。"""
+        """
+        根据预设与参数选择用于解析的命令（用于 ntc-templates/TextFSM）。
+
+        Args:
+            preset_id: 预设 ID
+            params: 预设参数
+            parse_cmd_value: 解析命令配置值（可能是字符串或字典）
+
+        Returns:
+            str: 选择的解析命令
+        """
         if isinstance(parse_cmd_value, str):
             return parse_cmd_value
 

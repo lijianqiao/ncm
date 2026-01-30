@@ -20,7 +20,10 @@ def _do_init_redis(context: str) -> None:
     """Worker/子进程共用的 Redis 初始化逻辑。
 
     Args:
-        context: 调用上下文描述（用于日志区分）
+        context (str): 调用上下文描述（用于日志区分）。
+
+    Returns:
+        None: 无返回值。
     """
     from app.core.logger import logger, setup_logging
 
@@ -37,7 +40,14 @@ def _do_init_redis(context: str) -> None:
 
 @worker_init.connect
 def _init_worker_redis(**_kwargs) -> None:
-    """初始化 Worker 需要的外部资源（如 Redis）。"""
+    """初始化 Worker 需要的外部资源（如 Redis）。
+
+    Args:
+        **_kwargs: Celery 信号传递的额外参数。
+
+    Returns:
+        None: 无返回值。
+    """
     # Linux prefork(fork) 场景下，worker_init 发生在主进程，事件循环不应在 fork 前初始化。
     if os.name != "nt":
         try:
@@ -52,13 +62,27 @@ def _init_worker_redis(**_kwargs) -> None:
 
 @worker_process_init.connect
 def _init_worker_process_redis(**_kwargs) -> None:
-    """prefork 模式下的子进程初始化。"""
+    """prefork 模式下的子进程初始化。
+
+    Args:
+        **_kwargs: Celery 信号传递的额外参数。
+
+    Returns:
+        None: 无返回值。
+    """
     _do_init_redis("Worker 子进程")
 
 
 @worker_shutdown.connect
 def _close_worker_redis(**_kwargs) -> None:
-    """Worker 关闭时清理资源。"""
+    """Worker 关闭时清理资源。
+
+    Args:
+        **_kwargs: Celery 信号传递的额外参数。
+
+    Returns:
+        None: 无返回值。
+    """
     from app.core.logger import logger
 
     try:

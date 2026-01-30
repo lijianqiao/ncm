@@ -20,15 +20,35 @@ from app.services.base import BaseService
 
 
 class DeptService(BaseService):
-    """部门服务类。"""
+    """
+    部门服务类。
+
+    提供部门的创建、更新、删除、查询等功能，支持树形结构。
+    """
 
     def __init__(self, db: AsyncSession, dept_crud: CRUDDept):
+        """
+        初始化部门服务。
+
+        Args:
+            db: 异步数据库会话
+            dept_crud: 部门 CRUD 实例
+        """
         super().__init__(db)
         self.dept_crud = dept_crud
 
     @staticmethod
     def _to_dept_response(dept: Department, *, children: list[DeptResponse] | None = None) -> DeptResponse:
-        """将 ORM Department 转为响应对象。"""
+        """
+        将 ORM Department 转为响应对象。
+
+        Args:
+            dept: 部门 ORM 对象
+            children: 子部门列表（可选）
+
+        Returns:
+            DeptResponse: 部门响应对象
+        """
         return DeptResponse(
             id=dept.id,
             name=dept.name,
@@ -52,10 +72,19 @@ class DeptService(BaseService):
         children_map: dict[UUID | None, list[Department]],
         visited: set[UUID],
     ) -> DeptResponse:
-        """递归构建部门树响应。
+        """
+        递归构建部门树响应。
 
         注意：异步 SQLAlchemy 下禁止在这里触发 relationship 懒加载，否则会出现 MissingGreenlet。
         因此 children 通过 children_map 提供，不直接访问 dept.children。
+
+        Args:
+            dept: 部门对象
+            children_map: 父部门 ID 到子部门列表的映射
+            visited: 已访问的部门 ID 集合（用于防止循环引用）
+
+        Returns:
+            DeptResponse: 部门树响应对象
         """
 
         if dept.id in visited:
@@ -77,10 +106,11 @@ class DeptService(BaseService):
         获取部门树结构。
 
         Args:
-            is_active: 是否启用过滤
+            keyword: 关键词搜索（可选）
+            is_active: 是否启用过滤（可选）
 
         Returns:
-            部门树列表
+            list[DeptResponse]: 部门树列表
         """
         depts = await self.dept_crud.get_tree(self.db, keyword=keyword, is_active=is_active)
 
@@ -141,7 +171,18 @@ class DeptService(BaseService):
         keyword: str | None = None,
         is_active: bool | None = None,
     ) -> tuple[list[DeptResponse], int]:
-        """获取已删除部门列表（回收站）。"""
+        """
+        获取已删除部门列表（回收站）。
+
+        Args:
+            page: 页码（从 1 开始）
+            page_size: 每页记录数
+            keyword: 关键词搜索（可选）
+            is_active: 是否启用过滤（可选）
+
+        Returns:
+            tuple[list[DeptResponse], int]: (已删除部门列表, 总数)
+        """
         from app.models.dept import Department
         from sqlalchemy.orm import selectinload
 

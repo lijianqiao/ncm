@@ -43,25 +43,53 @@ class CompressedTimedRotatingFileHandler(TimedRotatingFileHandler):
         atTime: Any | None = None,
         errors: str | None = None,
     ):
+        """初始化压缩时间轮换文件处理器。
+
+        Args:
+            filename (str): 日志文件名。
+            when (str): 轮换时间单位，默认为 "h"（小时）。
+            interval (int): 轮换间隔，默认为 1。
+            backupCount (int): 保留的备份文件数量，默认为 0。
+            encoding (str | None): 文件编码，默认为 None。
+            delay (bool): 是否延迟创建文件，默认为 False。
+            utc (bool): 是否使用 UTC 时间，默认为 False。
+            atTime (Any | None): 轮换时间，默认为 None。
+            errors (str | None): 错误处理方式，默认为 None。
+        """
         super().__init__(filename, when, interval, backupCount, encoding, delay, utc, atTime, errors)  # 类型：忽略
 
     def doRollover(self) -> None:
-        """
-        执行轮换，如 __init__() 中所述。
+        """执行日志文件轮换。
+
+        当日志文件达到轮换条件时，压缩旧文件并创建新文件。
+
+        Returns:
+            None: 无返回值。
         """
         super().doRollover()
 
 
 def namer(name: str) -> str:
-    """
-    自定义命名器，用于在轮换文件时添加 .gz 扩展名。
+    """自定义命名器，用于在轮换文件时添加 .gz 扩展名。
+
+    Args:
+        name (str): 原始文件名。
+
+    Returns:
+        str: 添加 .gz 扩展名后的文件名。
     """
     return name + ".gz"
 
 
 def rotator(source: str, dest: str) -> None:
-    """
-    Custom rotator to compress the file using gzip.
+    """自定义轮换器，使用 gzip 压缩文件。
+
+    Args:
+        source (str): 源文件路径。
+        dest (str): 目标文件路径（压缩后的文件）。
+
+    Returns:
+        None: 无返回值。
     """
     with open(source, "rb") as f_in:
         with gzip.open(dest, "wb") as f_out:
@@ -70,9 +98,17 @@ def rotator(source: str, dest: str) -> None:
 
 
 def get_file_handler(name: str, level: int, filename: str) -> TimedRotatingFileHandler:
-    """
-    创建配置的 TimedRotatingFileHandler 的帮助程序.
+    """创建配置的 TimedRotatingFileHandler 的帮助程序。
+
     使用默认的轮换格式：filename.YYYY-MM-DD
+
+    Args:
+        name (str): 处理器名称。
+        level (int): 日志级别。
+        filename (str): 日志文件名。
+
+    Returns:
+        TimedRotatingFileHandler: 配置好的文件处理器。
     """
 
     file_path = os.path.join(LOG_DIR, filename)
@@ -93,8 +129,16 @@ def get_file_handler(name: str, level: int, filename: str) -> TimedRotatingFileH
 
 
 def setup_logging() -> None:
-    """
-    配置严格 JSON 日志记录，使用 structlog.
+    """配置严格 JSON 日志记录，使用 structlog。
+
+    配置包括：
+    - 控制台输出（本地环境为彩色文本，其他环境为 JSON）
+    - 文件输出（始终为 JSON 格式）
+    - 日志轮换和压缩
+    - 独立的 API 流量和 Celery 任务日志记录器
+
+    Returns:
+        None: 无返回值。
     """
     shared_processors: list[structlog.types.Processor] = [
         structlog.contextvars.merge_contextvars,

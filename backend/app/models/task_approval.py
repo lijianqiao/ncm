@@ -23,7 +23,21 @@ if TYPE_CHECKING:
 
 
 class TaskApprovalStep(AuditableModel):
-    """任务审批步骤（用于三级审批）。"""
+    """任务审批步骤模型（用于三级审批）。
+
+    任务审批步骤表，用于管理下发任务的三级审批流程。
+
+    Attributes:
+        task_id (UUID): 任务 ID。
+        level (int): 审批级别（1-3）。
+        approver_id (UUID | None): 审批人 ID。
+        status (str): 审批状态（PENDING/APPROVED/REJECTED）。
+        comment (str | None): 审批意见。
+        approved_at (datetime | None): 审批时间。
+        is_active (bool): 是否启用（保留字段）。
+        task (Task): 关联的任务对象。
+        approver (User | None): 审批人对象。
+    """
 
     __tablename__ = "ncm_task_approval_step"
     __table_args__ = (UniqueConstraint("task_id", "level", name="uq_task_level"),)

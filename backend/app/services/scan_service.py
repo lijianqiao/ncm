@@ -47,6 +47,13 @@ class ScanService:
         discovery_crud: CRUDDiscovery,
         device_crud: CRUDDevice,
     ):
+        """
+        初始化网络扫描服务。
+
+        Args:
+            discovery_crud: 发现记录 CRUD 实例
+            device_crud: 设备 CRUD 实例
+        """
         self.discovery_crud = discovery_crud
         self.device_crud = device_crud
         # 组合子服务

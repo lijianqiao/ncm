@@ -17,6 +17,14 @@ from app.models.template import Template
 
 
 async def export_templates_df(db: AsyncSession) -> pl.DataFrame:
+    """导出模板数据为 DataFrame。
+
+    Args:
+        db (AsyncSession): 数据库会话。
+
+    Returns:
+        pl.DataFrame: 模板数据 DataFrame。
+    """
     result = await db.execute(select(Template).where(Template.is_deleted.is_(False)).order_by(Template.updated_at.desc()))
     rows: list[dict[str, Any]] = []
     for t in result.scalars().all():

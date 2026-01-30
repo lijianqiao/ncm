@@ -25,7 +25,35 @@ if TYPE_CHECKING:
 
 
 class Discovery(AuditableModel):
-    """设备发现模型。"""
+    """设备发现模型。
+
+    网络扫描发现的设备信息表，用于存储网络扫描发现的设备信息，与 CMDB 比对发现影子资产。
+
+    Attributes:
+        ip_address (str): IP 地址。
+        mac_address (str | None): MAC 地址。
+        vendor (str | None): 厂商（OUI 识别）。
+        device_type (str | None): 设备类型推测。
+        hostname (str | None): 主机名。
+        os_info (str | None): 操作系统信息。
+        serial_number (str | None): 序列号。
+        open_ports (dict | None): 开放端口列表（JSONB）。
+        ssh_banner (str | None): SSH Banner。
+        first_seen_at (datetime): 首次发现时间。
+        last_seen_at (datetime): 最后发现时间。
+        offline_days (int): 离线天数。
+        status (str): 发现状态（PENDING/MATCHED/SHADOW/IGNORED）。
+        matched_device_id (UUID | None): 匹配的设备 ID。
+        scan_source (str | None): 扫描来源（nmap/masscan）。
+        scan_task_id (str | None): 扫描任务 ID。
+        dept_id (UUID | None): 部门 ID（用于匹配 SNMP 凭据）。
+        snmp_sysname (str | None): SNMP sysName。
+        snmp_sysdescr (str | None): SNMP sysDescr。
+        snmp_ok (bool): SNMP 是否成功。
+        snmp_error (str | None): SNMP 错误信息。
+        matched_device (Device | None): 匹配的设备对象。
+        dept (Department | None): 所属部门对象。
+    """
 
     __tablename__ = "ncm_discovery"
 

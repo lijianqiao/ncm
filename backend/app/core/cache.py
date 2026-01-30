@@ -26,8 +26,10 @@ redis_client: redis.Redis | None = None
 
 
 async def init_redis() -> None:
-    """
-    初始化 Redis 连接池。应在应用启动时调用。
+    """初始化 Redis 连接池。应在应用启动时调用。
+
+    Returns:
+        None: 无返回值。
     """
     global redis_pool, redis_client
     try:
@@ -45,18 +47,34 @@ async def init_redis() -> None:
 
 
 def _serialize(data: Any) -> str:
-    """使用 orjson 序列化数据（高性能）。"""
+    """使用 orjson 序列化数据（高性能）。
+
+    Args:
+        data (Any): 要序列化的数据。
+
+    Returns:
+        str: JSON 编码的字符串。
+    """
     return orjson.dumps(data, default=str, option=orjson.OPT_SORT_KEYS).decode("utf-8")
 
 
 def _deserialize(data: str) -> Any:
-    """使用 orjson 反序列化数据。"""
+    """使用 orjson 反序列化数据。
+
+    Args:
+        data (str): JSON 编码的字符串。
+
+    Returns:
+        Any: 反序列化后的数据。
+    """
     return orjson.loads(data)
 
 
 async def close_redis() -> None:
-    """
-    关闭 Redis 连接。应在应用关闭时调用。
+    """关闭 Redis 连接。应在应用关闭时调用。
+
+    Returns:
+        None: 无返回值。
     """
     global redis_client, redis_pool
     if redis_client:
@@ -67,9 +85,18 @@ async def close_redis() -> None:
 
 
 def _generate_cache_key(prefix: str, func: Callable, args: tuple, kwargs: dict) -> str:
-    """
-    根据函数名和参数生成缓存 Key。
+    """根据函数名和参数生成缓存 Key。
+
     使用 orjson 提高序列化性能，SHA256 提高哈希安全性和减少碰撞风险。
+
+    Args:
+        prefix (str): 缓存 Key 前缀。
+        func (Callable): 函数对象。
+        args (tuple): 函数位置参数。
+        kwargs (dict): 函数关键字参数。
+
+    Returns:
+        str: 生成的缓存 Key。
     """
     # 排除 self 参数
     key_args = args[1:] if args and hasattr(args[0], "__class__") else args
@@ -81,12 +108,14 @@ def _generate_cache_key(prefix: str, func: Callable, args: tuple, kwargs: dict) 
 
 
 def cache(prefix: str = "cache", expire: int = 300) -> Callable:
-    """
-    缓存装饰器。
+    """缓存装饰器。
 
     Args:
-        prefix: 缓存 Key 前缀 (如 v1:menu)。
-        expire: 过期时间 (秒)，默认 5 分钟。
+        prefix (str): 缓存 Key 前缀 (如 v1:menu)，默认为 "cache"。
+        expire (int): 过期时间 (秒)，默认 5 分钟。
+
+    Returns:
+        Callable: 装饰器函数。
     """
 
     def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
@@ -150,13 +179,27 @@ async def invalidate_cache(pattern: str) -> int:
 
 
 def user_permissions_cache_key(user_id: UUID) -> str:
+    """生成用户权限缓存 Key。
+
+    Args:
+        user_id (UUID): 用户 ID。
+
+    Returns:
+        str: 用户权限缓存 Key。
+    """
     return f"v1:user:permissions:{user_id}"
 
 
 async def invalidate_user_permissions_cache(user_ids: Iterable[UUID]) -> int:
-    """
-    精确失效指定用户的权限缓存。
+    """精确失效指定用户的权限缓存。
+
     使用 Redis Pipeline 批量删除，提高性能。
+
+    Args:
+        user_ids (Iterable[UUID]): 用户 ID 列表。
+
+    Returns:
+        int: 删除的缓存 Key 数量。
     """
     if redis_client is None:
         return 0

@@ -29,6 +29,10 @@ def _ensure_scrapli_plugin_registered() -> None:
 
     注意：我们在 init_nornir 中绕过 InitNornir 直接构造 Nornir，
     这会跳过一些插件加载逻辑，因此需要在运行任务前显式注册。
+
+    Raises:
+        RuntimeError: nornir_scrapli.connection 中未找到 ScrapliCore 连接插件
+        PluginAlreadyRegistered: 插件已注册（已处理，不会抛出）
     """
 
     # 显式导入并注册 scrapli connection plugin
@@ -217,7 +221,7 @@ def _devices_to_hosts_data(devices: list[Any]) -> list[dict[str, Any]]:
         devices: Device 模型实例列表
 
     Returns:
-        hosts_data: Nornir 主机数据列表
+        list[dict[str, Any]]: Nornir 主机数据列表，每项包含 name、hostname、platform、username、password、port、groups、data 等字段
     """
     hosts_data = []
     for device in devices:

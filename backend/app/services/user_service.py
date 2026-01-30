@@ -30,12 +30,34 @@ class UserService(BaseService, PermissionCacheMixin):
     """
 
     def __init__(self, db: AsyncSession, user_crud: CRUDUser, role_crud: CRUDRole):
+        """
+        初始化用户服务。
+
+        Args:
+            db: 异步数据库会话
+            user_crud: 用户 CRUD 实例
+            role_crud: 角色 CRUD 实例
+        """
         super().__init__(db)
         self.user_crud = user_crud
         self.role_crud = role_crud
 
     @transactional()
     async def create_user(self, obj_in: UserCreate) -> User:
+        """
+        创建用户。
+
+        检查用户名、手机号、邮箱的唯一性，并为非超级管理员用户绑定默认角色。
+
+        Args:
+            obj_in: 用户创建数据
+
+        Returns:
+            User: 创建的用户对象
+
+        Raises:
+            BadRequestException: 用户名、手机号或邮箱已存在
+        """
         # 1. 检查用户名
         user = await self.user_crud.get_by_unique_field(
             self.db,
@@ -90,11 +112,28 @@ class UserService(BaseService, PermissionCacheMixin):
     async def get_user(self, user_id: UUID) -> User | None:
         """
         根据 ID 获取用户。
+
+        Args:
+            user_id: 用户 ID
+
+        Returns:
+            User | None: 用户对象，不存在返回 None
         """
         return await self.user_crud.get(self.db, id=user_id)
 
     async def get_user_roles(self, user_id: UUID) -> list[Role]:
-        """获取用户的角色列表。"""
+        """
+        获取用户的角色列表。
+
+        Args:
+            user_id: 用户 ID
+
+        Returns:
+            list[Role]: 用户角色列表
+
+        Raises:
+            NotFoundException: 用户不存在
+        """
 
         user = await self.user_crud.get_with_roles(self.db, id=user_id)
         if not user:
@@ -103,7 +142,14 @@ class UserService(BaseService, PermissionCacheMixin):
 
     async def get_users(self, skip: int = 0, limit: int = 100) -> list[User]:
         """
-        获取用户列表 (分页)。
+        获取用户列表（分页）。
+
+        Args:
+            skip: 跳过的记录数
+            limit: 每页记录数
+
+        Returns:
+            list[User]: 用户列表
         """
         # 使用分页查询替代 get_multi
         page = (skip // limit) + 1 if limit > 0 else 1
@@ -122,8 +168,15 @@ class UserService(BaseService, PermissionCacheMixin):
         """
         获取分页用户列表。
 
+        Args:
+            page: 页码（从 1 开始）
+            page_size: 每页记录数
+            keyword: 关键词搜索（用户名、昵称）
+            is_superuser: 是否超级管理员过滤
+            is_active: 是否激活过滤
+
         Returns:
-            (users, total): 用户列表和总数
+            tuple[list[User], int]: (用户列表, 总数)
         """
         return await self.user_crud.get_multi_paginated(
             self.db,
@@ -144,7 +197,17 @@ class UserService(BaseService, PermissionCacheMixin):
         is_active: bool | None = None,
     ) -> tuple[list[User], int]:
         """
-        获取已删除用户列表 (回收站 - 分页)。
+        获取已删除用户列表（回收站 - 分页）。
+
+        Args:
+            page: 页码（从 1 开始）
+            page_size: 每页记录数
+            keyword: 关键词搜索（用户名、昵称）
+            is_superuser: 是否超级管理员过滤
+            is_active: 是否激活过滤
+
+        Returns:
+            tuple[list[User], int]: (已删除用户列表, 总数)
         """
         return await self.user_crud.get_multi_deleted_paginated(
             self.db,
@@ -157,7 +220,20 @@ class UserService(BaseService, PermissionCacheMixin):
 
     @transactional()
     async def set_user_roles(self, user_id: UUID, role_ids: list[UUID]) -> list[Role]:
-        """设置用户角色（全量覆盖，幂等）。"""
+        """
+        设置用户角色（全量覆盖，幂等）。
+
+        Args:
+            user_id: 用户 ID
+            role_ids: 角色 ID 列表
+
+        Returns:
+            list[Role]: 设置后的角色列表
+
+        Raises:
+            NotFoundException: 用户不存在
+            BadRequestException: 存在无效的角色 ID
+        """
 
         user = await self.user_crud.get_with_roles(self.db, id=user_id)
         if not user:
@@ -177,7 +253,20 @@ class UserService(BaseService, PermissionCacheMixin):
 
     @transactional()
     async def update_user_me(self, user_id: UUID, obj_in: UserMeUpdate) -> User:
-        """更新当前用户信息（不允许修改 username）。"""
+        """
+        更新当前用户信息（不允许修改 username）。
+
+        Args:
+            user_id: 用户 ID
+            obj_in: 用户更新数据
+
+        Returns:
+            User: 更新后的用户对象
+
+        Raises:
+            NotFoundException: 用户不存在
+            BadRequestException: 手机号或邮箱已存在
+        """
 
         user = await self.user_crud.get(self.db, id=user_id)
         if not user:
@@ -199,6 +288,17 @@ class UserService(BaseService, PermissionCacheMixin):
     async def update_user(self, user_id: UUID, obj_in: UserUpdate) -> User:
         """
         更新用户信息。
+
+        Args:
+            user_id: 用户 ID
+            obj_in: 用户更新数据
+
+        Returns:
+            User: 更新后的用户对象
+
+        Raises:
+            NotFoundException: 用户不存在
+            BadRequestException: 用户名、手机号或邮箱已存在
         """
         user = await self.user_crud.get(self.db, id=user_id)
         if not user:
@@ -222,7 +322,19 @@ class UserService(BaseService, PermissionCacheMixin):
     @transactional()
     async def change_password(self, user_id: UUID, old_password: str, new_password: str) -> User:
         """
-        用户修改自己的密码 (需验证旧密码)。
+        用户修改自己的密码（需验证旧密码）。
+
+        Args:
+            user_id: 用户 ID
+            old_password: 旧密码
+            new_password: 新密码
+
+        Returns:
+            User: 更新后的用户对象
+
+        Raises:
+            NotFoundException: 用户不存在
+            BadRequestException: 旧密码错误
         """
         user = await self.user_crud.get(self.db, id=user_id)
         if not user:
@@ -237,7 +349,17 @@ class UserService(BaseService, PermissionCacheMixin):
     @transactional()
     async def reset_password(self, user_id: UUID, new_password: str) -> User:
         """
-        管理员重置用户密码 (无需验证旧密码)。
+        管理员重置用户密码（无需验证旧密码）。
+
+        Args:
+            user_id: 用户 ID
+            new_password: 新密码
+
+        Returns:
+            User: 更新后的用户对象
+
+        Raises:
+            NotFoundException: 用户不存在
         """
         user = await self.user_crud.get(self.db, id=user_id)
         if not user:
@@ -265,6 +387,15 @@ class UserService(BaseService, PermissionCacheMixin):
     async def restore_user(self, id: UUID) -> User:
         """
         恢复已删除用户。
+
+        Args:
+            id: 用户 ID
+
+        Returns:
+            User: 恢复后的用户对象
+
+        Raises:
+            NotFoundException: 用户不存在
         """
         success_count, _ = await self.user_crud.batch_restore(self.db, ids=[id])
         if success_count == 0:
@@ -277,6 +408,14 @@ class UserService(BaseService, PermissionCacheMixin):
 
     @transactional()
     async def batch_restore_users(self, ids: list[UUID]) -> BatchOperationResult:
-        """批量恢复用户。"""
+        """
+        批量恢复用户。
+
+        Args:
+            ids: 用户 ID 列表
+
+        Returns:
+            BatchOperationResult: 批量操作结果
+        """
         success_count, failed_ids = await self.user_crud.batch_restore(self.db, ids=ids)
         return self._build_batch_result(success_count, failed_ids, message="恢复完成")

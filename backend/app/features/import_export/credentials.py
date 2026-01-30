@@ -65,12 +65,28 @@ CREDENTIAL_IMPORT_COLUMN_ALIASES: dict[str, str] = {
 
 
 def _to_str(v: Any) -> str:
+    """将值转换为字符串。
+
+    Args:
+        v (Any): 输入值。
+
+    Returns:
+        str: 转换后的字符串，如果输入为 None 则返回空字符串。
+    """
     if v is None:
         return ""
     return str(v).strip()
 
 
 def _normalize_enum(value: str) -> str:
+    """规范化枚举值。
+
+    Args:
+        value (str): 枚举值字符串。
+
+    Returns:
+        str: 规范化后的枚举值（小写，空格替换为下划线）。
+    """
     return value.strip().lower().replace(" ", "_")
 
 
@@ -80,6 +96,16 @@ async def validate_credentials(
     *,
     allow_overwrite: bool = False,
 ) -> tuple[pl.DataFrame, list[dict[str, Any]]]:
+    """验证凭据导入数据。
+
+    Args:
+        db (AsyncSession): 数据库会话。
+        df (pl.DataFrame): 凭据数据 DataFrame。
+        allow_overwrite (bool): 是否允许覆盖已存在的凭据，默认 False。
+
+    Returns:
+        tuple[pl.DataFrame, list[dict[str, Any]]]: 验证后的有效数据 DataFrame 和错误列表。
+    """
     errors: list[dict[str, Any]] = []
 
     for col in CREDENTIAL_IMPORT_COLUMNS:
@@ -190,6 +216,16 @@ async def persist_credentials(
     *,
     allow_overwrite: bool = False,
 ) -> int:
+    """持久化凭据数据。
+
+    Args:
+        db (AsyncSession): 数据库会话。
+        valid_df (pl.DataFrame): 已验证的凭据数据 DataFrame。
+        allow_overwrite (bool): 是否允许覆盖已存在的凭据，默认 False。
+
+    Returns:
+        int: 成功持久化的凭据数量。
+    """
     if valid_df.is_empty():
         return 0
 
@@ -261,6 +297,14 @@ async def persist_credentials(
 
 
 async def export_credentials_df(db: AsyncSession) -> pl.DataFrame:
+    """导出凭据数据为 DataFrame。
+
+    Args:
+        db (AsyncSession): 数据库会话。
+
+    Returns:
+        pl.DataFrame: 包含凭据数据的 DataFrame。
+    """
     result = await db.execute(
         select(DeviceGroupCredential, Department.code, Department.name)
         .join(Department, Department.id == DeviceGroupCredential.dept_id)
@@ -286,6 +330,14 @@ async def export_credentials_df(db: AsyncSession) -> pl.DataFrame:
 
 
 def build_credential_import_template(path: Path) -> None:
+    """构建凭据导入模板 Excel 文件。
+
+    Args:
+        path (Path): 模板文件保存路径。
+
+    Raises:
+        RuntimeError: 当 Workbook.active 为 None 时。
+    """
     wb = Workbook()
     ws = wb.active
     if ws is None:

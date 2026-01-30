@@ -21,6 +21,11 @@ from app.core.logger import logger
 
 
 def _get_minio() -> Minio:
+    """创建 MinIO 客户端实例。
+
+    Returns:
+        Minio: MinIO 客户端对象。
+    """
     return Minio(
         settings.MINIO_ENDPOINT,
         access_key=settings.MINIO_ACCESS_KEY,
@@ -30,18 +35,43 @@ def _get_minio() -> Minio:
 
 
 def _ensure_bucket_sync(client: Minio) -> None:
+    """确保存储桶存在（同步版本）。
+
+    Args:
+        client (Minio): MinIO 客户端对象。
+
+    Returns:
+        None: 无返回值。
+    """
     bucket = settings.MINIO_BUCKET
     if not client.bucket_exists(bucket):
         client.make_bucket(bucket)
 
 
 async def ensure_bucket() -> None:
+    """确保存储桶存在（异步版本）。
+
+    Returns:
+        None: 无返回值。
+    """
     client = _get_minio()
     await asyncio.to_thread(_ensure_bucket_sync, client)
 
 
 async def put_text(object_name: str, content: str, *, content_type: str = "text/plain; charset=utf-8") -> None:
-    """写入文本内容到 MinIO（无熔断保护）。"""
+    """写入文本内容到 MinIO（无熔断保护）。
+
+    Args:
+        object_name (str): 对象名称。
+        content (str): 文本内容。
+        content_type (str): 内容类型，默认为 "text/plain; charset=utf-8"。
+
+    Returns:
+        None: 无返回值。
+
+    Raises:
+        S3Error: MinIO 操作失败时。
+    """
     client = _get_minio()
     await ensure_bucket()
     data = content.encode("utf-8")
@@ -99,7 +129,17 @@ async def put_text_safe(
 
 
 async def get_text(object_name: str) -> str:
-    """从 MinIO 读取文本内容（无熔断保护）。"""
+    """从 MinIO 读取文本内容（无熔断保护）。
+
+    Args:
+        object_name (str): 对象名称。
+
+    Returns:
+        str: 文本内容。
+
+    Raises:
+        S3Error: MinIO 操作失败时。
+    """
     client = _get_minio()
     await ensure_bucket()
 
@@ -141,7 +181,17 @@ async def get_text_safe(object_name: str) -> str | None:
 
 
 async def delete_object(object_name: str) -> None:
-    """从 MinIO 删除对象（无熔断保护）。"""
+    """从 MinIO 删除对象（无熔断保护）。
+
+    Args:
+        object_name (str): 对象名称。
+
+    Returns:
+        None: 无返回值。
+
+    Raises:
+        S3Error: MinIO 操作失败时。
+    """
     client = _get_minio()
     await ensure_bucket()
 

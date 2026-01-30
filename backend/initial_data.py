@@ -60,7 +60,11 @@ async def init_db() -> None:
         await conn.run_sync(Base.metadata.create_all)
 
     async with AsyncSessionLocal() as db:
-        user = await user_crud.get_by_username(db, username=settings.FIRST_SUPERUSER)
+        user = await user_crud.get_by_unique_field(
+            db,
+            field="username",
+            value=settings.FIRST_SUPERUSER,
+        )
         if not user:
             logger.info(f"正在创建超级管理员: {settings.FIRST_SUPERUSER}")
             user_in = UserCreate(  # pyright: ignore[reportCallIssue]

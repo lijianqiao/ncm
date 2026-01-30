@@ -47,7 +47,16 @@ async def save_device_config_standalone(
         timeout: 操作超时时间（秒）
 
     Returns:
-        dict: {"success": bool, "output": str, "error": str | None}
+        dict[str, Any]: 保存结果：
+        - success (bool): 是否成功
+        - output (str): 保存命令输出
+        - error (str | None): 错误信息（失败时）
+
+    Raises:
+        ScrapliAuthenticationFailed: 认证失败
+        ScrapliTimeout: 保存配置超时（已转换为返回字典）
+        ScrapliConnectionNotOpened: 连接未打开（已转换为返回字典）
+        ScrapliConnectionError: 连接错误（已转换为返回字典）
     """
     device_config = build_scrapli_config(
         host=host,

@@ -72,7 +72,16 @@ DEFAULT_ALLOWED_PREFIXES: tuple[str, ...] = (
 
 
 def normalize_rendered_config(rendered: str) -> list[str]:
-    """把渲染后的配置文本转换成命令列表（按行）。"""
+    """把渲染后的配置文本转换成命令列表（按行）。
+
+    过滤空行和注释行（以 # 或 ! 开头）。
+
+    Args:
+        rendered (str): 渲染后的配置文本。
+
+    Returns:
+        list[str]: 命令列表。
+    """
     cmds: list[str] = []
     for raw in rendered.splitlines():
         line = raw.strip()
@@ -90,7 +99,19 @@ def validate_commands(
     strict_allowlist: bool = False,
     policy: CommandPolicy | None = None,
 ) -> None:
-    """校验命令集合是否满足安全策略。"""
+    """校验命令集合是否满足安全策略。
+
+    Args:
+        commands (list[str]): 命令列表。
+        strict_allowlist (bool): 是否启用严格白名单模式，默认为 False。
+        policy (CommandPolicy | None): 命令策略对象，默认为 None（使用默认策略）。
+
+    Returns:
+        None: 无返回值。
+
+    Raises:
+        BadRequestException: 当命令违反安全策略时。
+    """
     p = policy or CommandPolicy(
         forbidden_patterns=DEFAULT_FORBIDDEN_PATTERNS,
         allowed_prefixes=DEFAULT_ALLOWED_PREFIXES,

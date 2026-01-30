@@ -22,7 +22,26 @@ if TYPE_CHECKING:
 
 
 class TopologyLink(AuditableModel):
-    """网络拓扑链路模型。"""
+    """网络拓扑链路模型。
+
+    网络拓扑链路表，用于存储 LLDP/CDP 采集的网络拓扑链路信息。
+
+    Attributes:
+        source_device_id (UUID): 源设备 ID（本地设备）。
+        source_interface (str): 源接口名称。
+        target_device_id (UUID | None): 目标设备 ID（如果在 CMDB 中）。
+        target_interface (str | None): 目标接口名称。
+        target_hostname (str | None): 目标主机名（LLDP 上报）。
+        target_ip (str | None): 目标管理 IP（LLDP 上报）。
+        target_mac (str | None): 目标 MAC 地址或 Chassis ID。
+        target_description (str | None): 目标设备描述。
+        link_type (str): 链路类型（lldp/cdp/manual）。
+        link_speed (str | None): 链路速率。
+        link_status (str | None): 链路状态。
+        collected_at (datetime): 采集时间。
+        source_device (Device | None): 源设备对象。
+        target_device (Device | None): 目标设备对象。
+    """
 
     __tablename__ = "ncm_topology_link"
     __table_args__ = (

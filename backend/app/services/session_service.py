@@ -26,13 +26,37 @@ from app.services.base import BaseService
 
 
 class SessionService(BaseService):
+    """
+    在线会话管理服务类。
+
+    提供在线会话列表查询和强制下线功能。
+    """
+
     def __init__(self, db: AsyncSession, user_crud: CRUDUser):
+        """
+        初始化会话服务。
+
+        Args:
+            db: 异步数据库会话
+            user_crud: 用户 CRUD 实例
+        """
         super().__init__(db)
         self.user_crud = user_crud
 
     async def list_online(
         self, *, page: int = 1, page_size: int = 20, keyword: str | None = None
     ) -> tuple[list[OnlineSessionResponse], int]:
+        """
+        获取在线会话列表（分页）。
+
+        Args:
+            page: 页码（从 1 开始）
+            page_size: 每页记录数
+            keyword: 搜索关键字（可选）
+
+        Returns:
+            tuple[list[OnlineSessionResponse], int]: (在线会话列表, 总数)
+        """
         sessions, total = await list_online_sessions(page=page, page_size=page_size, keyword=keyword)
 
         items: list[OnlineSessionResponse] = []
@@ -56,6 +80,15 @@ class SessionService(BaseService):
         return items, total
 
     async def kick_user(self, *, user_id: UUID) -> None:
+        """
+        强制下线单个用户。
+
+        Args:
+            user_id: 用户 ID
+
+        Raises:
+            NotFoundException: 用户不存在
+        """
         user = await self.user_crud.get(self.db, id=user_id)
         if not user:
             raise NotFoundException(message="用户不存在")
@@ -65,7 +98,15 @@ class SessionService(BaseService):
         await remove_online_session(user_id=str(user_id))
 
     async def kick_users(self, *, user_ids: list[UUID]) -> BatchOperationResult:
-        """批量强制下线用户。"""
+        """
+        批量强制下线用户。
+
+        Args:
+            user_ids: 用户 ID 列表
+
+        Returns:
+            BatchOperationResult: 批量操作结果
+        """
         unique_ids = list(dict.fromkeys(user_ids))
         if not unique_ids:
             return self._build_batch_result(0, [], message="无用户需要下线")

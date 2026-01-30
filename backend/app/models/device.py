@@ -22,7 +22,35 @@ if TYPE_CHECKING:
 
 
 class Device(AuditableModel):
-    """网络设备模型。"""
+    """网络设备模型。
+
+    网络设备表，存储设备基本信息、连接信息、认证信息和生命周期状态。
+
+    Attributes:
+        name (str): 设备名称/主机名。
+        ip_address (str): IP 地址，唯一。
+        vendor (str): 厂商（如 H3C、Cisco、Huawei）。
+        model (str | None): 设备型号。
+        platform (str | None): 平台类型（如 cisco_iosxe、huawei_vrp、hp_comware）。
+        location (str | None): 物理位置。
+        description (str | None): 设备描述。
+        ssh_port (int): SSH 端口，默认 22。
+        auth_type (str): 认证类型（static/otp_seed/otp_manual）。
+        username (str | None): SSH 用户名（仅 static 类型）。
+        password_encrypted (str | None): 加密后的静态密码（仅 static 类型）。
+        dept_id (UUID | None): 所属部门 ID（区域）。
+        device_group (str): 设备分组（core/distribution/access）。
+        status (str): 设备状态（IN_STOCK/IN_USE/ACTIVE/MAINTENANCE/RETIRED）。
+        stock_in_at (datetime | None): 入库时间。
+        assigned_to (str | None): 领用人。
+        retired_at (datetime | None): 报废时间。
+        serial_number (str | None): 序列号。
+        os_version (str | None): 操作系统版本。
+        last_backup_at (datetime | None): 最后备份时间。
+        last_online_at (datetime | None): 最后在线时间。
+        dept (Department | None): 所属部门对象。
+        backups (list[Backup]): 设备关联的备份记录列表。
+    """
 
     __tablename__ = "ncm_device"
     __table_args__ = (

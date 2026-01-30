@@ -22,6 +22,17 @@ from app.import_export.config import get_exports_dir, get_imports_dir
 
 @dataclass(frozen=True, slots=True)
 class ImportPaths:
+    """导入文件路径集合。
+
+    Attributes:
+        root (Path): 导入根目录。
+        original (Path): 原始上传文件路径。
+        meta (Path): 元数据 JSON 文件路径。
+        parsed_parquet: 解析后的 Parquet 文件路径。
+        errors_json (Path): 错误信息 JSON 文件路径。
+        valid_parquet (Path): 验证后的有效数据 Parquet 文件路径。
+    """
+
     root: Path
     original: Path
     meta: Path
@@ -31,15 +42,32 @@ class ImportPaths:
 
 
 def new_import_id() -> UUID:
+    """生成新的导入 ID。
+
+    Returns:
+        UUID: UUIDv7 格式的导入 ID。
+    """
     return uuid6.uuid7()
 
 
 def ensure_dirs() -> None:
+    """确保导入和导出目录存在。
+
+    创建导入和导出目录（如果不存在）。
+    """
     get_imports_dir().mkdir(parents=True, exist_ok=True)
     get_exports_dir().mkdir(parents=True, exist_ok=True)
 
 
 def get_import_paths(import_id: UUID) -> ImportPaths:
+    """获取导入文件路径集合。
+
+    Args:
+        import_id (UUID): 导入 ID。
+
+    Returns:
+        ImportPaths: 导入文件路径集合。
+    """
     root = get_imports_dir() / str(import_id)
     return ImportPaths(
         root=root,
@@ -52,15 +80,37 @@ def get_import_paths(import_id: UUID) -> ImportPaths:
 
 
 def write_meta(paths: ImportPaths, meta: dict[str, Any]) -> None:
+    """写入导入元数据。
+
+    Args:
+        paths (ImportPaths): 导入文件路径集合。
+        meta (dict[str, Any]): 元数据字典。
+    """
     paths.root.mkdir(parents=True, exist_ok=True)
     paths.meta.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 def read_meta(paths: ImportPaths) -> dict[str, Any]:
+    """读取导入元数据。
+
+    Args:
+        paths (ImportPaths): 导入文件路径集合。
+
+    Returns:
+        dict[str, Any]: 元数据字典。
+    """
     return json.loads(paths.meta.read_text(encoding="utf-8"))
 
 
 def sha256_file(file_path: Path) -> str:
+    """计算文件的 SHA256 哈希值。
+
+    Args:
+        file_path (Path): 文件路径。
+
+    Returns:
+        str: SHA256 哈希值的十六进制字符串。
+    """
     h = hashlib.sha256()
     with file_path.open("rb") as f:
         for chunk in iter(lambda: f.read(1024 * 1024), b""):
@@ -69,6 +119,11 @@ def sha256_file(file_path: Path) -> str:
 
 
 def safe_unlink(path: Path) -> None:
+    """安全删除文件。
+
+    Args:
+        path (Path): 文件路径。如果文件不存在或删除失败，则静默忽略。
+    """
     try:
         path.unlink(missing_ok=True)
     except Exception:
@@ -76,6 +131,11 @@ def safe_unlink(path: Path) -> None:
 
 
 def safe_rmtree(path: Path) -> None:
+    """安全删除目录树。
+
+    Args:
+        path (Path): 目录路径。如果目录不存在或删除失败，则静默忽略。
+    """
     try:
         if not path.exists():
             return
@@ -96,16 +156,37 @@ def safe_rmtree(path: Path) -> None:
 
 
 def delete_export_file(path: str) -> None:
+    """删除导出文件。
+
+    Args:
+        path (str): 导出文件路径。
+    """
     safe_unlink(Path(path))
 
 
 def create_export_path(filename: str) -> Path:
+    """创建导出文件路径。
+
+    Args:
+        filename (str): 文件名。
+
+    Returns:
+        Path: 导出文件路径。文件名中的路径分隔符会被替换为下划线。
+    """
     ensure_dirs()
     safe_name = filename.replace("/", "_").replace("\\", "_")
     return get_exports_dir() / safe_name
 
 
 def stat_size(path: Path) -> int:
+    """获取文件大小。
+
+    Args:
+        path (Path): 文件路径。
+
+    Returns:
+        int: 文件大小（字节），如果文件不存在或获取失败则返回 0。
+    """
     try:
         return os.path.getsize(path)
     except Exception:
@@ -113,11 +194,23 @@ def stat_size(path: Path) -> int:
 
 
 def now_ts() -> int:
+    """获取当前时间戳。
+
+    Returns:
+        int: 当前 Unix 时间戳（秒）。
+    """
     return int(time.time())
 
 
 def cleanup_expired_imports(*, ttl_hours: int) -> int:
-    """清理过期导入临时目录，返回清理数量。"""
+    """清理过期导入临时目录。
+
+    Args:
+        ttl_hours (int): 过期时间（小时）。
+
+    Returns:
+        int: 清理的目录数量。
+    """
     imports_dir = get_imports_dir()
     if not imports_dir.exists():
         return 0

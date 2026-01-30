@@ -24,12 +24,21 @@ if TYPE_CHECKING:
 
 
 class DeviceGroupCredential(AuditableModel):
-    """
-    设备分组凭据模型。
+    """设备分组凭据模型。
 
     按"部门 + 设备分组"管理 OTP 凭据：
     - dept_id + device_group 作为复合唯一键
     - 每个凭据包含独立的账号 + OTP 种子
+    - 同一时间下，同部门的核心、汇聚、接入层 OTP 动态验证码各不相同
+
+    Attributes:
+        dept_id (UUID): 部门 ID（区域）。
+        device_group (str): 设备分组（core/distribution/access）。
+        username (str): SSH 账号。
+        otp_seed_encrypted (str | None): OTP 种子（AES-256 加密存储）。
+        auth_type (str): 认证类型（otp_seed/otp_manual）。
+        description (str | None): 凭据描述（如：华北机房A-核心层设备账号）。
+        dept (Department | None): 所属部门对象。
     """
 
     __tablename__ = "ncm_device_group_credential"

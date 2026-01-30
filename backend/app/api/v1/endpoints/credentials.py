@@ -47,7 +47,7 @@ from app.schemas.credential import (
     OTPVerifyResponse,
 )
 
-router = APIRouter()
+router = APIRouter(tags=["设备凭据"])
 
 
 # ===== 列表与创建（根路由）=====

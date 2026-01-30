@@ -16,6 +16,16 @@ from app.models.device import Device
 
 
 def _normalize_device_group(value: str | Enum | None) -> str | None:
+    """标准化设备分组值。
+
+    将设备分组值转换为字符串格式，处理 Enum 类型和带前缀的字符串。
+
+    Args:
+        value (str | Enum | None): 设备分组值，可以是字符串、枚举或 None。
+
+    Returns:
+        str | None: 标准化后的字符串，如果输入为 None 则返回 None。
+    """
     if value is None:
         return None
     if isinstance(value, Enum):
@@ -31,6 +41,16 @@ def build_backup_batches(devices: list[Device], *, chunk_size: int = 100) -> lis
     批量备份分组规则：
     - 非 otp_manual：合并为一个任务，按 100 台分批
     - otp_manual：按 (dept_id, device_group) 分组后再按 100 台分批
+
+    Args:
+        devices (list[Device]): 设备列表。
+        chunk_size (int): 每批设备数量，默认为 100。
+
+    Returns:
+        list[dict[str, Any]]: 分组后的批次列表，每个批次包含设备信息和元数据。
+
+    Raises:
+        BadRequestException: 当设备缺少部门或设备分组时。
     """
     otp_manual_devices: dict[tuple[UUID, str], list[Device]] = {}
     non_otp_devices: list[Device] = []

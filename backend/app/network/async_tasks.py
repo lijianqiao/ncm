@@ -73,7 +73,15 @@ def _get_scrapli_kwargs(host: "Host") -> dict[str, Any]:
 
 
 async def _apply_otp_manual_password(host: "Host", kwargs: dict[str, Any]) -> dict[str, Any]:
-    """应用 OTP 密码到 Scrapli 连接参数（使用统一的 OTP 解析逻辑）。"""
+    """应用 OTP 密码到 Scrapli 连接参数（使用统一的 OTP 解析逻辑）。
+
+    Args:
+        host: Nornir Host 对象
+        kwargs: Scrapli 连接参数字典
+
+    Returns:
+        dict[str, Any]: 更新后的连接参数字典，包含 auth_password（如果解析到 OTP）
+    """
     auth_type = host.data.get("auth_type")
     host_data = {"name": host.name, **dict(host.data)}
 
@@ -213,11 +221,16 @@ async def async_send_command(host: "Host", command: str, *, timeout_ops: float |
         timeout_ops: 命令超时时间（可选）
 
     Returns:
-        包含执行结果的字典：
+        dict[str, Any] | None: 包含执行结果的字典：
         - success: 是否成功
         - result: 命令输出
         - elapsed_time: 执行耗时
         - failed: 是否失败
+
+    Raises:
+        ScrapliAuthenticationFailed: 认证失败时抛出
+        ScrapliTimeout: 命令执行超时时抛出
+        Exception: 其他执行异常
     """
     kwargs = _get_scrapli_kwargs(host)
     kwargs = await _apply_otp_manual_password(host, kwargs)
@@ -253,10 +266,20 @@ async def async_send_commands(host: "Host", commands: list[str]) -> dict[str, An
         commands: 命令列表
 
     Returns:
-        包含执行结果的字典：
-        - success: 是否全部成功
-        - results: 各命令输出列表
-        - failed_commands: 失败的命令列表
+        dict[str, Any]: 包含执行结果的字典：
+        - success (bool): 是否全部成功
+        - results (list[dict]): 各命令输出列表，每项包含 command、result、failed
+        - failed_commands (list[str]): 失败的命令列表
+
+    Raises:
+        ScrapliAuthenticationFailed: 认证失败（OTP 相关）
+        ScrapliTimeout: 命令执行超时
+        Exception: 其他执行异常
+
+    Raises:
+        ScrapliAuthenticationFailed: 认证失败时抛出
+        ScrapliTimeout: 命令执行超时时抛出
+        Exception: 其他执行异常
     """
     kwargs = _get_scrapli_kwargs(host)
     kwargs = await _apply_otp_manual_password(host, kwargs)
@@ -396,10 +419,18 @@ async def async_send_config(host: "Host", config: str | list[str]) -> dict[str, 
         config: 配置内容（字符串或行列表）
 
     Returns:
-        包含执行结果的字典：
-        - success: 是否成功
-        - result: 配置下发输出
-        - failed_count: 失败行数
+        dict[str, Any]: 包含执行结果的字典：
+        - success (bool): 是否成功
+        - result (str): 配置下发输出
+        - failed_count (int): 失败行数
+
+    Raises:
+        ScrapliAuthenticationFailed: 认证失败（OTP 相关）
+        Exception: 配置下发异常
+
+    Raises:
+        ScrapliAuthenticationFailed: 认证失败时抛出
+        Exception: 配置下发异常
     """
     kwargs = _get_scrapli_kwargs(host)
     kwargs = await _apply_otp_manual_password(host, kwargs)
@@ -507,9 +538,12 @@ async def async_get_prompt(host: "Host") -> dict[str, Any]:
         host: Nornir Host 对象
 
     Returns:
-        包含提示符的字典：
+        dict[str, Any]: 包含提示符的字典：
         - success: 是否成功
         - prompt: 设备提示符
+
+    Raises:
+        Exception: 获取提示符失败时抛出
     """
     kwargs = _get_scrapli_kwargs(host)
     kwargs = await _apply_otp_manual_password(host, kwargs)
@@ -556,10 +590,16 @@ async def async_collect_config(host: "Host") -> dict[str, Any]:
         host: Nornir Host 对象
 
     Returns:
-        包含配置内容的字典：
-        - success: 是否成功
-        - config: 配置内容
-        - platform: 设备平台
+        dict[str, Any]: 包含配置内容的字典：
+        - success (bool): 是否成功
+        - config (str): 配置内容
+        - platform (str): 设备平台
+
+    Raises:
+        ScrapliAuthenticationFailed: 认证失败（OTP 相关）
+
+    Raises:
+        ScrapliAuthenticationFailed: 认证失败时抛出
     """
     from app.network.platform_config import get_command, get_platform_for_vendor
 
@@ -682,10 +722,15 @@ async def async_deploy_from_host_data(host: "Host") -> dict[str, Any]:
         host: Nornir Host 对象，data 中需包含 'deploy_configs' 键
 
     Returns:
-        包含执行结果的字典：
+        dict[str, Any]: 包含执行结果的字典：
         - success: 是否成功
         - result: 下发输出
         - device_id: 设备 ID
+        - failed_count: 失败行数（如果成功）
+        - skipped: 是否跳过（无配置时）
+
+    Raises:
+        Exception: 配置下发异常
     """
     device_id = host.data.get("device_id", host.name)
     device_name = host.data.get("device_name", host.name)
@@ -723,11 +768,19 @@ async def async_get_lldp_neighbors(host: "Host") -> dict[str, Any]:
         host: Nornir Host 对象
 
     Returns:
-        包含 LLDP 邻居信息的字典：
-        - success: 是否成功
-        - raw: 原始输出
-        - parsed: 解析后的结构化数据
-        - platform: 设备平台
+        dict[str, Any]: 包含 LLDP 邻居信息的字典：
+        - success (bool): 是否成功
+        - raw (str): 原始输出
+        - parsed (list[dict] | None): 解析后的结构化数据
+        - platform (str): 设备平台
+
+    Raises:
+        ScrapliAuthenticationFailed: 认证失败（OTP 相关）
+        Exception: LLDP 采集异常
+
+    Raises:
+        ScrapliAuthenticationFailed: 认证失败时抛出
+        Exception: LLDP 采集异常
     """
     from app.network.platform_config import get_command, get_platform_for_vendor
     from app.network.textfsm_parser import parse_command_output

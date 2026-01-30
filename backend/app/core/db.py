@@ -30,5 +30,9 @@ AsyncSessionLocal = async_sessionmaker(
 
 
 async def close_db() -> None:
-    """关闭数据库引擎连接池，在应用关闭时调用。"""
+    """关闭数据库引擎连接池，在应用关闭时调用。
+
+    Returns:
+        None: 无返回值。
+    """
     await engine.dispose()

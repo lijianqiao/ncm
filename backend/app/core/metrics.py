@@ -37,22 +37,40 @@ ACTIVE_USERS = Counter(
 
 
 def record_request_metrics(method: str, endpoint: str, status_code: int, duration: float) -> None:
-    """
-    记录请求指标。
+    """记录请求指标。
+
+    Args:
+        method (str): HTTP 方法。
+        endpoint (str): 端点路径。
+        status_code (int): HTTP 状态码。
+        duration (float): 请求处理时长（秒）。
+
+    Returns:
+        None: 无返回值。
     """
     REQUEST_COUNT.labels(method=method, endpoint=endpoint, status_code=status_code).inc()
     REQUEST_LATENCY.labels(method=method, endpoint=endpoint).observe(duration)
 
 
 def record_login_attempt(success: bool) -> None:
-    """
-    记录登录尝试。
+    """记录登录尝试。
+
+    Args:
+        success (bool): 是否成功。
+
+    Returns:
+        None: 无返回值。
     """
     LOGIN_ATTEMPTS.labels(status="success" if success else "failure").inc()
 
 
 async def metrics_endpoint(request: Request) -> Response:
-    """
-    Prometheus 指标端点。
+    """Prometheus 指标端点。
+
+    Args:
+        request (Request): FastAPI 请求对象。
+
+    Returns:
+        Response: Prometheus 指标文本响应。
     """
     return Response(content=generate_latest(), media_type="text/plain")

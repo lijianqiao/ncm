@@ -26,6 +26,12 @@ class CircuitBreakerOpenError(Exception):
     """熔断器打开时抛出的异常。"""
 
     def __init__(self, name: str, remaining_time: float):
+        """初始化熔断器打开异常。
+
+        Args:
+            name (str): 熔断器名称。
+            remaining_time (float): 剩余恢复时间（秒）。
+        """
         self.name = name
         self.remaining_time = remaining_time
         super().__init__(f"熔断器 '{name}' 已打开，剩余 {remaining_time:.1f}s 后尝试恢复")
@@ -61,7 +67,11 @@ class CircuitBreaker:
 
     @property
     def state(self) -> CircuitState:
-        """获取当前状态（自动检测状态转换）。"""
+        """获取当前状态（自动检测状态转换）。
+
+        Returns:
+            CircuitState: 当前熔断器状态。
+        """
         if self._state == CircuitState.OPEN:
             # 检查是否应该转入半开状态
             if time.monotonic() - self._last_failure_time >= self.recovery_timeout:
@@ -70,18 +80,34 @@ class CircuitBreaker:
 
     @property
     def is_open(self) -> bool:
-        """熔断器是否打开（阻止请求）。"""
+        """熔断器是否打开（阻止请求）。
+
+        Returns:
+            bool: 如果熔断器处于打开状态则返回 True。
+        """
         return self.state == CircuitState.OPEN
 
     def _remaining_time(self) -> float:
-        """计算熔断器剩余打开时间。"""
+        """计算熔断器剩余打开时间。
+
+        Returns:
+            float: 剩余打开时间（秒），如果未打开则返回 0.0。
+        """
         if self._state != CircuitState.OPEN:
             return 0.0
         elapsed = time.monotonic() - self._last_failure_time
         return max(0.0, self.recovery_timeout - elapsed)
 
     async def _record_success(self) -> None:
-        """记录成功。"""
+        """记录成功请求。
+
+        更新失败计数和状态：
+        - 如果处于半开状态，增加成功计数，达到阈值后关闭熔断器
+        - 否则重置失败计数并关闭熔断器
+
+        Returns:
+            None: 无返回值。
+        """
         async with self._lock:
             self._failures = 0
             if self._state == CircuitState.HALF_OPEN:
@@ -94,7 +120,15 @@ class CircuitBreaker:
                 self._state = CircuitState.CLOSED
 
     async def _record_failure(self) -> None:
-        """记录失败。"""
+        """记录失败请求。
+
+        更新失败计数和状态：
+        - 如果处于半开状态，重新打开熔断器
+        - 如果失败次数达到阈值，打开熔断器
+
+        Returns:
+            None: 无返回值。
+        """
         async with self._lock:
             self._failures += 1
             self._successes = 0
@@ -156,7 +190,11 @@ class CircuitBreaker:
             raise e from None
 
     def stats(self) -> dict[str, Any]:
-        """获取熔断器统计信息。"""
+        """获取熔断器统计信息。
+
+        Returns:
+            dict[str, Any]: 包含熔断器状态、失败次数、成功次数等信息的字典。
+        """
         return {
             "name": self.name,
             "state": self.state.value,

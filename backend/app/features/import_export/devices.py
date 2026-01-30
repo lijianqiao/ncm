@@ -88,16 +88,41 @@ DEVICE_IMPORT_COLUMN_ALIASES: dict[str, str] = {
 
 
 def _to_str(v: Any) -> str:
+    """将值转换为字符串。
+
+    Args:
+        v (Any): 输入值。
+
+    Returns:
+        str: 转换后的字符串，如果输入为 None 则返回空字符串。
+    """
     if v is None:
         return ""
     return str(v).strip()
 
 
 def _normalize_enum(value: str) -> str:
+    """规范化枚举值。
+
+    Args:
+        value (str): 枚举值字符串。
+
+    Returns:
+        str: 规范化后的枚举值（小写，空格替换为下划线）。
+    """
     return value.strip().lower().replace(" ", "_")
 
 
 def _parse_int(value: str, default: int | None = None) -> int | None:
+    """解析整数。
+
+    Args:
+        value (str): 字符串值。
+        default (int | None): 默认值，当解析失败或为空时返回。
+
+    Returns:
+        int | None: 解析后的整数值，失败时返回默认值。
+    """
     v = value.strip()
     if not v:
         return default
@@ -108,6 +133,14 @@ def _parse_int(value: str, default: int | None = None) -> int | None:
 
 
 def _parse_datetime(value: str) -> datetime | None:
+    """解析日期时间字符串。
+
+    Args:
+        value (str): 日期时间字符串。
+
+    Returns:
+        datetime | None: 解析后的日期时间对象，失败时返回 None。
+    """
     v = value.strip()
     if not v:
         return None
@@ -128,6 +161,16 @@ async def validate_devices(
     *,
     allow_overwrite: bool = False,
 ) -> tuple[pl.DataFrame, list[dict[str, Any]]]:
+    """验证设备导入数据。
+
+    Args:
+        db (AsyncSession): 数据库会话。
+        df (pl.DataFrame): 设备数据 DataFrame。
+        allow_overwrite (bool): 是否允许覆盖已存在的设备，默认 False。
+
+    Returns:
+        tuple[pl.DataFrame, list[dict[str, Any]]]: 验证后的有效数据 DataFrame 和错误列表。
+    """
     errors: list[dict[str, Any]] = []
 
     for col in DEVICE_IMPORT_COLUMNS:
@@ -287,6 +330,16 @@ async def persist_devices(
     *,
     allow_overwrite: bool = False,
 ) -> int:
+    """持久化设备数据。
+
+    Args:
+        db (AsyncSession): 数据库会话。
+        valid_df (pl.DataFrame): 已验证的设备数据 DataFrame。
+        allow_overwrite (bool): 是否允许覆盖已存在的设备，默认 False。
+
+    Returns:
+        int: 成功持久化的设备数量。
+    """
     if valid_df.is_empty():
         return 0
 
@@ -414,6 +467,14 @@ async def persist_devices(
 
 
 async def export_devices_df(db: AsyncSession) -> pl.DataFrame:
+    """导出设备数据为 DataFrame。
+
+    Args:
+        db (AsyncSession): 数据库会话。
+
+    Returns:
+        pl.DataFrame: 设备数据 DataFrame。
+    """
     result = await db.execute(select(Device).where(Device.is_deleted.is_(False)).order_by(Device.created_at.desc()))
     devices = result.scalars().all()
     rows: list[dict[str, Any]] = []
@@ -443,6 +504,14 @@ async def export_devices_df(db: AsyncSession) -> pl.DataFrame:
 
 
 def build_device_import_template(path: Path) -> None:
+    """构建设备导入模板 Excel 文件。
+
+    Args:
+        path (Path): 模板文件保存路径。
+
+    Raises:
+        RuntimeError: 当 Workbook.active 为 None 时。
+    """
     wb = Workbook()
     ws = wb.active
     if ws is None:

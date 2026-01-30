@@ -22,7 +22,22 @@ if TYPE_CHECKING:
 
 
 class InventoryAudit(AuditableModel):
-    """资产盘点任务。"""
+    """资产盘点任务模型。
+
+    资产盘点任务表，用于管理网络资产盘点任务的状态和结果。
+
+    Attributes:
+        name (str): 盘点任务名称。
+        scope (dict): 盘点范围（JSONB）。
+        status (str): 盘点状态（PENDING/RUNNING/SUCCESS/FAILED）。
+        result (dict | None): 盘点结果（JSONB）。
+        error_message (str | None): 错误信息。
+        started_at (datetime | None): 开始时间。
+        finished_at (datetime | None): 结束时间。
+        operator_id (UUID | None): 操作人 ID。
+        operator (User | None): 操作人对象。
+        celery_task_id (str | None): Celery 任务 ID。
+    """
 
     __tablename__ = "ncm_inventory_audit"
 

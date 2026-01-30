@@ -28,6 +28,14 @@ SCAN_MAX_CONCURRENT = settings.SCAN_MAX_CONCURRENT
 
 
 def _parse_snmp_cred_uuid(snmp_cred_id: str | None) -> "UUID | None":
+    """解析 SNMP 凭据 UUID。
+
+    Args:
+        snmp_cred_id (str | None): SNMP 凭据 ID 字符串。
+
+    Returns:
+        UUID | None: 解析成功的 UUID 对象，失败或为空时返回 None。
+    """
     if not snmp_cred_id:
         return None
     try:
@@ -92,12 +100,14 @@ def scan_subnet(
     扫描单个网段 Celery 任务。
 
     Args:
-        subnet: 网段 (CIDR 格式)
-        scan_type: 扫描类型 (nmap/masscan)
-        ports: 扫描端口
+        self: Celery 任务实例。
+        subnet (str): 网段 (CIDR 格式)。
+        scan_type (str): 扫描类型 (nmap/masscan/auto)，默认为 auto。
+        ports (str | None): 扫描端口，默认为 None。
+        snmp_cred_id (str | None): SNMP 凭据 ID，默认为 None。
 
     Returns:
-        扫描结果字典
+        dict[str, Any]: 扫描结果字典。
     """
 
     celery_task_id = self.request.id
@@ -182,12 +192,14 @@ def scan_subnets_batch(
     批量扫描多个网段 Celery 任务（并行执行）。
 
     Args:
-        subnets: 网段列表
-        scan_type: 扫描类型
-        ports: 扫描端口
+        self: Celery 任务实例。
+        subnets (list[str]): 网段列表。
+        scan_type (str): 扫描类型 (nmap/masscan/auto)，默认为 auto。
+        ports (str | None): 扫描端口，默认为 None。
+        snmp_cred_id (str | None): SNMP 凭据 ID，默认为 None。
 
     Returns:
-        批量扫描结果
+        dict[str, Any]: 批量扫描结果字典。
     """
 
     celery_task_id = self.request.id
@@ -355,8 +367,11 @@ def compare_cmdb(self) -> dict[str, Any]:
     """
     将扫描发现与 CMDB 比对 Celery 任务。
 
+    Args:
+        self: Celery 任务实例。
+
     Returns:
-        比对结果
+        dict[str, Any]: 比对结果字典。
     """
 
     async def _compare():
@@ -390,13 +405,16 @@ def compare_cmdb(self) -> dict[str, Any]:
 )
 def scheduled_network_scan(self) -> dict[str, Any]:
     """
-    定时网络扫描任务 (通过 Celery Beat 调度)
+    定时网络扫描任务 (通过 Celery Beat 调度)。
 
     扫描预配置的网段列表，并与 CMDB 比对。
     使用统一的 _execute_scan 函数和并行扫描。
 
+    Args:
+        self: Celery 任务实例。
+
     Returns:
-        扫描和比对结果
+        dict[str, Any]: 扫描和比对结果字典。
     """
 
     celery_task_id = self.request.id
@@ -524,10 +542,13 @@ def scheduled_network_scan(self) -> dict[str, Any]:
 )
 def increment_offline_days(self) -> dict[str, Any]:
     """
-    增加发现记录的离线天数 (每日执行一次)
+    增加发现记录的离线天数 (每日执行一次)。
+
+    Args:
+        self: Celery 任务实例。
 
     Returns:
-        更新结果
+        dict[str, Any]: 更新结果字典。
     """
 
     celery_task_id = self.request.id

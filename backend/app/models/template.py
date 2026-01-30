@@ -26,7 +26,31 @@ if TYPE_CHECKING:
 
 
 class Template(AuditableModel):
-    """配置模板模型。"""
+    """配置模板模型。
+
+    配置模板表，用于存储 Jinja2 配置模板，支持多厂商、版本控制和审批流程。
+
+    Attributes:
+        name (str): 模板名称。
+        description (str | None): 模板描述。
+        template_type (str): 模板类型（CUSTOM/PRESET）。
+        content (str): Jinja2 模板内容。
+        vendors (list[str]): 适用厂商列表（h3c/huawei/cisco/other）。
+        device_type (str): 适用设备类型（ALL/SWITCH/ROUTER/FIREWALL）。
+        parameters (str | None): 参数定义（JSON Schema 格式）。
+        version (int): 版本号。
+        parent_id (UUID | None): 父版本 ID，用于版本管理。
+        status (str): 模板状态（DRAFT/APPROVED/ARCHIVED）。
+        approval_required (bool): 是否需要审批。
+        approval_status (str): 审批状态（NONE/PENDING/APPROVED/REJECTED）。
+        current_approval_level (int): 当前已通过的审批级别（0-3）。
+        creator_id (UUID | None): 创建人 ID。
+        usage_count (int): 使用次数。
+        creator (User | None): 创建人对象。
+        parent (Template | None): 父版本对象。
+        approval_steps (list[TemplateApprovalStep]): 审批步骤列表。
+        parameters_list (list[TemplateParameter]): 表单化参数列表。
+    """
 
     __tablename__ = "ncm_template"
 

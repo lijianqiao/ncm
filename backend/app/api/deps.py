@@ -115,7 +115,10 @@ reusable_oauth2 = OAuth2PasswordBearer(tokenUrl=f"{settings.API_V1_STR}/auth/log
 
 async def get_db() -> AsyncGenerator[AsyncSession]:
     """
-    获取异步数据库会话依赖
+    获取异步数据库会话依赖。
+
+    Yields:
+        AsyncSession: 异步数据库会话。
     """
     async with AsyncSessionLocal() as session:
         try:
@@ -133,7 +136,20 @@ TokenDep = Annotated[str, Depends(reusable_oauth2)]
 
 async def get_current_user(request: Request, session: SessionDep, token: TokenDep) -> User:
     """
-    解析 Token 并获取当前登录用户
+    解析 Token 并获取当前登录用户。
+
+    Args:
+        request: 当前请求对象。
+        session: 数据库会话依赖。
+        token: 访问令牌字符串。
+
+    Returns:
+        User: 当前登录用户。
+
+    Raises:
+        UnauthorizedException: 凭据无效或已失效。
+        NotFoundException: 用户不存在。
+        ForbiddenException: 用户被禁用。
     """
     try:
         payload = jwt.decode(
@@ -232,9 +248,17 @@ async def get_current_user(request: Request, session: SessionDep, token: TokenDe
 
 
 def require_permissions(required_permissions: list[str]):
-    """权限校验依赖：超级管理员放行；否则要求权限集合包含 required_permissions"""
+    """构建权限校验依赖。
+
+    Args:
+        required_permissions: 需要包含的权限列表。
+
+    Returns:
+        Callable[[Request, User], User]: 权限校验依赖函数。
+    """
 
     async def _checker(request: Request, current_user: CurrentUser) -> User:
+        """校验当前用户权限是否满足要求。"""
         if current_user.is_superuser:
             return current_user
 
@@ -253,6 +277,7 @@ CurrentUser = Annotated[User, Depends(get_current_user)]
 
 
 def _is_origin_allowed(origin: str) -> bool:
+    """判断请求来源是否在允许列表内。"""
     if not origin:
         return True
 
@@ -264,6 +289,7 @@ def _is_origin_allowed(origin: str) -> bool:
 
 
 def _extract_origin_from_referer(referer: str) -> str | None:
+    """从 Referer 中提取 Origin。"""
     if not referer:
         return None
     try:
@@ -276,12 +302,22 @@ def _extract_origin_from_referer(referer: str) -> str | None:
 
 
 async def require_refresh_cookie_and_csrf(request: Request) -> str:
-    """Refresh Cookie + CSRF 校验依赖
+    """Refresh Cookie + CSRF 校验依赖。
 
     说明：
     - refresh_token 放在 HttpOnly Cookie，因 refresh 接口属于 Cookie 认证，需 CSRF 防护
     - CSRF 采用双提取 Cookie：csrf_token Cookie(非 HttpOnly) + X-CSRF-Token 请求头
     - 额外校验 Origin/Referer（若存在且配置了白名单）
+
+    Args:
+        request: 当前请求对象。
+
+    Returns:
+        str: 刷新令牌字符串。
+
+    Raises:
+        UnauthorizedException: 缺少刷新令牌。
+        ForbiddenException: CSRF 校验失败。
     """
 
     refresh_token = request.cookies.get(refresh_cookie_name())
@@ -312,7 +348,16 @@ RefreshCookieDep = Annotated[str, Depends(require_refresh_cookie_and_csrf)]
 
 async def get_current_active_superuser(current_user: CurrentUser) -> User:
     """
-    检查当前用户是否为超级管理员
+    检查当前用户是否为超级管理员。
+
+    Args:
+        current_user: 当前登录用户。
+
+    Returns:
+        User: 当前登录用户。
+
+    Raises:
+        ForbiddenException: 非超级管理员。
     """
     if not current_user.is_superuser:
         raise ForbiddenException(message="权限不足: 需要超级管理员权限")
@@ -323,74 +368,92 @@ async def get_current_active_superuser(current_user: CurrentUser) -> User:
 
 
 def get_alert_crud() -> CRUDAlert:
+    """获取告警 CRUD 依赖。"""
     return alert_instance
 
 
 def get_backup_crud() -> CRUDBackup:
+    """获取备份 CRUD 依赖。"""
     return backup_instance
 
 
 def get_credential_crud() -> CRUDCredential:
+    """获取凭据 CRUD 依赖。"""
     return credential_instance
 
 
 def get_dept_crud() -> CRUDDept:
+    """获取部门 CRUD 依赖。"""
     return dept_instance
 
 
 def get_device_crud() -> CRUDDevice:
+    """获取设备 CRUD 依赖。"""
     return device_instance
 
 
 def get_discovery_crud() -> CRUDDiscovery:
+    """获取发现任务 CRUD 依赖。"""
     return discovery_instance
 
 
 def get_inventory_audit_crud() -> CRUDInventoryAudit:
+    """获取资产盘点 CRUD 依赖。"""
     return inventory_audit_crud_instance
 
 
 def get_login_log_crud() -> CRUDLoginLog:
+    """获取登录日志 CRUD 依赖。"""
     return login_log_crud_global
 
 
 def get_menu_crud() -> CRUDMenu:
+    """获取菜单 CRUD 依赖。"""
     return menu_crud_global
 
 
 def get_operation_log_crud() -> CRUDOperationLog:
+    """获取操作日志 CRUD 依赖。"""
     return operation_log_crud_global
 
 
 def get_role_crud() -> CRUDRole:
+    """获取角色 CRUD 依赖。"""
     return role_crud_global
 
 
 def get_task_approval_crud() -> CRUDTaskApprovalStep:
+    """获取任务审批步骤 CRUD 依赖。"""
     return task_approval_crud_instance
 
 
 def get_task_crud() -> CRUDTask:
+    """获取任务 CRUD 依赖。"""
     return task_crud_instance
 
 
 def get_template_approval_crud() -> CRUDTemplateApprovalStep:
+    """获取模板审批步骤 CRUD 依赖。"""
     return template_approval_crud_instance
 
 
 def get_template_crud() -> CRUDTemplate:
+    """获取模板 CRUD 依赖。"""
     return template_instance
 
 
 def get_template_parameter_crud() -> CRUDTemplateParameter:
+    """获取模板参数 CRUD 依赖。"""
     return template_parameter_instance
 
 
 def get_topology_crud() -> CRUDTopology:
+    """获取拓扑 CRUD 依赖。"""
     return topology_instance
 
 
 def get_user_crud() -> CRUDUser:
+    """获取用户 CRUD 依赖。"""
     return user_crud_global
 
 
@@ -418,6 +481,7 @@ UserCRUDDep = Annotated[CRUDUser, Depends(get_user_crud)]
 
 
 def get_alert_service(db: SessionDep, alert_crud: AlertCRUDDep) -> AlertService:
+    """获取告警服务依赖。"""
     return AlertService(db, alert_crud)
 
 
@@ -427,6 +491,7 @@ def get_backup_service(
     device_crud: DeviceCRUDDep,
     credential_crud: CredentialCRUDDep,
 ) -> BackupService:
+    """获取备份服务依赖。"""
     return BackupService(db, backup_crud, device_crud, credential_crud)
 
 
@@ -435,10 +500,12 @@ def get_collect_service(
     device_crud: DeviceCRUDDep,
     credential_crud: CredentialCRUDDep,
 ) -> CollectService:
+    """获取采集服务依赖。"""
     return CollectService(db, device_crud, credential_crud)
 
 
 def get_credential_service(db: SessionDep, credential_crud: CredentialCRUDDep) -> CredentialService:
+    """获取凭据服务依赖。"""
     return CredentialService(db, credential_crud)
 
 
@@ -448,6 +515,7 @@ def get_dashboard_service(
     role_crud: RoleCRUDDep,
     menu_crud: MenuCRUDDep,
 ) -> DashboardService:
+    """获取仪表盘服务依赖。"""
     return DashboardService(db, user_crud, role_crud, menu_crud)
 
 
@@ -458,28 +526,34 @@ def get_deploy_service(
     device_crud: DeviceCRUDDep,
     credential_crud: CredentialCRUDDep,
 ) -> DeployService:
+    """获取下发服务依赖。"""
     return DeployService(db, task_crud, task_approval_crud, device_crud, credential_crud)
 
 
 def get_dept_service(db: SessionDep, dept_crud: DeptCRUDDep) -> DeptService:
+    """获取部门服务依赖。"""
     return DeptService(db, dept_crud)
 
 
 def get_device_service(db: SessionDep, device_crud: DeviceCRUDDep, credential_crud: CredentialCRUDDep) -> DeviceService:
+    """获取设备服务依赖。"""
     return DeviceService(db, device_crud, credential_crud)
 
 
 def get_diff_service(db: SessionDep, backup_crud: BackupCRUDDep) -> DiffService:
+    """获取差异服务依赖。"""
     return DiffService(db, backup_crud)
 
 
 def get_inventory_audit_service(db: SessionDep, inventory_audit_crud: InventoryAuditCRUDDep) -> InventoryAuditService:
+    """获取资产盘点服务依赖。"""
     return InventoryAuditService(db, inventory_audit_crud)
 
 
 def get_log_service(
     db: SessionDep, login_log_crud: LoginLogCRUDDep, operation_log_crud: OperationLogCRUDDep
 ) -> LogService:
+    """获取日志服务依赖。"""
     return LogService(db, login_log_crud, operation_log_crud)
 
 
@@ -488,14 +562,17 @@ def get_auth_service(
     log_service: Annotated[LogService, Depends(get_log_service)],
     user_crud: UserCRUDDep,
 ) -> AuthService:
+    """获取认证服务依赖。"""
     return AuthService(db, log_service, user_crud)
 
 
 def get_menu_service(db: SessionDep, menu_crud: MenuCRUDDep) -> MenuService:
+    """获取菜单服务依赖。"""
     return MenuService(db, menu_crud)
 
 
 def get_permission_service() -> PermissionService:
+    """获取权限服务依赖。"""
     return PermissionService()
 
 
@@ -505,24 +582,29 @@ def get_preset_service(
     credential_crud: CredentialCRUDDep,
     backup_crud: BackupCRUDDep,
 ) -> PresetService:
+    """获取预设服务依赖。"""
     # 创建 BackupService 实例用于变更前/后备份
     backup_service = BackupService(db, backup_crud, device_crud, credential_crud)
     return PresetService(db, device_crud, credential_crud, backup_service)
 
 
 def get_render_service() -> RenderService:
+    """获取渲染服务依赖。"""
     return RenderService()
 
 
 def get_role_service(db: SessionDep, role_crud: RoleCRUDDep, menu_crud: MenuCRUDDep) -> RoleService:
+    """获取角色服务依赖。"""
     return RoleService(db, role_crud, menu_crud)
 
 
 def get_scan_service(discovery_crud: DiscoveryCRUDDep, device_crud: DeviceCRUDDep) -> ScanService:
+    """获取扫描服务依赖。"""
     return ScanService(discovery_crud=discovery_crud, device_crud=device_crud)
 
 
 def get_session_service(db: SessionDep, user_crud: UserCRUDDep) -> SessionService:
+    """获取会话服务依赖。"""
     return SessionService(db, user_crud)
 
 
@@ -532,6 +614,7 @@ def get_template_service(
     template_approval_crud: TemplateApprovalCRUDDep,
     template_parameter_crud: TemplateParameterCRUDDep,
 ) -> TemplateService:
+    """获取模板服务依赖。"""
     return TemplateService(db, template_crud, template_approval_crud, template_parameter_crud)
 
 
@@ -540,6 +623,7 @@ def get_topology_service(
     device_crud: DeviceCRUDDep,
     credential_crud: CredentialCRUDDep,
 ) -> TopologyService:
+    """获取拓扑服务依赖。"""
     return TopologyService(
         topology_crud=topology_crud,
         device_crud=device_crud,
@@ -549,22 +633,67 @@ def get_topology_service(
 
 
 def get_user_service(db: SessionDep, user_crud: UserCRUDDep, role_crud: RoleCRUDDep) -> UserService:
+    """获取用户服务依赖。"""
     return UserService(db, user_crud, role_crud)
 
 
 def get_discovery_service(db: SessionDep, discovery_crud: DiscoveryCRUDDep) -> DiscoveryService:
+    """获取发现服务依赖。"""
     return DiscoveryService(db, discovery_crud)
 
 
 def get_import_export_service(db: SessionDep) -> ImportExportService:
+    """获取导入导出服务依赖。"""
     return ImportExportService(db)
 
 
 class BackupServiceProtocol(Protocol):
-    async def get_backups_paginated(self, query: BackupListQuery) -> tuple[list[Any], int]: ...
-    async def get_recycle_backups_paginated(self, query: BackupListQuery) -> tuple[list[Any], int]: ...
-    async def get_backup(self, backup_id: UUID) -> Any: ...
-    async def get_backup_content(self, backup_id: UUID) -> str: ...
+    """备份服务协议，用于依赖注入类型约束。"""
+
+    async def get_backups_paginated(self, query: BackupListQuery) -> tuple[list[Any], int]:
+        """获取分页的备份列表。
+
+        Args:
+            query (BackupListQuery): 查询参数对象。
+
+        Returns:
+            tuple[list[Any], int]: 备份记录列表和总数。
+        """
+        ...
+
+    async def get_recycle_backups_paginated(self, query: BackupListQuery) -> tuple[list[Any], int]:
+        """获取分页的回收站备份列表。
+
+        Args:
+            query (BackupListQuery): 查询参数对象。
+
+        Returns:
+            tuple[list[Any], int]: 备份记录列表和总数。
+        """
+        ...
+
+    async def get_backup(self, backup_id: UUID) -> Any:
+        """获取单个备份详情。
+
+        Args:
+            backup_id (UUID): 备份 ID。
+
+        Returns:
+            Any: 备份记录对象。
+        """
+        ...
+
+    async def get_backup_content(self, backup_id: UUID) -> str:
+        """获取备份的配置内容。
+
+        Args:
+            backup_id (UUID): 备份 ID。
+
+        Returns:
+            str: 配置内容字符串。
+        """
+        ...
+
     async def backup_single_device(
         self,
         device_id: UUID,
@@ -572,29 +701,120 @@ class BackupServiceProtocol(Protocol):
         backup_type: BackupType,
         operator_id: UUID | None = None,
         otp_code: str | None = None,
-    ) -> Any: ...
+    ) -> Any:
+        """执行单设备备份。
+
+        Args:
+            device_id (UUID): 设备 ID。
+            backup_type (BackupType): 备份类型。
+            operator_id (UUID | None): 操作员 ID。
+            otp_code (str | None): OTP 验证码。
+
+        Returns:
+            Any: 创建的备份任务或记录。
+        """
+        ...
+
     async def backup_devices_batch(
         self,
         request: BackupBatchRequest,
         *,
         operator_id: UUID | None = None,
-    ) -> BackupBatchResult: ...
-    async def get_task_status(self, task_id: str) -> BackupTaskStatus: ...
-    async def get_device_latest_backup(self, device_id: UUID) -> Any: ...
+    ) -> BackupBatchResult:
+        """批量备份设备。
+
+        Args:
+            request (BackupBatchRequest): 批量备份请求。
+            operator_id (UUID | None): 操作员 ID。
+
+        Returns:
+            BackupBatchResult: 批量操作结果。
+        """
+        ...
+
+    async def get_task_status(self, task_id: str) -> BackupTaskStatus:
+        """获取备份任务状态。
+
+        Args:
+            task_id (str): 任务 ID。
+
+        Returns:
+            BackupTaskStatus: 任务状态信息。
+        """
+        ...
+
+    async def get_device_latest_backup(self, device_id: UUID) -> Any:
+        """获取设备最新的备份记录。
+
+        Args:
+            device_id (UUID): 设备 ID。
+
+        Returns:
+            Any: 最新备份记录。
+        """
+        ...
+
     async def get_device_backups(
         self,
         device_id: UUID,
         page: int = 1,
         page_size: int = 20,
-    ) -> tuple[list[Any], int]: ...
+    ) -> tuple[list[Any], int]:
+        """获取设备备份历史。
+
+        Args:
+            device_id (UUID): 设备 ID。
+            page (int): 页码。
+            page_size (int): 每页数量。
+
+        Returns:
+            tuple[list[Any], int]: 备份记录列表和总数。
+        """
+        ...
+
     async def delete_backups_batch(
         self,
         backup_ids: list[UUID],
         hard_delete: bool = False,
-    ) -> BackupBatchDeleteResult: ...
-    async def restore_backups_batch(self, backup_ids: list[UUID]) -> BackupBatchRestoreResult: ...
-    async def delete_backup(self, backup_id: UUID, hard_delete: bool = False) -> None: ...
-    async def restore_backup(self, backup_id: UUID) -> None: ...
+    ) -> BackupBatchDeleteResult:
+        """批量删除备份。
+
+        Args:
+            backup_ids (list[UUID]): 备份 ID 列表。
+            hard_delete (bool): 是否硬删除。
+
+        Returns:
+            BackupBatchDeleteResult: 删除结果。
+        """
+        ...
+
+    async def restore_backups_batch(self, backup_ids: list[UUID]) -> BackupBatchRestoreResult:
+        """批量恢复备份。
+
+        Args:
+            backup_ids (list[UUID]): 备份 ID 列表。
+
+        Returns:
+            BackupBatchRestoreResult: 恢复结果。
+        """
+        ...
+
+    async def delete_backup(self, backup_id: UUID, hard_delete: bool = False) -> None:
+        """删除单个备份。
+
+        Args:
+            backup_id (UUID): 备份 ID。
+            hard_delete (bool): 是否硬删除。
+        """
+        ...
+
+    async def restore_backup(self, backup_id: UUID) -> None:
+        """恢复单个备份。
+
+        Args:
+            backup_id (UUID): 备份 ID。
+        """
+        ...
 
 
 AlertServiceDep = Annotated[AlertService, Depends(get_alert_service)]

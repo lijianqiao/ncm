@@ -26,7 +26,11 @@ from app.network.textfsm_parser import parse_command_output
 
 
 def _apply_dynamic_auth(task: Task) -> None:
-    """应用动态认证到 Nornir Host（使用统一的 OTP 解析逻辑）。"""
+    """应用动态认证到 Nornir Host（使用统一的 OTP 解析逻辑）。
+
+    Args:
+        task: Nornir 任务上下文
+    """
     auth_type = task.host.data.get("auth_type")
     host_data = {"name": task.host.name, **dict(task.host.data)}
 
@@ -41,8 +45,14 @@ def backup_config(task: Task) -> Result:
 
     根据设备平台自动选择正确的命令。
 
+    Args:
+        task: Nornir 任务上下文
+
     Returns:
         Result: 包含配置内容的结果
+
+    Raises:
+        ScrapliAuthenticationFailed: 认证失败时抛出（会先调用 handle_otp_auth_failure_sync）
     """
     platform = task.host.platform or "cisco_iosxe"
     _apply_dynamic_auth(task)
@@ -92,6 +102,9 @@ def execute_command(task: Task, command: str, parse: bool = False) -> Result:
 
     Returns:
         Result: 包含命令输出的结果（原始文本或解析后的结构化数据）
+
+    Raises:
+        ScrapliAuthenticationFailed: 认证失败时抛出（会先调用 handle_otp_auth_failure_sync）
     """
     _apply_dynamic_auth(task)
 
@@ -134,6 +147,9 @@ def execute_commands(task: Task, commands: list[str]) -> Result:
 
     Returns:
         Result: 包含命令输出的结果
+
+    Raises:
+        ScrapliAuthenticationFailed: 认证失败时抛出（会先调用 handle_otp_auth_failure_sync）
     """
     _apply_dynamic_auth(task)
 
@@ -154,7 +170,19 @@ def execute_commands(task: Task, commands: list[str]) -> Result:
 
 
 def deploy_from_host_data(task: Task) -> Result:
-    """根据 host.data['deploy_configs'] 下发配置（用于每台设备不同配置内容）。"""
+    """根据 host.data['deploy_configs'] 下发配置（用于每台设备不同配置内容）。
+
+    Args:
+        task: Nornir 任务上下文，host.data 中需包含 'deploy_configs' 键
+
+    Returns:
+        Result: 包含下发结果的任务结果
+
+    Raises:
+        OTPRequiredException: OTP 认证失败时抛出
+        NornirSubTaskError: 子任务失败时抛出
+        Exception: 其他下发异常
+    """
     _apply_dynamic_auth(task)
     configs: list[str] = task.host.data.get("deploy_configs", [])  # type: ignore[assignment]
     if not configs:
@@ -206,7 +234,14 @@ def deploy_from_host_data(task: Task) -> Result:
 
 
 def get_arp_table(task: Task) -> MultiResult:
-    """获取设备 ARP 表（自动解析）。"""
+    """获取设备 ARP 表（自动解析）。
+
+    Args:
+        task: Nornir 任务上下文对象
+
+    Returns:
+        MultiResult: 包含解析后 ARP 表数据的多结果对象
+    """
     platform = task.host.platform or "cisco_iosxe"
 
     # 使用统一的命令映射
@@ -219,7 +254,14 @@ def get_arp_table(task: Task) -> MultiResult:
 
 
 def get_mac_table(task: Task) -> MultiResult:
-    """获取设备 MAC 地址表（自动解析）。"""
+    """获取设备 MAC 地址表（自动解析）。
+
+    Args:
+        task: Nornir Task 对象
+
+    Returns:
+        MultiResult: 包含解析后的 MAC 表数据，result 为 {"raw": str, "parsed": list[dict]}
+    """
     platform = task.host.platform or "cisco_iosxe"
 
     # 使用统一的命令映射
@@ -232,7 +274,14 @@ def get_mac_table(task: Task) -> MultiResult:
 
 
 def get_lldp_neighbors(task: Task) -> MultiResult:
-    """获取设备 LLDP 邻居信息（自动解析）。"""
+    """获取设备 LLDP 邻居信息（自动解析）。
+
+    Args:
+        task: Nornir Task 对象
+
+    Returns:
+        MultiResult: 包含解析后的 LLDP 邻居数据，result 为 {"raw": str, "parsed": list[dict]}
+    """
     platform = task.host.platform or "cisco_iosxe"
 
     # 使用统一的命令映射
@@ -245,7 +294,14 @@ def get_lldp_neighbors(task: Task) -> MultiResult:
 
 
 def _is_otp_error_text(error_text: str) -> bool:
-    """检查错误文本是否为 OTP 相关错误。"""
+    """检查错误文本是否为 OTP 相关错误。
+
+    Args:
+        error_text: 错误文本
+
+    Returns:
+        bool: 如果错误文本包含 OTP 相关关键词则返回 True
+    """
     text = (error_text or "").lower()
     return "otp" in text and ("过期" in text or "required" in text or "认证" in text)
 
@@ -258,6 +314,15 @@ def _handle_otp_exception(
 ) -> tuple[dict[str, Any], dict[str, Any] | None]:
     """
     处理 OTPRequiredException，返回 (host_result, updated_otp_info)。
+
+    Args:
+        otp_exc: OTPRequiredException 异常对象
+        error_text: 错误文本
+        otp_failed_device_ids: 失败设备 ID 列表（会被更新）
+        otp_required_info: 现有的 OTP 需求信息（可选）
+
+    Returns:
+        tuple[dict[str, Any], dict[str, Any] | None]: (主机结果字典, 更新后的 OTP 需求信息)
     """
     host_result = {
         "status": "otp_required",
@@ -279,7 +344,14 @@ def _handle_otp_exception(
 
 
 def _extract_error_and_exception(multi_result: MultiResult) -> tuple[str, BaseException | None]:
-    """从 MultiResult 中提取错误信息和异常。"""
+    """从 MultiResult 中提取错误信息和异常。
+
+    Args:
+        multi_result: Nornir MultiResult 对象
+
+    Returns:
+        tuple[str, BaseException | None]: (错误信息字符串, 异常对象或 None)
+    """
     if multi_result.exception:
         return str(multi_result.exception), multi_result.exception
 
@@ -301,7 +373,17 @@ def aggregate_results(results: AggregatedResult) -> dict[str, Any]:
         results: Nornir AggregatedResult 对象
 
     Returns:
-        dict: 包含成功/失败统计和详细结果的字典
+        dict[str, Any]: 包含成功/失败统计和详细结果的字典：
+        - total (int): 总设备数
+        - success (int): 成功设备数
+        - failed (int): 失败设备数
+        - success_hosts (list[str]): 成功主机名列表
+        - failed_hosts (list[str]): 失败主机名列表
+        - results (dict): 各主机的详细结果
+        - otp_failed_device_ids (list[str]): OTP 失败设备 ID 列表
+        - otp_required (bool): 是否需要 OTP（可选）
+        - otp_dept_id (str): OTP 部门 ID（可选）
+        - otp_device_group (str): OTP 设备组（可选）
     """
     success_hosts: list[str] = []
     failed_hosts: list[str] = []
@@ -365,7 +447,10 @@ def run_backup_all(nr: Nornir) -> dict[str, Any]:
         nr: Nornir 实例
 
     Returns:
-        dict: 聚合后的备份结果
+        dict[str, Any]: 聚合后的备份结果（格式同 aggregate_results）
+
+    Raises:
+        ScrapliAuthenticationFailed: 认证失败时抛出
     """
     logger.info("开始批量配置备份", hosts_count=len(nr.inventory.hosts))
 

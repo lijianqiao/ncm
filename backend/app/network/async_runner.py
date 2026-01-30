@@ -354,6 +354,9 @@ def run_async_tasks_sync(
 
     Returns:
         AggregatedResult: 标准聚合结果
+
+    Raises:
+        RuntimeError: 当前存在运行中的事件循环
     """
     try:
         asyncio.get_running_loop()
@@ -378,6 +381,13 @@ class AsyncRunnerWithRetry(AsyncRunner):
     带重试机制的异步运行器。
 
     继承 AsyncRunner，默认启用重试（max_retries=2）和指数退避。
+
+    Attributes:
+        semaphore_limit: 最大并发连接数（继承自 AsyncRunner）
+        max_retries: 失败重试次数（默认 2）
+        retry_delay: 重试间隔（秒）
+        max_retry_delay: 最大重试间隔（秒）
+        exponential_backoff: 是否启用指数退避（默认 True）
     """
 
     def __init__(

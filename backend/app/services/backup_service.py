@@ -65,12 +65,30 @@ class BackupService(DeviceCredentialMixin):
         device_crud: CRUDDevice,
         credential_crud: CRUDCredential,
     ):
+        """
+        初始化备份服务。
+
+        Args:
+            db: 异步数据库会话
+            backup_crud: 备份 CRUD 实例
+            device_crud: 设备 CRUD 实例
+            credential_crud: 凭据 CRUD 实例
+        """
         self.db = db
         self.backup_crud = backup_crud
         self.device_crud = device_crud
         self.credential_crud = credential_crud
 
-    def _normalize_device_group_value(self,value: str | Enum | None) -> str | None:
+    def _normalize_device_group_value(self, value: str | Enum | None) -> str | None:
+        """
+        规范化设备分组值。
+
+        Args:
+            value: 设备分组值（字符串、枚举或 None）
+
+        Returns:
+            str | None: 规范化后的字符串值
+        """
         if value is None:
             return None
         if isinstance(value, Enum):

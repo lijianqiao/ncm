@@ -38,6 +38,12 @@ from app.services.render_service import RenderService
 
 
 class DeployService(BaseService):
+    """
+    部署服务类。
+
+    提供安全批量下发功能，包括任务创建、审批、执行、回滚等。
+    """
+
     def __init__(
         self,
         db: AsyncSession,
@@ -46,6 +52,16 @@ class DeployService(BaseService):
         device_crud: CRUDDevice,
         credential_crud: CRUDCredential,
     ):
+        """
+        初始化部署服务。
+
+        Args:
+            db: 异步数据库会话
+            task_crud: 任务 CRUD 实例
+            task_approval_crud: 任务审批步骤 CRUD 实例
+            device_crud: 设备 CRUD 实例
+            credential_crud: 凭据 CRUD 实例
+        """
         super().__init__(db)
         self.task_crud = task_crud
         self.task_approval_crud = task_approval_crud
@@ -53,6 +69,15 @@ class DeployService(BaseService):
         self.credential_crud = credential_crud
 
     def _get_target_device_ids(self, task: Task) -> list[UUID]:
+        """
+        从任务对象中提取目标设备 ID 列表。
+
+        Args:
+            task: 任务对象
+
+        Returns:
+            list[UUID]: 设备 ID 列表
+        """
         if not task.target_devices or not isinstance(task.target_devices, dict):
             return []
         raw_ids = task.target_devices.get("device_ids", []) or []
@@ -65,6 +90,18 @@ class DeployService(BaseService):
         return device_ids
 
     async def get_task(self, task_id: UUID) -> Task:
+        """
+        获取部署任务。
+
+        Args:
+            task_id: 任务 ID
+
+        Returns:
+            Task: 任务对象
+
+        Raises:
+            NotFoundException: 任务不存在或任务类型不匹配
+        """
         task = await self.task_crud.get(self.db, task_id, options=self.task_crud.RELATED_OPTIONS)
         if not task:
             raise NotFoundException("任务不存在")
@@ -73,6 +110,16 @@ class DeployService(BaseService):
         return task
 
     async def list_tasks_paginated(self, *, page: int = 1, page_size: int = 20) -> tuple[list[Task], int]:
+        """
+        获取分页的部署任务列表。
+
+        Args:
+            page: 页码（从 1 开始）
+            page_size: 每页记录数
+
+        Returns:
+            tuple[list[Task], int]: (任务列表, 总数)
+        """
         return await self.task_crud.get_paginated(
             self.db,
             page=page,
@@ -83,6 +130,16 @@ class DeployService(BaseService):
         )
 
     async def list_deleted_tasks_paginated(self, *, page: int = 1, page_size: int = 20) -> tuple[list[Task], int]:
+        """
+        获取分页的已删除部署任务列表（回收站）。
+
+        Args:
+            page: 页码（从 1 开始）
+            page_size: 每页记录数
+
+        Returns:
+            tuple[list[Task], int]: (已删除任务列表, 总数)
+        """
         return await self.task_crud.get_paginated(
             self.db,
             page=page,
@@ -94,6 +151,15 @@ class DeployService(BaseService):
         )
 
     async def _get_deploy_task_ids(self, *, ids: list[UUID]) -> list[UUID]:
+        """
+        过滤出有效的部署任务 ID（仅返回类型为 DEPLOY 的任务 ID）。
+
+        Args:
+            ids: 任务 ID 列表
+
+        Returns:
+            list[UUID]: 有效的部署任务 ID 列表
+        """
         if not ids:
             return []
         stmt = select(Task.id).where(Task.id.in_(ids), Task.task_type == TaskType.DEPLOY.value)
@@ -102,7 +168,16 @@ class DeployService(BaseService):
 
     @transactional()
     async def batch_delete_tasks(self, *, ids: list[UUID], hard_delete: bool = False) -> BatchOperationResult:
-        """批量删除部署任务。"""
+        """
+        批量删除部署任务。
+
+        Args:
+            ids: 任务 ID 列表
+            hard_delete: 是否硬删除（默认 False，软删除）
+
+        Returns:
+            BatchOperationResult: 批量操作结果
+        """
         allowed_ids = await self._get_deploy_task_ids(ids=ids)
         allowed_set = set(allowed_ids)
         success_count, failed_ids = await self.task_crud.batch_remove(self.db, ids=allowed_ids, hard_delete=hard_delete)
@@ -113,6 +188,18 @@ class DeployService(BaseService):
 
     @transactional()
     async def delete_task(self, *, task_id: UUID) -> Task:
+        """
+        删除部署任务（软删除）。
+
+        Args:
+            task_id: 任务 ID
+
+        Returns:
+            Task: 删除的任务对象
+
+        Raises:
+            NotFoundException: 任务不存在或删除失败
+        """
         task = await self.get_task(task_id)
         result = await self.batch_delete_tasks(ids=[task_id], hard_delete=False)
         if result.success_count == 0 or result.failed_ids:
@@ -121,7 +208,15 @@ class DeployService(BaseService):
 
     @transactional()
     async def batch_restore_tasks(self, *, ids: list[UUID]) -> BatchOperationResult:
-        """批量恢复部署任务。"""
+        """
+        批量恢复部署任务。
+
+        Args:
+            ids: 任务 ID 列表
+
+        Returns:
+            BatchOperationResult: 批量操作结果
+        """
         allowed_ids = await self._get_deploy_task_ids(ids=ids)
         allowed_set = set(allowed_ids)
         success_count, failed_ids = await self.task_crud.batch_restore(self.db, ids=allowed_ids)
@@ -132,6 +227,18 @@ class DeployService(BaseService):
 
     @transactional()
     async def restore_task(self, *, task_id: UUID) -> Task:
+        """
+        恢复部署任务。
+
+        Args:
+            task_id: 任务 ID
+
+        Returns:
+            Task: 恢复的任务对象
+
+        Raises:
+            NotFoundException: 任务不存在或未被删除
+        """
         result = await self.batch_restore_tasks(ids=[task_id])
         if result.success_count == 0 or result.failed_ids:
             raise NotFoundException("任务不存在或未被删除")
@@ -139,6 +246,15 @@ class DeployService(BaseService):
 
     @transactional()
     async def hard_delete_task(self, *, task_id: UUID) -> None:
+        """
+        彻底删除部署任务（硬删除）。
+
+        Args:
+            task_id: 任务 ID
+
+        Raises:
+            NotFoundException: 任务不存在或未被软删除
+        """
         stmt = select(Task.id).where(
             Task.id == task_id, Task.task_type == TaskType.DEPLOY.value, Task.is_deleted.is_(True)
         )
@@ -150,7 +266,15 @@ class DeployService(BaseService):
             raise NotFoundException("彻底删除失败")
 
     async def get_device_results(self, task: Task) -> list[DeviceDeployResult]:
-        """获取设备维度的执行结果列表（补充设备名称）。"""
+        """
+        获取设备维度的执行结果列表（补充设备名称）。
+
+        Args:
+            task: 任务对象
+
+        Returns:
+            list[DeviceDeployResult]: 设备执行结果列表
+        """
         device_ids = self._get_target_device_ids(task)
         if not device_ids:
             return []

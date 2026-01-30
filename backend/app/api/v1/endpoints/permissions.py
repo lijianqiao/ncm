@@ -13,7 +13,7 @@ from app.core.permissions import PermissionCode
 from app.schemas.common import ResponseBase
 from app.schemas.permission import PermissionDictItem
 
-router = APIRouter()
+router = APIRouter(tags=["权限管理"])
 
 
 @router.get("/", response_model=ResponseBase[list[PermissionDictItem]], summary="获取权限字典")

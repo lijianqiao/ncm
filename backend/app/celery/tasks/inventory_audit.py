@@ -34,12 +34,32 @@ from app.services.scan_service import ScanService
     queue="discovery",
 )
 def run_inventory_audit(self, audit_id: str) -> dict[str, Any]:
-    """执行资产盘点任务（复用 Nmap 扫描 + Discovery/CMDB 比对）。"""
+    """执行资产盘点任务（复用 Nmap 扫描 + Discovery/CMDB 比对）。
+
+    Args:
+        self: Celery 任务实例。
+        audit_id (str): 盘点任务 ID。
+
+    Returns:
+        dict[str, Any]: 盘点结果字典。
+    """
     celery_task_logger.info("开始资产盘点任务", task_id=self.request.id, audit_id=audit_id)
     return run_async(_run_inventory_audit_async(self, audit_id))
 
 
 async def _run_inventory_audit_async(self, audit_id: str) -> dict[str, Any]:
+    """执行资产盘点异步任务的核心逻辑。
+
+    Args:
+        self: Celery 任务实例。
+        audit_id (str): 盘点任务 ID。
+
+    Returns:
+        dict[str, Any]: 盘点结果字典，包含扫描结果、比对结果等。
+
+    Raises:
+        ValueError: 当盘点任务不存在时。
+    """
     service = ScanService(discovery_crud, device_crud)
 
     async with AsyncSessionLocal() as db:

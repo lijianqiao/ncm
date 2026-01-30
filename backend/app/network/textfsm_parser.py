@@ -114,7 +114,16 @@ def parse_command_output(
 
 
 def _get_command_safe(command_type: str, platform: str, fallback: str) -> str:
-    """安全获取命令，失败时返回 fallback。"""
+    """安全获取命令，失败时返回 fallback。
+
+    Args:
+        command_type: 命令类型（如 "arp_table"）
+        platform: 设备平台
+        fallback: 备用命令
+
+    Returns:
+        str: 平台对应的命令，如果获取失败则返回 fallback
+    """
     try:
         return get_command(command_type, platform)
     except ValueError:
@@ -125,8 +134,12 @@ def parse_arp_table(platform: str, output: str) -> list[dict[str, Any]]:
     """
     解析 ARP 表输出。
 
+    Args:
+        platform: 设备平台
+        output: ARP 表命令输出
+
     Returns:
-        list[dict]: 包含 ip_address, mac_address, interface 等字段
+        list[dict[str, Any]]: 包含 ip_address, mac_address, interface 等字段的字典列表
     """
     command = _get_command_safe("arp_table", platform, "show ip arp")
     return parse_command_output(platform, command, output)
@@ -136,8 +149,12 @@ def parse_mac_table(platform: str, output: str) -> list[dict[str, Any]]:
     """
     解析 MAC 地址表输出。
 
+    Args:
+        platform: Scrapli 平台标识
+        output: MAC 地址表命令的原始输出
+
     Returns:
-        list[dict]: 包含 vlan, mac_address, type, port 等字段
+        list[dict[str, Any]]: 解析后的 MAC 地址表数据，每项包含 vlan、mac_address、type、port 等字段
     """
     command = _get_command_safe("mac_table", platform, "show mac address-table")
     return parse_command_output(platform, command, output)
@@ -147,8 +164,12 @@ def parse_lldp_neighbors(platform: str, output: str) -> list[dict[str, Any]]:
     """
     解析 LLDP 邻居信息。
 
+    Args:
+        platform: Scrapli 平台标识
+        output: LLDP 邻居命令的原始输出
+
     Returns:
-        list[dict]: 包含 local_interface, neighbor, neighbor_interface 等字段
+        list[dict[str, Any]]: 解析后的 LLDP 邻居数据，每项包含 local_interface、neighbor、neighbor_interface 等字段
     """
     command = _get_command_safe("lldp_neighbors", platform, "show lldp neighbors detail")
     return parse_command_output(platform, command, output)
@@ -158,8 +179,12 @@ def parse_interface_status(platform: str, output: str) -> list[dict[str, Any]]:
     """
     解析接口状态。
 
+    Args:
+        platform: Scrapli 平台标识
+        output: 接口状态命令的原始输出
+
     Returns:
-        list[dict]: 包含 port, status, vlan, duplex, speed 等字段
+        list[dict[str, Any]]: 解析后的接口状态数据，每项包含 port、status、vlan、duplex、speed 等字段
     """
     command = _get_command_safe("interface_brief", platform, "show interfaces status")
     return parse_command_output(platform, command, output)
@@ -169,8 +194,12 @@ def parse_version(platform: str, output: str) -> list[dict[str, Any]]:
     """
     解析版本信息。
 
+    Args:
+        platform: 设备平台标识
+        output: 版本命令的原始输出
+
     Returns:
-        list[dict]: 包含 version, model, uptime 等字段
+        list[dict[str, Any]]: 解析后的版本数据，每个元素包含 version、model、uptime 等字段
     """
     command = _get_command_safe("version", platform, "show version")
     return parse_command_output(platform, command, output)

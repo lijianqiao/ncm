@@ -19,11 +19,33 @@ from app.models.template import Template
 
 
 class RenderService:
+    """
+    配置模板渲染服务类。
+
+    提供配置模板的参数校验和渲染功能。
+    """
+
     def __init__(self) -> None:
+        """
+        初始化渲染服务。
+
+        说明：配置模板不需要 HTML autoescape
+        """
         # 说明：配置模板不需要 HTML autoescape
         self._env = Environment(undefined=StrictUndefined, autoescape=False, keep_trailing_newline=True)
 
     def validate_params(self, schema_json: str | None, params: dict[str, Any]) -> None:
+        """
+        校验模板参数是否符合 JSON Schema。
+
+        Args:
+            schema_json: JSON Schema 字符串（可选）
+            params: 待校验的参数
+
+        Raises:
+            BadRequestException: Schema 不是合法 JSON
+            DomainValidationException: 参数不符合 Schema
+        """
         if not schema_json:
             return
         try:
@@ -40,6 +62,21 @@ class RenderService:
             ) from e
 
     def render(self, template: Template, params: dict[str, Any], *, device: Device | None = None) -> str:
+        """
+        渲染配置模板。
+
+        Args:
+            template: 模板对象
+            params: 模板参数
+            device: 设备对象（可选，用于提供设备上下文）
+
+        Returns:
+            str: 渲染后的配置内容
+
+        Raises:
+            BadRequestException: 参数名冲突或模板渲染失败
+            DomainValidationException: 参数校验失败
+        """
         self.validate_params(template.parameters, params)
 
         reserved_keys = {"params", "device"}

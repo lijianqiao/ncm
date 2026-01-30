@@ -22,7 +22,11 @@ from app.schemas.dashboard import DashboardStats, LoginLogSimple
 
 
 class DashboardService:
-    """仪表盘数据聚合服务。"""
+    """
+    仪表盘数据聚合服务。
+
+    提供仪表盘首页所需的各类统计数据。
+    """
 
     def __init__(
         self,
@@ -31,6 +35,15 @@ class DashboardService:
         role_crud: CRUDRole,
         menu_crud: CRUDMenu,
     ):
+        """
+        初始化仪表盘服务。
+
+        Args:
+            db: 异步数据库会话
+            user_crud: 用户 CRUD 实例
+            role_crud: 角色 CRUD 实例
+            menu_crud: 菜单 CRUD 实例
+        """
         self.db = db
         self.user_crud = user_crud
         self.role_crud = role_crud
@@ -41,7 +54,17 @@ class DashboardService:
     async def _count_login_by_range(
         self, start: datetime, end: datetime, *, user_id: UUID | None = None
     ) -> int:
-        """统计指定时间范围内的登录次数。"""
+        """
+        统计指定时间范围内的登录次数。
+
+        Args:
+            start: 开始时间
+            end: 结束时间
+            user_id: 用户 ID（可选，用于过滤特定用户）
+
+        Returns:
+            int: 登录次数
+        """
         stmt = select(func.count(LoginLog.id)).where(
             LoginLog.created_at >= start, LoginLog.created_at < end
         )
@@ -51,14 +74,28 @@ class DashboardService:
         return result.scalar_one()
 
     async def _count_login_today(self) -> int:
-        """统计今日登录总数。"""
+        """
+        统计今日登录总数。
+
+        Returns:
+            int: 今日登录总数
+        """
         now = datetime.now(UTC).replace(tzinfo=None)
         today_start = datetime(now.year, now.month, now.day)
         today_end = today_start + timedelta(days=1)
         return await self._count_login_by_range(today_start, today_end)
 
     async def _get_login_trend(self, days: int = 7, *, user_id: UUID | None = None) -> list[dict[str, Any]]:
-        """获取近 N 天的登录趋势统计。"""
+        """
+        获取近 N 天的登录趋势统计。
+
+        Args:
+            days: 统计天数（默认 7）
+            user_id: 用户 ID（可选，用于过滤特定用户）
+
+        Returns:
+            list[dict[str, Any]]: 趋势数据列表，每项包含 date 和 count
+        """
         end_date = datetime.now(UTC).date()
         start_date = end_date - timedelta(days=days - 1)
 
@@ -77,7 +114,16 @@ class DashboardService:
         return [{"date": str(row.d), "count": row.c} for row in result.all()]
 
     async def _get_recent_logins(self, limit: int = 10, *, user_id: UUID | None = None) -> list[LoginLog]:
-        """获取最近的登录日志。"""
+        """
+        获取最近的登录日志。
+
+        Args:
+            limit: 返回数量限制（默认 10）
+            user_id: 用户 ID（可选，用于过滤特定用户）
+
+        Returns:
+            list[LoginLog]: 登录日志列表
+        """
         stmt = select(LoginLog)
         if user_id is not None:
             stmt = stmt.where(LoginLog.user_id == user_id)
@@ -89,7 +135,17 @@ class DashboardService:
     async def _count_operation_by_range(
         self, start: datetime, end: datetime, *, user_id: UUID | None = None
     ) -> int:
-        """统计指定时间范围内的操作日志数量。"""
+        """
+        统计指定时间范围内的操作日志数量。
+
+        Args:
+            start: 开始时间
+            end: 结束时间
+            user_id: 用户 ID（可选，用于过滤特定用户）
+
+        Returns:
+            int: 操作日志数量
+        """
         stmt = select(func.count(OperationLog.id)).where(
             OperationLog.created_at >= start, OperationLog.created_at <= end
         )
@@ -101,7 +157,17 @@ class DashboardService:
     # ========== 仪表盘汇总 ==========
 
     async def get_summary_stats(self, current_user: User) -> DashboardStats:
-        """获取仪表盘首页聚合数据。"""
+        """
+        获取仪表盘首页聚合数据。
+
+        普通用户返回个人维度数据，超级管理员返回全局统计数据。
+
+        Args:
+            current_user: 当前用户对象
+
+        Returns:
+            DashboardStats: 仪表盘统计数据
+        """
         # 时间范围
         now = datetime.now(UTC).replace(tzinfo=None)
         today_start = datetime(now.year, now.month, now.day)

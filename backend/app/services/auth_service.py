@@ -38,6 +38,14 @@ class AuthService:
     """
 
     def __init__(self, db: AsyncSession, log_service: LogService, user_crud: CRUDUser):
+        """
+        初始化认证服务。
+
+        Args:
+            db: 异步数据库会话
+            log_service: 日志服务实例
+            user_crud: 用户 CRUD 实例
+        """
         self.db = db
         self.log_service = log_service
         self.user_crud = user_crud
@@ -45,6 +53,13 @@ class AuthService:
     async def authenticate(self, username: str, password: str) -> Any:
         """
         验证用户名/密码。支持用户名或手机号。
+
+        Args:
+            username: 用户名或手机号
+            password: 密码
+
+        Returns:
+            User | None: 验证成功返回用户对象，失败返回 None
         """
         user = await self.user_crud.get_by_unique_field(self.db, field="username", value=username)
         if not user:
@@ -62,6 +77,17 @@ class AuthService:
     async def login_access_token(self, form_data: Any, request: Request, background_tasks: BackgroundTasks) -> Token:
         """
         处理登录并返回 Token，异步记录日志。
+
+        Args:
+            form_data: 登录表单数据（包含 username 和 password）
+            request: FastAPI 请求对象
+            background_tasks: 后台任务管理器
+
+        Returns:
+            Token: 包含 access_token 和 refresh_token 的令牌对象
+
+        Raises:
+            CustomException: 用户名或密码错误
         """
         user = await self.authenticate(form_data.username, form_data.password)
         if not user:
@@ -129,6 +155,18 @@ class AuthService:
     async def refresh_token(self, refresh_token: str, *, request: Request | None = None) -> Token:
         """
         刷新 Token。验证 Refresh Token 有效性并返回新的 Access Token。
+
+        实现 Refresh Token Rotation：每次刷新都签发新的 refresh token，使旧 token 立即失效。
+
+        Args:
+            refresh_token: 刷新令牌
+            request: FastAPI 请求对象（可选，用于更新在线会话）
+
+        Returns:
+            Token: 包含新的 access_token 和 refresh_token 的令牌对象
+
+        Raises:
+            UnauthorizedException: 刷新令牌无效、用户不存在或已禁用
         """
         try:
             payload = jwt.decode(

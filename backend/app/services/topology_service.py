@@ -47,7 +47,11 @@ TOPOLOGY_CACHE_KEY = "ncm:topology:data"
 
 
 class TopologyService(DeviceCredentialMixin):
-    """网络拓扑服务类。"""
+    """
+    网络拓扑服务类。
+
+    提供 LLDP 拓扑采集、拓扑构建和 vis.js 格式数据输出。
+    """
 
     def __init__(
         self,
@@ -56,6 +60,15 @@ class TopologyService(DeviceCredentialMixin):
         credential_crud: CRUDCredential,
         redis_client: redis.Redis | None = None,
     ):
+        """
+        初始化网络拓扑服务。
+
+        Args:
+            topology_crud: 拓扑链路 CRUD 实例
+            device_crud: 设备 CRUD 实例
+            credential_crud: 凭据 CRUD 实例
+            redis_client: Redis 客户端（可选，用于缓存）
+        """
         self.topology_crud = topology_crud
         self.device_crud = device_crud
         self.credential_crud = credential_crud
@@ -978,7 +991,12 @@ class TopologyService(DeviceCredentialMixin):
     # ===== 缓存方法 =====
 
     async def _get_cached_topology(self) -> TopologyResponse | None:
-        """从 Redis 获取缓存的拓扑数据。"""
+        """
+        从 Redis 获取缓存的拓扑数据。
+
+        Returns:
+            TopologyResponse | None: 缓存的拓扑数据，如果不存在或获取失败则返回 None
+        """
         if not self._redis:
             return None
 
@@ -992,7 +1010,12 @@ class TopologyService(DeviceCredentialMixin):
         return None
 
     async def _cache_topology(self, topology: TopologyResponse) -> None:
-        """缓存拓扑数据到 Redis。"""
+        """
+        缓存拓扑数据到 Redis。
+
+        Args:
+            topology: 拓扑响应对象
+        """
         if not self._redis:
             return
 
@@ -1006,7 +1029,11 @@ class TopologyService(DeviceCredentialMixin):
             logger.warning("缓存拓扑数据失败", error=str(e))
 
     async def _invalidate_cache(self) -> None:
-        """清除拓扑缓存。"""
+        """
+        清除拓扑缓存。
+
+        当拓扑数据更新时调用此方法清除缓存，确保下次查询获取最新数据。
+        """
         if not self._redis:
             return
 

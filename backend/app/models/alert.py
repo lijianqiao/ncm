@@ -26,7 +26,29 @@ if TYPE_CHECKING:
 
 
 class Alert(AuditableModel):
-    """告警事件模型。"""
+    """告警事件模型。
+
+    告警事件表，用于存储配置变更、设备离线、影子资产等告警事件。
+
+    Attributes:
+        alert_type (str): 告警类型（config_change/device_offline/shadow_asset）。
+        severity (str): 告警级别（low/medium/high）。
+        status (str): 告警状态（open/ack/closed）。
+        title (str): 告警标题。
+        message (str | None): 告警正文。
+        details (dict | None): 告警详情（JSONB）。
+        source (str | None): 告警来源（diff/discovery/manual）。
+        related_device_id (UUID | None): 关联设备 ID。
+        related_discovery_id (UUID | None): 关联发现记录 ID。
+        acked_by_id (UUID | None): 确认人 ID。
+        acked_at (datetime | None): 确认时间。
+        closed_by_id (UUID | None): 关闭人 ID。
+        closed_at (datetime | None): 关闭时间。
+        related_device (Device | None): 关联的设备对象。
+        related_discovery (Discovery | None): 关联的发现记录对象。
+        acked_by (User | None): 确认人对象。
+        closed_by (User | None): 关闭人对象。
+    """
 
     __tablename__ = "ncm_alert"
 

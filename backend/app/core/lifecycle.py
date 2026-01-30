@@ -32,7 +32,18 @@ ALLOWED_TRANSITIONS: dict[str, set[str]] = {
 
 
 def validate_transition(from_status: str, to_status: str) -> None:
-    """校验状态流转是否允许。"""
+    """校验状态流转是否允许。
+
+    Args:
+        from_status (str): 源状态。
+        to_status (str): 目标状态。
+
+    Returns:
+        None: 无返回值。
+
+    Raises:
+        BadRequestException: 当状态流转不允许时。
+    """
     if from_status == to_status:
         return
 

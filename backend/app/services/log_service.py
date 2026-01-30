@@ -24,13 +24,25 @@ from app.schemas.log import LoginLogCreate
 
 
 class LogService:
-    """日志服务类。"""
+    """
+    日志服务类。
+
+    提供登录日志和操作日志的查询、统计、创建等功能。
+    """
 
     # 登录状态关键字映射
     _LOGIN_STATUS_TRUE = {"成功", "success", "true", "是", "1"}
     _LOGIN_STATUS_FALSE = {"失败", "fail", "false", "否", "0"}
 
     def __init__(self, db: AsyncSession, login_log_crud: CRUDLoginLog, operation_log_crud: CRUDOperationLog):
+        """
+        初始化日志服务。
+
+        Args:
+            db: 异步数据库会话
+            login_log_crud: 登录日志 CRUD 实例
+            operation_log_crud: 操作日志 CRUD 实例
+        """
         self.db = db
         self.login_log_crud = login_log_crud
         self.operation_log_crud = operation_log_crud
@@ -38,7 +50,15 @@ class LogService:
     # ========== 登录日志 ==========
 
     def _build_login_keyword_conditions(self, keyword: str | None) -> list[ColumnElement[bool]]:
-        """构建登录日志关键字搜索条件（布尔状态智能匹配）。"""
+        """
+        构建登录日志关键字搜索条件（布尔状态智能匹配）。
+
+        Args:
+            keyword: 搜索关键字
+
+        Returns:
+            list[ColumnElement[bool]]: SQLAlchemy 条件列表
+        """
         if not keyword:
             return []
 
@@ -59,7 +79,17 @@ class LogService:
     async def get_login_logs_paginated(
         self, page: int = 1, page_size: int = 20, *, keyword: str | None = None
     ) -> tuple[list[LoginLog], int]:
-        """获取分页登录日志列表（支持关键字搜索）。"""
+        """
+        获取分页登录日志列表（支持关键字搜索）。
+
+        Args:
+            page: 页码（从 1 开始）
+            page_size: 每页记录数
+            keyword: 搜索关键字（可选，支持用户名、IP、消息、操作系统等字段，以及布尔状态智能匹配）
+
+        Returns:
+            tuple[list[LoginLog], int]: (登录日志列表, 总数)
+        """
         # 构建额外条件（布尔状态智能匹配）
         extra_conditions = self._build_login_keyword_conditions(keyword)
 
@@ -75,7 +105,12 @@ class LogService:
         )
 
     async def count_login_today(self) -> int:
-        """统计今日登录次数。"""
+        """
+        统计今日登录次数。
+
+        Returns:
+            int: 今日登录次数
+        """
         now = datetime.now(UTC).replace(tzinfo=None)
         today_start = datetime(now.year, now.month, now.day)
         today_end = today_start + timedelta(days=1)
@@ -84,7 +119,17 @@ class LogService:
     async def count_login_by_range(
         self, start: datetime, end: datetime, *, user_id: uuid.UUID | None = None
     ) -> int:
-        """统计指定时间范围内的登录次数。"""
+        """
+        统计指定时间范围内的登录次数。
+
+        Args:
+            start: 开始时间
+            end: 结束时间
+            user_id: 用户 ID（可选，用于过滤特定用户）
+
+        Returns:
+            int: 登录次数
+        """
         stmt = select(func.count(LoginLog.id)).where(
             LoginLog.created_at >= start, LoginLog.created_at < end
         )
@@ -94,7 +139,15 @@ class LogService:
         return result.scalar_one()
 
     async def count_login_today_by_user(self, user_id: uuid.UUID) -> int:
-        """统计某个用户的今日登录次数。"""
+        """
+        统计某个用户的今日登录次数。
+
+        Args:
+            user_id: 用户 ID
+
+        Returns:
+            int: 今日登录次数
+        """
         now = datetime.now(UTC).replace(tzinfo=None)
         today_start = datetime(now.year, now.month, now.day)
         today_end = today_start + timedelta(days=1)
@@ -133,7 +186,16 @@ class LogService:
             return []
 
     async def get_recent_logins(self, limit: int = 10, *, user_id: uuid.UUID | None = None) -> list[LoginLog]:
-        """获取最近的登录日志。"""
+        """
+        获取最近的登录日志。
+
+        Args:
+            limit: 返回数量限制（默认 10）
+            user_id: 用户 ID（可选，用于过滤特定用户）
+
+        Returns:
+            list[LoginLog]: 登录日志列表
+        """
         stmt = select(LoginLog)
         if user_id is not None:
             stmt = stmt.where(LoginLog.user_id == user_id)
@@ -143,7 +205,15 @@ class LogService:
     # ========== 操作日志 ==========
 
     def _build_operation_keyword_conditions(self, keyword: str | None) -> list[ColumnElement[bool]]:
-        """构建操作日志关键字搜索条件（状态码数字精确匹配）。"""
+        """
+        构建操作日志关键字搜索条件（状态码数字精确匹配）。
+
+        Args:
+            keyword: 搜索关键字
+
+        Returns:
+            list[ColumnElement[bool]]: SQLAlchemy 条件列表
+        """
         if not keyword:
             return []
 
@@ -162,7 +232,17 @@ class LogService:
     async def get_operation_logs_paginated(
         self, page: int = 1, page_size: int = 20, *, keyword: str | None = None
     ) -> tuple[list[OperationLog], int]:
-        """获取分页操作日志列表（支持关键字搜索）。"""
+        """
+        获取分页操作日志列表（支持关键字搜索）。
+
+        Args:
+            page: 页码（从 1 开始）
+            page_size: 每页记录数
+            keyword: 搜索关键字（可选，支持用户名、模块、IP、方法等字段，以及状态码数字精确匹配）
+
+        Returns:
+            tuple[list[OperationLog], int]: (操作日志列表, 总数)
+        """
         # 构建额外条件（状态码数字精确匹配）
         extra_conditions = self._build_operation_keyword_conditions(keyword)
 
@@ -180,7 +260,17 @@ class LogService:
     async def count_operation_by_range(
         self, start: datetime, end: datetime, *, user_id: uuid.UUID | None = None
     ) -> int:
-        """统计指定时间范围内的操作日志数量。"""
+        """
+        统计指定时间范围内的操作日志数量。
+
+        Args:
+            start: 开始时间
+            end: 结束时间
+            user_id: 用户 ID（可选，用于过滤特定用户）
+
+        Returns:
+            int: 操作日志数量
+        """
         stmt = select(func.count(OperationLog.id)).where(
             OperationLog.created_at >= start, OperationLog.created_at <= end
         )
@@ -201,7 +291,19 @@ class LogService:
         status: bool = True,
         msg: str = "Login Success",
     ) -> LoginLog:
-        """创建登录日志。"""
+        """
+        创建登录日志。
+
+        Args:
+            user_id: 用户 ID（可选，支持 UUID 或字符串格式）
+            username: 用户名（可选）
+            request: FastAPI 请求对象（用于提取 IP 和 User-Agent）
+            status: 登录状态（默认 True，成功）
+            msg: 日志消息（默认 "Login Success"）
+
+        Returns:
+            LoginLog: 创建的登录日志对象
+        """
         ip = request.client.host if request.client else None
         ua_string = request.headers.get("user-agent", "")
         user_agent = parse(ua_string)

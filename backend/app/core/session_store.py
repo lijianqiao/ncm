@@ -23,6 +23,17 @@ from app.core.logger import logger
 
 @dataclass(frozen=True, slots=True)
 class OnlineSession:
+    """在线会话信息。
+
+    Attributes:
+        user_id (str): 用户 ID。
+        username (str): 用户名。
+        ip (str | None): 客户端 IP 地址。
+        user_agent (str | None): 用户代理字符串。
+        login_at (float): 登录时间戳。
+        last_seen_at (float): 最后活跃时间戳。
+    """
+
     user_id: str
     username: str
     ip: str | None
@@ -32,39 +43,119 @@ class OnlineSession:
 
 
 def _online_zset_key() -> str:
+    """获取在线用户有序集合的 Redis Key。
+
+    Returns:
+        str: Redis Key。
+    """
     return "v1:auth:online:zset"
 
 
 def _session_key(user_id: str) -> str:
+    """获取用户会话的 Redis Key。
+
+    Args:
+        user_id (str): 用户 ID。
+
+    Returns:
+        str: Redis Key。
+    """
     return f"v1:auth:session:{user_id}"
 
 
 def _default_online_ttl_seconds() -> int:
+    """获取默认在线会话 TTL（秒）。
+
+    Returns:
+        int: TTL 秒数。
+    """
     return int(settings.REFRESH_TOKEN_EXPIRE_DAYS * 24 * 3600)
 
 
 class SessionStore:
+    """会话存储抽象基类。
+
+    定义在线会话存储的接口，支持 Redis 和内存两种实现。
+    """
+
     async def upsert_session(self, session: OnlineSession, ttl_seconds: int) -> None:
+        """更新或插入会话。
+
+        Args:
+            session (OnlineSession): 会话对象。
+            ttl_seconds (int): 过期时间（秒）。
+
+        Returns:
+            None: 无返回值。
+        """
         raise NotImplementedError
 
     async def get_session(self, user_id: str) -> OnlineSession | None:
+        """获取会话。
+
+        Args:
+            user_id (str): 用户 ID。
+
+        Returns:
+            OnlineSession | None: 会话对象或 None。
+        """
         raise NotImplementedError
 
     async def remove_session(self, user_id: str) -> None:
+        """删除会话。
+
+        Args:
+            user_id (str): 用户 ID。
+
+        Returns:
+            None: 无返回值。
+        """
         raise NotImplementedError
 
     async def list_online(
         self, *, page: int, page_size: int, keyword: str | None = None
     ) -> tuple[list[OnlineSession], int]:
+        """分页列出在线用户。
+
+        Args:
+            page (int): 页码。
+            page_size (int): 每页数量。
+            keyword (str | None): 搜索关键词，默认为 None。
+
+        Returns:
+            tuple[list[OnlineSession], int]: 在线会话列表和总数。
+        """
         raise NotImplementedError
 
     async def remove_sessions(self, user_ids: Iterable[str]) -> None:
+        """批量删除会话。
+
+        Args:
+            user_ids (Iterable[str]): 用户 ID 列表。
+
+        Returns:
+            None: 无返回值。
+        """
         for uid in user_ids:
             await self.remove_session(uid)
 
 
 class RedisSessionStore(SessionStore):
+    """基于 Redis 的会话存储实现。
+
+    使用 Redis 有序集合（ZSET）存储在线用户列表，使用普通 Key 存储会话详情。
+    """
+
     async def upsert_session(self, session: OnlineSession, ttl_seconds: int) -> None:
+        """更新或插入会话（Redis 实现）。
+
+        Args:
+            session (OnlineSession): 会话对象。
+            ttl_seconds (int): 过期时间（秒）。
+
+        Returns:
+            None: 无返回值。
+        """
         if cache_module.redis_client is None:
             return
 
@@ -90,6 +181,14 @@ class RedisSessionStore(SessionStore):
             pass
 
     async def get_session(self, user_id: str) -> OnlineSession | None:
+        """获取会话（Redis 实现）。
+
+        Args:
+            user_id (str): 用户 ID。
+
+        Returns:
+            OnlineSession | None: 会话对象或 None。
+        """
         if cache_module.redis_client is None:
             return None
 
@@ -112,6 +211,14 @@ class RedisSessionStore(SessionStore):
             return None
 
     async def remove_session(self, user_id: str) -> None:
+        """删除会话（Redis 实现）。
+
+        Args:
+            user_id (str): 用户 ID。
+
+        Returns:
+            None: 无返回值。
+        """
         if cache_module.redis_client is None:
             return
 
@@ -184,7 +291,14 @@ class RedisSessionStore(SessionStore):
             logger.warning(f"在线会话按用户清理失效REDIS): {e}")
 
     async def remove_user_sessions_many_by_user_ids(self, user_ids: Iterable[str]) -> None:
-        """批量按 user_id 删除会话（兼容历史数据）。"""
+        """批量按 user_id 删除会话（兼容历史数据）。
+
+        Args:
+            user_ids (Iterable[str]): 用户 ID 列表。
+
+        Returns:
+            None: 无返回值。
+        """
 
         if cache_module.redis_client is None:
             return
@@ -242,6 +356,16 @@ class RedisSessionStore(SessionStore):
     async def list_online(
         self, *, page: int, page_size: int, keyword: str | None = None
     ) -> tuple[list[OnlineSession], int]:
+        """分页列出在线用户（Redis 实现）。
+
+        Args:
+            page (int): 页码。
+            page_size (int): 每页数量。
+            keyword (str | None): 搜索关键词（支持用户名和 IP），默认为 None。
+
+        Returns:
+            tuple[list[OnlineSession], int]: 在线会话列表和总数。
+        """
         if cache_module.redis_client is None:
             return [], 0
 
@@ -335,17 +459,44 @@ class RedisSessionStore(SessionStore):
 
 
 class MemorySessionStore(SessionStore):
+    """基于内存的会话存储实现（降级方案）。
+
+    当 Redis 不可用时使用内存存储，数据仅在当前进程有效。
+    """
+
     def __init__(self) -> None:
+        """初始化内存会话存储。
+
+        Returns:
+            None: 无返回值。
+        """
         self._lock = asyncio.Lock()
         # user_id -> (session, expire_at)
         self._data: dict[str, tuple[OnlineSession, float]] = {}
 
     async def upsert_session(self, session: OnlineSession, ttl_seconds: int) -> None:
+        """更新或插入会话（内存实现）。
+
+        Args:
+            session (OnlineSession): 会话对象。
+            ttl_seconds (int): 过期时间（秒）。
+
+        Returns:
+            None: 无返回值。
+        """
         expire_at = time.time() + max(1, int(ttl_seconds))
         async with self._lock:
             self._data[session.user_id] = (session, expire_at)
 
     async def get_session(self, user_id: str) -> OnlineSession | None:
+        """获取会话（内存实现）。
+
+        Args:
+            user_id (str): 用户 ID。
+
+        Returns:
+            OnlineSession | None: 会话对象或 None（如果不存在或已过期）。
+        """
         now = time.time()
         async with self._lock:
             value = self._data.get(user_id)
@@ -358,6 +509,14 @@ class MemorySessionStore(SessionStore):
             return session
 
     async def remove_session(self, user_id: str) -> None:
+        """删除会话（内存实现）。
+
+        Args:
+            user_id (str): 用户 ID。
+
+        Returns:
+            None: 无返回值。
+        """
         async with self._lock:
             self._data.pop(user_id, None)
 

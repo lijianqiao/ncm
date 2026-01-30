@@ -39,6 +39,14 @@ class DeviceService(CacheMixin):
     """
 
     def __init__(self, db: AsyncSession, device_crud: CRUDDevice, credential_crud: CRUDCredential):
+        """
+        初始化设备服务。
+
+        Args:
+            db: 异步数据库会话
+            device_crud: 设备 CRUD 实例
+            credential_crud: 凭据 CRUD 实例
+        """
         self.db = db
         self.device_crud = device_crud
         self.credential_crud = credential_crud
@@ -277,7 +285,16 @@ class DeviceService(CacheMixin):
         )
 
     async def get_recycle_bin(self, page: int = 1, page_size: int = 20) -> tuple[list[Device], int]:
-        """获取回收站中的设备列表。"""
+        """
+        获取回收站中的设备列表。
+
+        Args:
+            page: 页码（从 1 开始）
+            page_size: 每页记录数
+
+        Returns:
+            tuple[list[Device], int]: (已删除设备列表, 总数)
+        """
         return await self.device_crud.get_paginated(
             self.db,
             page=page,
@@ -296,7 +313,22 @@ class DeviceService(CacheMixin):
         reason: str | None = None,
         operator_id: UUID | None = None,
     ) -> Device:
-        """设备状态流转（生命周期状态机）。"""
+        """
+        设备状态流转（生命周期状态机）。
+
+        Args:
+            device_id: 设备 ID
+            to_status: 目标状态
+            reason: 状态变更原因（可选）
+            operator_id: 操作员 ID（可选）
+
+        Returns:
+            Device: 更新后的设备对象
+
+        Raises:
+            NotFoundException: 设备不存在
+            BadRequestException: 状态流转不合法
+        """
         device = await self.device_crud.get(self.db, id=device_id)
         if not device:
             raise NotFoundException(message="设备不存在")
@@ -330,7 +362,18 @@ class DeviceService(CacheMixin):
         reason: str | None = None,
         operator_id: UUID | None = None,
     ) -> tuple[int, list[dict]]:
-        """批量状态流转。返回 (success_count, failed_items)。"""
+        """
+        批量状态流转。
+
+        Args:
+            ids: 设备 ID 列表
+            to_status: 目标状态
+            reason: 状态变更原因（可选）
+            operator_id: 操作员 ID（可选）
+
+        Returns:
+            tuple[int, list[dict]]: (成功数量, 失败项列表，每项包含 id 和 reason)
+        """
         success = 0
         failed: list[dict] = []
 
@@ -344,7 +387,11 @@ class DeviceService(CacheMixin):
         return success, failed
 
     async def _invalidate_lifecycle_cache(self) -> None:
-        """失效设备生命周期统计缓存（使用 CacheMixin 的 scan_iter 方式）。"""
+        """
+        失效设备生命周期统计缓存（使用 CacheMixin 的 scan_iter 方式）。
+
+        删除所有匹配 `v1:ncm:device:lifecycle:stats:*` 模式的缓存键。
+        """
         # key 规范：v1:ncm:device:lifecycle:stats:{hash}
         await self._cache_delete_pattern("v1:ncm:device:lifecycle:stats:*")
 
@@ -354,7 +401,19 @@ class DeviceService(CacheMixin):
         dept_id: UUID | None = None,
         vendor: str | None = None,
     ) -> dict[str, dict[str, int]]:
-        """生命周期统计（按状态/厂商/部门）。支持 60 秒缓存。"""
+        """
+        生命周期统计（按状态/厂商/部门）。支持 60 秒缓存。
+
+        Args:
+            dept_id: 部门 ID 过滤（可选）
+            vendor: 厂商过滤（可选）
+
+        Returns:
+            dict[str, dict[str, int]]: 统计结果字典，包含：
+            - by_status: 按状态统计
+            - by_vendor: 按厂商统计
+            - by_dept: 按部门统计
+        """
         cache_key = None
         if cache_module.redis_client is not None:
             key_obj = {"dept_id": str(dept_id) if dept_id else None, "vendor": vendor}

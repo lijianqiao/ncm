@@ -16,6 +16,14 @@ from app.core.otp_service import otp_service
 
 
 def _extract_uuid(value: str | None) -> UUID | None:
+    """从字符串中提取 UUID。
+
+    Args:
+        value: 可能包含 UUID 的字符串
+
+    Returns:
+        UUID | None: 解析成功的 UUID，失败返回 None
+    """
     if not value:
         return None
     try:
@@ -25,11 +33,22 @@ def _extract_uuid(value: str | None) -> UUID | None:
 
 
 async def resolve_otp_password(auth_type: str | None, host_data: dict) -> str | None:
-    """
-    解析 OTP 密码：
+    """解析 OTP 密码。
+
+    根据认证类型解析 OTP 密码：
     - otp_manual: 从缓存获取或抛出 OTPRequiredException
     - otp_seed: 根据种子生成验证码
     - 其他: 返回 None
+
+    Args:
+        auth_type: 认证类型（otp_manual, otp_seed 等）
+        host_data: 主机数据字典，需包含 dept_id, device_group, device_id, otp_seed_encrypted 等
+
+    Returns:
+        str | None: OTP 密码，无需 OTP 时返回 None
+
+    Raises:
+        OTPRequiredException: OTP 手动输入模式下需要用户输入时抛出
     """
     if not auth_type:
         return None
@@ -82,6 +101,18 @@ async def resolve_otp_password(auth_type: str | None, host_data: dict) -> str | 
 
 
 def resolve_otp_password_sync(auth_type: str | None, host_data: dict) -> str | None:
+    """同步版本的 OTP 密码解析（用于同步上下文）。
+
+    Args:
+        auth_type: 认证类型
+        host_data: 主机数据字典
+
+    Returns:
+        str | None: OTP 密码，无需 OTP 时返回 None
+
+    Raises:
+        OTPRequiredException: OTP 手动输入模式下需要用户输入时抛出
+    """
     from app.celery.base import run_async
 
     return run_async(resolve_otp_password(auth_type, host_data))
@@ -93,11 +124,21 @@ async def handle_otp_auth_failure(
     *,
     failed_devices: list[str] | None = None,
 ) -> None:
-    """
-    认证失败时统一处理 OTP 逻辑：
+    """认证失败时统一处理 OTP 逻辑。
+
+    处理流程：
     - 失效缓存
     - 标记等待状态
     - 抛出 OTPRequiredException
+
+    Args:
+        host_data: 主机数据字典，需包含 auth_type, dept_id, device_group, device_id
+        original_error: 原始认证异常
+        failed_devices: 失败设备 ID 列表（可选）
+
+    Raises:
+        OTPRequiredException: 需要重新输入 OTP 时抛出
+        Exception: 非 OTP 认证类型时直接抛出原始异常
     """
     auth_type = host_data.get("auth_type")
     if auth_type != "otp_manual":
@@ -145,6 +186,17 @@ def handle_otp_auth_failure_sync(
     *,
     failed_devices: list[str] | None = None,
 ) -> None:
+    """同步版本的 OTP 认证失败处理（用于同步上下文）。
+
+    Args:
+        host_data: 主机数据字典
+        original_error: 原始认证异常
+        failed_devices: 失败设备 ID 列表（可选）
+
+    Raises:
+        OTPRequiredException: 需要重新输入 OTP 时抛出
+        Exception: 非 OTP 认证类型时直接抛出原始异常
+    """
     from app.celery.base import run_async
 
     return run_async(handle_otp_auth_failure(host_data, original_error, failed_devices=failed_devices))

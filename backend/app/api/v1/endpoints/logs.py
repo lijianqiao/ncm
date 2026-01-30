@@ -18,7 +18,7 @@ from app.import_export import ImportExportService, delete_export_file
 from app.schemas.common import PaginatedResponse, ResponseBase
 from app.schemas.log import LoginLogResponse, OperationLogResponse
 
-router = APIRouter()
+router = APIRouter(tags=["日志管理"])
 
 
 @router.get("/login", response_model=ResponseBase[PaginatedResponse[LoginLogResponse]], summary="获取登录日志")

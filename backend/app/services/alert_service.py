@@ -25,19 +25,51 @@ from app.schemas.common import BatchOperationResult
 
 
 class AlertService:
-    """告警服务类。"""
+    """
+    告警服务类。
+
+    提供告警创建、分页查询、确认(ack)、关闭(close)等能力。
+    """
 
     def __init__(self, db: AsyncSession, alert_crud: CRUDAlert):
+        """
+        初始化告警服务。
+
+        Args:
+            db: 异步数据库会话
+            alert_crud: 告警 CRUD 实例
+        """
         self.db = db
         self.alert_crud = alert_crud
 
     async def get_alert(self, alert_id: UUID) -> Alert:
+        """
+        获取告警详情。
+
+        Args:
+            alert_id: 告警 ID
+
+        Returns:
+            Alert: 告警对象
+
+        Raises:
+            NotFoundException: 告警不存在
+        """
         alert = await self.alert_crud.get(self.db, id=alert_id)
         if not alert:
             raise NotFoundException(message="告警不存在")
         return alert
 
     async def list_alerts(self, query: AlertListQuery) -> tuple[list[Alert], int]:
+        """
+        获取分页告警列表。
+
+        Args:
+            query: 查询参数
+
+        Returns:
+            tuple[list[Alert], int]: (告警列表, 总数)
+        """
         from app.models.alert import Alert
 
         return await self.alert_crud.get_paginated(
@@ -58,6 +90,18 @@ class AlertService:
 
     @transactional()
     async def create_alert(self, alert_in: AlertCreate, *, dedup_minutes: int = 24 * 60) -> Alert:
+        """
+        创建告警（带去重逻辑）。
+
+        去重：避免在指定时间窗口内重复产生同类型同对象的告警。
+
+        Args:
+            alert_in: 告警创建数据
+            dedup_minutes: 去重时间窗口（分钟，默认 24*60=1440 分钟）
+
+        Returns:
+            Alert: 创建的告警对象（如果存在重复则返回已存在的告警）
+        """
         # 去重：避免每天重复产生同类型同对象的告警
         exists = await self.alert_crud.exists_recent_open_alert(
             self.db,

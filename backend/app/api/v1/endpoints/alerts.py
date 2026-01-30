@@ -23,7 +23,7 @@ from app.schemas.alert import AlertListQuery, AlertResponse, AlertStats, AlertTr
 from app.schemas.common import BatchOperationResult, PaginatedResponse, ResponseBase
 from app.utils.user_display import format_user_display_name
 
-router = APIRouter()
+router = APIRouter(tags=["告警管理"])
 
 
 def _build_alert_response(alert: Alert) -> AlertResponse:

@@ -32,6 +32,14 @@ from app.subscribers.log_subscriber import register_log_subscribers
 async def lifespan(app: FastAPI):
     """
     FastAPI 生命周期管理: 启动与关闭事件。
+
+    在应用启动时执行初始化操作，在应用关闭时执行清理操作。
+
+    Args:
+        app: FastAPI 应用实例
+
+    Yields:
+        None: 在启动和关闭之间执行应用逻辑
     """
     setup_logging()
     logger.info("服务正在启动...")

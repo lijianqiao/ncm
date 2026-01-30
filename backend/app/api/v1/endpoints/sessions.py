@@ -26,7 +26,7 @@ from app.import_export import ImportExportService, delete_export_file
 from app.schemas.common import BatchOperationResult, PaginatedResponse, ResponseBase
 from app.schemas.session import KickUsersRequest, OnlineSessionResponse
 
-router = APIRouter()
+router = APIRouter(tags=["在线会话"])
 
 
 @router.get(
