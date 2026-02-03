@@ -18,6 +18,7 @@ FastAPI 按定义顺序匹配路由，静态路由必须在动态路由之前定
 4. 动态路由: /{discovery_id:uuid} 及其子路由 (/restore, /hard, /adopt)
 """
 
+import asyncio
 from typing import Any, cast
 from uuid import UUID
 
@@ -121,7 +122,9 @@ async def trigger_scan(
                 data=None,
             )
 
-        result = cast(Any, scan_subnet).apply(args=[request.subnets[0], request.scan_type, request.ports])
+        result = await asyncio.to_thread(
+            cast(Any, scan_subnet).apply, args=[request.subnets[0], request.scan_type, request.ports]
+        )
         return ResponseBase(
             data=ScanTaskResponse(
                 task_id=result.id if result else "",
@@ -164,7 +167,11 @@ async def get_scan_task_status(task_id: str) -> ResponseBase[ScanTaskStatus]:
 
     if result.ready():
         if result.successful():
-            task_result = result.get()
+            try:
+                task_result = await asyncio.to_thread(result.get, timeout=5)
+            except Exception as e:
+                status.error = f"获取任务结果失败: {e}"
+                return ResponseBase(data=status)
             if isinstance(task_result, dict) and ("total_subnets" in task_result or "results" in task_result):
                 status.result = ScanBatchResult.model_validate(task_result)
             else:
@@ -569,7 +576,7 @@ async def trigger_cmdb_compare(
             )
         )
     else:
-        result = cast(Any, compare_cmdb).apply()
+        result = await asyncio.to_thread(cast(Any, compare_cmdb).apply)
         return ResponseBase(
             data=ScanTaskResponse(
                 task_id=result.id if result else "",
@@ -818,8 +825,6 @@ async def adopt_device(
 
     if not device:
         raise NotFoundException(message="发现记录不存在")
-
-    await db.commit()
 
     return ResponseBase(
         data=AdoptResponse(

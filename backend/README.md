@@ -19,8 +19,6 @@
 | Cisco | `cisco_iosxe`, `cisco_nxos`, `cisco_iosxr` |
 | Huawei | `huawei_vrp` |
 | H3C | `hp_comware` |
-| Arista | `arista_eos` |
-| Juniper | `juniper_junos` |
 
 ## 快速开始
 
@@ -32,6 +30,7 @@ uv sync
 cp .env.example .env
 
 # 3. 数据库迁移
+uv run alembic revision --autogenerate -m "描述信息"
 uv run alembic upgrade head
 
 # 4. 初始化数据
@@ -42,7 +41,7 @@ uv run start.py           # API 服务
 uv run start_worker.py    # Celery Worker
 ```
 
-API 文档: http://127.0.0.1:8000/docs
+API 文档: <http://127.0.0.1:8000/docs>
 
 ## 关键配置
 
@@ -60,7 +59,7 @@ ASYNC_SSH_SEMAPHORE=100
 
 ## 目录结构
 
-```
+```text
 app/
 ├── api/v1/endpoints/    # REST API
 ├── network/             # Scrapli/Nornir 封装

@@ -155,6 +155,9 @@ async def validate_credentials(
         if auth_type not in {AuthType.OTP_SEED.value, AuthType.OTP_MANUAL.value}:
             add_error(row_number, "auth_type", f"认证类型无效: {auth_type}")
 
+        if auth_type == AuthType.OTP_SEED.value and not otp_seed:
+            add_error(row_number, "otp_seed", "OTP 种子不能为空")
+
         if dept_code and device_group:
             key = (dept_code, device_group)
             if key in pair_seen:
@@ -291,7 +294,6 @@ async def persist_credentials(
             setattr(existing, k, v)
     if to_insert:
         await db.execute(insert(DeviceGroupCredential), to_insert)
-    await db.commit()
 
     return len(to_insert) + len(to_update)
 

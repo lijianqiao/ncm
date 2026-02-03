@@ -395,7 +395,15 @@ class ImportExportService:
         except Exception:
             pass
 
-        imported_rows = await persist_fn(self.db, valid_df, allow_overwrite=body.allow_overwrite)
+        try:
+            imported_rows = await persist_fn(self.db, valid_df, allow_overwrite=body.allow_overwrite)
+            await self.db.commit()
+        except Exception:
+            try:
+                await self.db.rollback()
+            except Exception:
+                pass
+            raise
 
         meta["status"] = "committed"
         meta["committed_at"] = now_ts()

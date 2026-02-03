@@ -12,6 +12,7 @@ from typing import Any
 import polars as pl
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.models.template import Template
 
@@ -25,7 +26,12 @@ async def export_templates_df(db: AsyncSession) -> pl.DataFrame:
     Returns:
         pl.DataFrame: 模板数据 DataFrame。
     """
-    result = await db.execute(select(Template).where(Template.is_deleted.is_(False)).order_by(Template.updated_at.desc()))
+    result = await db.execute(
+        select(Template)
+        .where(Template.is_deleted.is_(False))
+        .options(selectinload(Template.approval_steps))
+        .order_by(Template.updated_at.desc())
+    )
     rows: list[dict[str, Any]] = []
     for t in result.scalars().all():
         submitted_at = ""

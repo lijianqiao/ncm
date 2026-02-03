@@ -16,6 +16,7 @@
     4. 带有 /task/ 前缀的动态路由
 """
 
+import asyncio
 from typing import Any, cast
 from uuid import UUID
 
@@ -210,7 +211,7 @@ async def refresh_topology(
         )
     else:
         # 同步执行
-        result = cast(Any, collect_topology).apply(kwargs={"device_ids": device_ids})
+        result = await asyncio.to_thread(cast(Any, collect_topology).apply, kwargs={"device_ids": device_ids})
         return ResponseBase(
             data=TopologyTaskResponse(
                 task_id=result.id if result else "",
@@ -357,7 +358,7 @@ async def collect_single_device_topology(
             )
         )
     else:
-        result = cast(Any, collect_device_topology).apply(args=[str(device_id)])
+        result = await asyncio.to_thread(cast(Any, collect_device_topology).apply, args=[str(device_id)])
         return ResponseBase(
             data=TopologyTaskResponse(
                 task_id=result.id if result else "",
@@ -410,7 +411,11 @@ async def get_topology_task_status(task_id: str) -> ResponseBase[TopologyTaskSta
 
     if result.ready():
         if result.successful():
-            task_result = result.get()
+            try:
+                task_result = await asyncio.to_thread(result.get, timeout=5)
+            except Exception as e:
+                status.error = f"获取任务结果失败: {e}"
+                return ResponseBase(data=status)
 
             # 检查任务结果是否包含 OTP 需求
             # 注意：这里不返回 428，而是将 otp_required 信息包含在正常响应中

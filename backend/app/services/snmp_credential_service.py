@@ -10,6 +10,7 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.decorator import transactional
 from app.core.encryption import encrypt_snmp_secret
 from app.core.exceptions import BadRequestException, NotFoundException
 from app.crud.crud_dept import dept as dept_crud
@@ -86,6 +87,7 @@ class SnmpCredentialService(BaseService):
             raise NotFoundException(message="SNMP 凭据不存在")
         return await self._to_response(obj)
 
+    @transactional()
     async def create(self, *, data: DeptSnmpCredentialCreate) -> DeptSnmpCredentialResponse:
         """
         创建 SNMP 凭据。
@@ -122,6 +124,7 @@ class SnmpCredentialService(BaseService):
         await self.db.refresh(obj)
         return await self._to_response(obj)
 
+    @transactional()
     async def update(self, *, snmp_cred_id: UUID, data: DeptSnmpCredentialUpdate) -> DeptSnmpCredentialResponse:
         """
         更新 SNMP 凭据。
@@ -158,6 +161,7 @@ class SnmpCredentialService(BaseService):
         await self.db.refresh(obj)
         return await self._to_response(obj)
 
+    @transactional()
     async def delete(self, *, snmp_cred_id: UUID) -> None:
         """
         删除 SNMP 凭据（软删除）。
@@ -175,6 +179,7 @@ class SnmpCredentialService(BaseService):
         if success_count == 0:
             raise NotFoundException(message="SNMP 凭据不存在")
 
+    @transactional()
     async def batch_delete(self, ids: list[UUID]) -> BatchOperationResult:
         """
         批量删除 SNMP 凭据（软删除）。
@@ -220,6 +225,7 @@ class SnmpCredentialService(BaseService):
             is_deleted=True,
         )
 
+    @transactional()
     async def restore(self, snmp_cred_id: UUID) -> DeptSnmpCredential:
         """
         恢复已删除的 SNMP 凭据。
@@ -244,6 +250,7 @@ class SnmpCredentialService(BaseService):
         await self.db.refresh(obj)
         return obj
 
+    @transactional()
     async def batch_restore(self, ids: list[UUID]) -> BatchOperationResult:
         """
         批量恢复已删除的 SNMP 凭据。
@@ -257,6 +264,7 @@ class SnmpCredentialService(BaseService):
         success_count, failed_ids = await self.snmp_cred_crud.batch_restore(self.db, ids=ids)
         return self._build_batch_result(success_count, failed_ids, message="恢复完成")
 
+    @transactional()
     async def hard_delete(self, snmp_cred_id: UUID) -> None:
         """
         彻底删除 SNMP 凭据（硬删除）。
@@ -275,6 +283,7 @@ class SnmpCredentialService(BaseService):
         if success_count == 0:
             raise NotFoundException(message="彻底删除失败")
 
+    @transactional()
     async def batch_hard_delete(self, ids: list[UUID]) -> BatchOperationResult:
         """
         批量彻底删除 SNMP 凭据（硬删除）。

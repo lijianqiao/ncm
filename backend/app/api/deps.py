@@ -9,9 +9,9 @@
 import json
 import uuid
 from collections.abc import AsyncGenerator
-from typing import Annotated, Any, Protocol, TypeAlias
-from uuid import UUID
+from typing import Annotated, Any, Protocol
 from urllib.parse import urlparse
+from uuid import UUID
 
 import jwt
 from fastapi import Depends, Request
@@ -46,7 +46,11 @@ from app.crud.crud_inventory_audit import inventory_audit_crud as inventory_audi
 from app.crud.crud_log import (
     CRUDLoginLog,
     CRUDOperationLog,
+)
+from app.crud.crud_log import (
     login_log as login_log_crud_global,
+)
+from app.crud.crud_log import (
     operation_log as operation_log_crud_global,
 )
 from app.crud.crud_menu import CRUDMenu
@@ -819,7 +823,7 @@ class BackupServiceProtocol(Protocol):
 
 AlertServiceDep = Annotated[AlertService, Depends(get_alert_service)]
 AuthServiceDep = Annotated[AuthService, Depends(get_auth_service)]
-BackupServiceDep: TypeAlias = Annotated[BackupServiceProtocol, Depends(get_backup_service)]
+BackupServiceDep = Annotated[BackupServiceProtocol, Depends(get_backup_service)]
 CollectServiceDep = Annotated[CollectService, Depends(get_collect_service)]
 CredentialServiceDep = Annotated[CredentialService, Depends(get_credential_service)]
 DashboardServiceDep = Annotated[DashboardService, Depends(get_dashboard_service)]

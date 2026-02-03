@@ -298,7 +298,6 @@ async def persist_snmp_credentials(
             setattr(existing, k, v)
     if to_insert:
         await db.execute(insert(DeptSnmpCredential), to_insert)
-    await db.commit()
 
     return len(to_insert) + len(to_update)
 

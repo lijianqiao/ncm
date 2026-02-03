@@ -16,12 +16,12 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.worksheet import Worksheet
-from sqlalchemy import and_, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.models.discovery import Discovery
 from app.models.device import Device
+from app.models.discovery import Discovery
 from app.models.inventory_audit import InventoryAudit
 from app.utils.user_display import format_user_display_name
 
@@ -104,7 +104,10 @@ def _auto_column_width(ws: Worksheet, min_width: int = 10, max_width: int = 50) 
 async def export_inventory_audits_df(db: AsyncSession) -> pl.DataFrame:
     """导出盘点任务列表（用于任务列表导出）。"""
     result = await db.execute(
-        select(InventoryAudit).where(InventoryAudit.is_deleted.is_(False)).order_by(InventoryAudit.created_at.desc())
+        select(InventoryAudit)
+        .where(InventoryAudit.is_deleted.is_(False))
+        .options(selectinload(InventoryAudit.operator))
+        .order_by(InventoryAudit.created_at.desc())
     )
     rows: list[dict[str, Any]] = []
     for a in result.scalars().all():
@@ -156,9 +159,7 @@ async def export_inventory_audit_report(
 
     # 2. 获取本次盘点发现的所有设备
     discoveries_result = await db.execute(
-        select(Discovery)
-        .where(Discovery.scan_task_id == audit_id)
-        .order_by(Discovery.ip_address)
+        select(Discovery).where(Discovery.scan_task_id == audit_id).order_by(Discovery.ip_address)
     )
     discoveries = list(discoveries_result.scalars().all())
 
@@ -173,25 +174,45 @@ async def export_inventory_audit_report(
     # 查询 CMDB 中应该被扫描到的设备
     offline_devices: list[Device] = []
     if subnets:
-        # 简化处理：获取所有活跃设备，检查是否在发现列表中
-        # 显式加载 dept 关系，避免异步上下文中的延迟加载问题
-        devices_result = await db.execute(
-            select(Device).where(Device.is_deleted.is_(False)).options(selectinload(Device.dept))
-        )
-        all_devices = list(devices_result.scalars().all())
-        for device in all_devices:
-            if device.ip_address and device.ip_address not in discovered_ips:
-                # 检查设备 IP 是否在扫描范围内
-                import ipaddress
+        import ipaddress
 
-                for subnet in subnets:
+        networks = []
+        for subnet in subnets:
+            try:
+                networks.append(ipaddress.ip_network(subnet, strict=False))
+            except Exception:
+                continue
+
+        if networks:
+            page_size = 500
+            offset = 0
+            while True:
+                # 分批读取，避免一次性加载全量设备
+                devices_result = await db.execute(
+                    select(Device)
+                    .where(Device.is_deleted.is_(False))
+                    .options(selectinload(Device.dept))
+                    .order_by(Device.id)
+                    .offset(offset)
+                    .limit(page_size)
+                )
+                batch = list(devices_result.scalars().all())
+                if not batch:
+                    break
+
+                for device in batch:
+                    if not device.ip_address or device.ip_address in discovered_ips:
+                        continue
                     try:
-                        network = ipaddress.ip_network(subnet, strict=False)
-                        if ipaddress.ip_address(device.ip_address) in network:
+                        ip_obj = ipaddress.ip_address(device.ip_address)
+                    except Exception:
+                        continue
+                    for network in networks:
+                        if ip_obj in network:
                             offline_devices.append(device)
                             break
-                    except Exception:
-                        pass
+
+                offset += page_size
 
     # 4. 创建 Excel 工作簿
     wb = Workbook()
@@ -216,7 +237,10 @@ async def export_inventory_audit_report(
         ("任务名称", audit.name),
         ("任务状态", STATUS_MAP.get(audit.status, audit.status)),
         ("扫描范围", ", ".join(subnets) if subnets else "未指定"),
-        ("操作人", format_user_display_name(audit.operator.nickname, audit.operator.username) if audit.operator else ""),
+        (
+            "操作人",
+            format_user_display_name(audit.operator.nickname, audit.operator.username) if audit.operator else "",
+        ),
         ("开始时间", _format_datetime(audit.started_at)),
         ("结束时间", _format_datetime(audit.finished_at)),
     ]
@@ -263,8 +287,16 @@ async def export_inventory_audit_report(
     ws_discoveries = wb.create_sheet("发现设备明细")
 
     discovery_headers = [
-        "IP地址", "MAC地址", "主机名", "厂商", "操作系统",
-        "开放端口", "发现状态", "首次发现", "最后发现", "离线天数"
+        "IP地址",
+        "MAC地址",
+        "主机名",
+        "厂商",
+        "操作系统",
+        "开放端口",
+        "发现状态",
+        "首次发现",
+        "最后发现",
+        "离线天数",
     ]
     for col, header in enumerate(discovery_headers, start=1):
         ws_discoveries.cell(row=1, column=col, value=header)
@@ -289,10 +321,7 @@ async def export_inventory_audit_report(
 
     shadow_devices = [d for d in discoveries if d.status == "shadow"]
 
-    shadow_headers = [
-        "IP地址", "MAC地址", "主机名", "厂商", "操作系统",
-        "开放端口", "首次发现", "建议操作"
-    ]
+    shadow_headers = ["IP地址", "MAC地址", "主机名", "厂商", "操作系统", "开放端口", "首次发现", "建议操作"]
     for col, header in enumerate(shadow_headers, start=1):
         ws_shadow.cell(row=1, column=col, value=header)
     _apply_header_style(ws_shadow, 1, len(shadow_headers))
@@ -315,10 +344,7 @@ async def export_inventory_audit_report(
     # ========== Sheet4: 离线设备 ==========
     ws_offline = wb.create_sheet("离线设备")
 
-    offline_headers = [
-        "设备名称", "IP地址", "厂商", "设备分组", "部门",
-        "状态", "建议操作"
-    ]
+    offline_headers = ["设备名称", "IP地址", "厂商", "设备分组", "部门", "状态", "建议操作"]
     for col, header in enumerate(offline_headers, start=1):
         ws_offline.cell(row=1, column=col, value=header)
     _apply_header_style(ws_offline, 1, len(offline_headers))
@@ -343,4 +369,3 @@ async def export_inventory_audit_report(
     finally:
         wb.close()
     return output_path
-

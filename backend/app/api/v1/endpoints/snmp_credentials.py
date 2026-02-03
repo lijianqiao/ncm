@@ -119,7 +119,6 @@ async def create_snmp_credential(
     """
     service = _get_service(db)
     resp = await service.create(data=request)
-    await db.commit()
     return ResponseBase[DeptSnmpCredentialResponse](data=resp)
 
 
@@ -151,7 +150,6 @@ async def batch_delete_snmp_credentials(
     """
     service = _get_service(db)
     result = await service.batch_delete(request.ids)
-    await db.commit()
     return ResponseBase(data=result)
 
 
@@ -220,7 +218,6 @@ async def batch_restore_snmp_credentials(
     """
     service = _get_service(db)
     result = await service.batch_restore(request.ids)
-    await db.commit()
     return ResponseBase(data=result)
 
 
@@ -247,7 +244,6 @@ async def batch_hard_delete_snmp_credentials(
     """
     service = _get_service(db)
     result = await service.batch_hard_delete(request.ids)
-    await db.commit()
     return ResponseBase(data=result)
 
 
@@ -462,7 +458,6 @@ async def update_snmp_credential(
     """
     service = _get_service(db)
     resp = await service.update(snmp_cred_id=snmp_cred_id, data=request)
-    await db.commit()
     return ResponseBase(data=resp)
 
 
@@ -489,7 +484,6 @@ async def delete_snmp_credential(
     """
     service = _get_service(db)
     await service.delete(snmp_cred_id=snmp_cred_id)
-    await db.commit()
     return ResponseBase(data={"message": "删除成功"})
 
 
@@ -516,7 +510,6 @@ async def restore_snmp_credential(
     """
     service = _get_service(db)
     obj = await service.restore(snmp_cred_id)
-    await db.commit()
     return ResponseBase(
         data=await service.to_response(obj),
         message="SNMP 凭据已恢复",
@@ -537,7 +530,6 @@ async def hard_delete_snmp_credential(
     """彻底删除 SNMP 凭据（硬删除，不可恢复）。"""
     service = _get_service(db)
     await service.hard_delete(snmp_cred_id)
-    await db.commit()
     return ResponseBase(
         data={"message": "SNMP 凭据已彻底删除"},
         message="SNMP 凭据已彻底删除",
