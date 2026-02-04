@@ -125,8 +125,8 @@ def create_celery_app() -> Celery:
         task_time_limit=3600,  # 单个任务最大执行时间 1 小时
         task_soft_time_limit=3300,  # 软超时 55 分钟，允许任务优雅退出
         # 结果配置
-        result_expires=86400,  # 结果保留 24 小时
-        result_extended=True,  # 保存更详细的结果信息
+        result_expires=settings.CELERY_RESULT_EXPIRES_SECONDS,  # 结果保留时间（秒）
+        result_extended=settings.CELERY_RESULT_EXTENDED,  # 是否保存扩展结果信息
         # Worker 配置
         worker_prefetch_multiplier=1,  # 每次只预取 1 个任务，适合长时间任务
         worker_concurrency=4,  # 默认并发数，可通过启动参数覆盖

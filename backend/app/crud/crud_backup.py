@@ -343,7 +343,13 @@ class CRUDBackup(CRUDBase[Backup, BackupCreate, BackupUpdate]):
         result = await db.execute(query)
         return {row.device_id: row.md5_hash for row in result.fetchall()}
 
-    async def get_devices_latest_backup_info(self, db: AsyncSession, device_ids: list[UUID]) -> dict[UUID, dict]:
+    async def get_devices_latest_backup_info(
+        self,
+        db: AsyncSession,
+        device_ids: list[UUID],
+        *,
+        include_content: bool = False,
+    ) -> dict[UUID, dict]:
         """
         批量获取多个设备的最新成功备份信息（用于差异/告警）。
 
@@ -355,12 +361,17 @@ class CRUDBackup(CRUDBase[Backup, BackupCreate, BackupUpdate]):
 
         from sqlalchemy.sql import func as sql_func
 
+        columns = [
+            self.model.device_id,
+            self.model.id.label("backup_id"),
+            self.model.md5_hash,
+        ]
+        if include_content:
+            columns.append(self.model.content)
+
         subquery = (
             select(
-                self.model.device_id,
-                self.model.id.label("backup_id"),
-                self.model.md5_hash,
-                self.model.content,
+                *columns,
                 sql_func.row_number()
                 .over(partition_by=self.model.device_id, order_by=self.model.created_at.desc())
                 .label("rn"),
@@ -371,16 +382,18 @@ class CRUDBackup(CRUDBase[Backup, BackupCreate, BackupUpdate]):
             .subquery()
         )
 
-        query = select(subquery.c.device_id, subquery.c.backup_id, subquery.c.md5_hash, subquery.c.content).where(
-            subquery.c.rn == 1
-        )
+        query = select(subquery.c.device_id, subquery.c.backup_id, subquery.c.md5_hash).where(subquery.c.rn == 1)
+        if include_content:
+            query = query.add_columns(subquery.c.content)
 
         result = await db.execute(query)
         rows = result.fetchall()
-        return {
-            row.device_id: {"backup_id": row.backup_id, "md5_hash": row.md5_hash, "content": row.content}
-            for row in rows
-        }
+        if include_content:
+            return {
+                row.device_id: {"backup_id": row.backup_id, "md5_hash": row.md5_hash, "content": row.content}
+                for row in rows
+            }
+        return {row.device_id: {"backup_id": row.backup_id, "md5_hash": row.md5_hash} for row in rows}
 
 
 # 单例实例

@@ -14,7 +14,7 @@ from typing import Any, cast
 from uuid import UUID
 
 from app.celery.app import celery_app
-from app.celery.base import BaseTask, run_async, safe_update_state
+from app.celery.base import BaseTask, run_async, safe_update_state_async
 from app.core.config import settings
 from app.core.db import AsyncSessionLocal
 from app.core.logger import celery_details_logger, celery_task_logger
@@ -121,7 +121,7 @@ def scan_subnet(
             )
 
             # 阶段：开始扫描
-            safe_update_state(
+            await safe_update_state_async(
                 self,
                 celery_task_id,
                 state="PROGRESS",
@@ -132,7 +132,7 @@ def scan_subnet(
             result = await _execute_scan(scan_service, subnet, scan_type, ports)
 
             # 阶段：扫描完成，准备入库
-            safe_update_state(
+            await safe_update_state_async(
                 self,
                 celery_task_id,
                 state="PROGRESS",
@@ -142,7 +142,7 @@ def scan_subnet(
             # 处理扫描结果
             result.task_id = celery_task_id
             if result.hosts:
-                safe_update_state(
+                await safe_update_state_async(
                     self,
                     celery_task_id,
                     state="PROGRESS",
@@ -162,7 +162,7 @@ def scan_subnet(
                 )
 
             # 阶段：完成
-            safe_update_state(
+            await safe_update_state_async(
                 self,
                 celery_task_id,
                 state="PROGRESS",
@@ -241,7 +241,7 @@ def scan_subnets_batch(
                     async with completed_lock:
                         completed_count += 1
                         progress = int((completed_count / total) * 90)  # 保留 10% 给后续处理
-                        safe_update_state(
+                        await safe_update_state_async(
                             self,
                             celery_task_id,
                             state="PROGRESS",
@@ -273,7 +273,7 @@ def scan_subnets_batch(
                     }
 
         # 更新初始状态
-        safe_update_state(
+        await safe_update_state_async(
             self,
             celery_task_id,
             state="PROGRESS",
@@ -296,7 +296,7 @@ def scan_subnets_batch(
         results = []
         total_hosts = 0
 
-        safe_update_state(
+        await safe_update_state_async(
             self,
             celery_task_id,
             state="PROGRESS",
@@ -320,11 +320,13 @@ def scan_subnets_batch(
                 subnet = scan_dict.get("subnet", "unknown")
                 result = scan_dict.get("result")
 
-                results.append({
-                    "subnet": subnet,
-                    "hosts_found": scan_dict.get("hosts_found", 0),
-                    "error": scan_dict.get("error"),
-                })
+                results.append(
+                    {
+                        "subnet": subnet,
+                        "hosts_found": scan_dict.get("hosts_found", 0),
+                        "error": scan_dict.get("error"),
+                    }
+                )
 
                 # 处理有效结果
                 if result and result.hosts:
@@ -340,7 +342,7 @@ def scan_subnets_batch(
                     except Exception as e:
                         celery_details_logger.error(f"处理扫描结果失败: {subnet}", error=str(e))
 
-        safe_update_state(
+        await safe_update_state_async(
             self,
             celery_task_id,
             state="PROGRESS",
@@ -494,11 +496,13 @@ def scheduled_network_scan(self) -> dict[str, Any]:
                 subnet = scan_dict.get("subnet", "unknown")
                 result = scan_dict.get("result")
 
-                scan_results.append({
-                    "subnet": subnet,
-                    "hosts_found": scan_dict.get("hosts_found", 0),
-                    "error": scan_dict.get("error"),
-                })
+                scan_results.append(
+                    {
+                        "subnet": subnet,
+                        "hosts_found": scan_dict.get("hosts_found", 0),
+                        "error": scan_dict.get("error"),
+                    }
+                )
 
                 # 处理有效结果
                 if result and result.hosts:

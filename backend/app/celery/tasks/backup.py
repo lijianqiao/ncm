@@ -43,6 +43,7 @@ from app.utils.validators import (
     should_skip_backup_save_due_to_unchanged_md5,
 )
 
+
 def _get_keep_count(bt: BackupType) -> int:
     """根据备份类型获取保留数量（使用 match-case 进行模式匹配）。
 
@@ -356,11 +357,57 @@ def _convert_async_results_to_summary(
     return summary
 
 
+def _sanitize_summary_for_result(summary: dict[str, Any]) -> dict[str, Any]:
+    """清理任务结果中的敏感内容（如配置文本）。
+
+    Args:
+        summary (dict[str, Any]): 原始汇总结果。
+
+    Returns:
+        dict[str, Any]: 清理后的汇总结果。
+    """
+    sanitized: dict[str, Any] = {k: v for k, v in summary.items() if k != "results"}
+    results = summary.get("results", {})
+    sanitized_results: dict[str, Any] = {}
+    if isinstance(results, dict):
+        for host, info in results.items():
+            if isinstance(info, dict):
+                clean_info = info.copy()
+                if "result" in clean_info:
+                    clean_info["result"] = None
+                sanitized_results[str(host)] = clean_info
+            else:
+                sanitized_results[str(host)] = info
+    sanitized["results"] = sanitized_results
+    return sanitized
+
+
+async def _try_acquire_idempotency_key(key: str) -> bool:
+    """尝试获取幂等 Key，失败时放行以避免阻塞主流程。"""
+    from app.core.cache import redis_client
+
+    if redis_client is None:
+        return True
+    try:
+        acquired = await redis_client.set(
+            key,
+            "1",
+            ex=settings.CELERY_TASK_IDEMPOTENCY_TTL_SECONDS,
+            nx=True,
+        )
+        return bool(acquired)
+    except Exception as e:
+        celery_details_logger.warning("幂等 Key 写入失败，跳过幂等保护", key=key, error=str(e))
+        return True
+
+
 async def _save_backup_results(
     hosts_data: list[dict],
     summary: dict,
     backup_type: str = BackupType.MANUAL.value,
     operator_id: str | None = None,
+    *,
+    celery_task_id: str | None = None,
 ) -> None:
     """保存备份结果到数据库（支持指定备份类型、md5 去重、保留策略）。
 
@@ -450,9 +497,22 @@ async def _save_backup_results(
                     except Exception as e:
                         # MinIO 不可用时降级存 DB（尽力而为）
                         content = config_content
-                        celery_details_logger.warning("大配置存 MinIO 失败，降级存 DB", device_id=device_id, error=str(e))
+                        celery_details_logger.warning(
+                            "大配置存 MinIO 失败，降级存 DB", device_id=device_id, error=str(e)
+                        )
 
             try:
+                if celery_task_id:
+                    dedupe_key = f"v1:celery:backup:{bt.value}:{device_id}:{celery_task_id}"
+                    acquired = await _try_acquire_idempotency_key(dedupe_key)
+                    if not acquired:
+                        celery_task_logger.info(
+                            "幂等 Key 已存在，跳过备份保存",
+                            device_id=device_id,
+                            backup_type=bt.value,
+                            task_id=celery_task_id,
+                        )
+                        continue
                 backup_data = BackupCreate(
                     device_id=UUID(device_id),
                     backup_type=bt,
@@ -554,11 +614,15 @@ def backup_single_device(
         if multi_result and not multi_result.failed:
             result_data = multi_result[0].result if multi_result else None
             if result_data and result_data.get("success"):
+                config_content = result_data.get("config")
+                md5_hash = compute_text_md5(config_content) if config_content else None
+                content_size = len(config_content.encode("utf-8")) if config_content else 0
                 return {
                     "device": name,
                     "hostname": hostname,
                     "status": "success",
-                    "config": result_data.get("config"),
+                    "content_size": content_size,
+                    "md5_hash": md5_hash,
                     "error": None,
                 }
 
@@ -676,6 +740,7 @@ def scheduled_backup_all(self) -> dict[str, Any]:
                 summary,
                 backup_type=BackupType.SCHEDULED.value,
                 operator_id=None,
+                celery_task_id=task_id,
             )
         )
 
@@ -881,6 +946,124 @@ def incremental_backup_check(self) -> dict[str, Any]:
         raise
 
 
+async def _persist_incremental_changes(
+    changed_devices: list[dict[str, Any]],
+    *,
+    celery_task_id: str | None,
+) -> int:
+    """保存增量变更备份与告警（分批提交）。"""
+    if not changed_devices:
+        return 0
+
+    backup_triggered = 0
+    batch_commit_size = settings.BACKUP_BATCH_SIZE
+
+    async with AsyncSessionLocal() as db:
+        for idx, device_info in enumerate(changed_devices, start=1):
+            device_id = device_info["device_id"]
+            name = device_info["device_name"]
+            config = device_info["config"]
+            old_backup_id = device_info.get("old_backup_id")
+            new_md5 = device_info["new_md5"]
+            old_md5 = device_info["old_md5"]
+
+            old_content = ""
+            if old_backup_id:
+                old_backup = await db.get(Backup, UUID(str(old_backup_id)))
+                if old_backup and old_backup.content:
+                    old_content = old_backup.content
+
+            content_size = len(config.encode("utf-8"))
+
+            # 处理大配置：存储到 MinIO（使用熔断器保护）
+            content = None
+            content_path = None
+            if content_size < settings.BACKUP_CONTENT_SIZE_THRESHOLD_BYTES:
+                content = config
+            else:
+                try:
+                    from app.core.minio_client import put_text_safe
+
+                    object_name = f"backups/{device_id}/{datetime.now(UTC).strftime('%Y%m%d_%H%M%S')}.txt"
+                    success = await put_text_safe(object_name, config)
+                    if success:
+                        content_path = object_name
+                    else:
+                        # 熔断器打开或写入失败，降级存 DB
+                        content = config
+                except Exception as e:
+                    # MinIO 不可用时降级存 DB
+                    content = config
+                    celery_task_logger.warning("大配置存 MinIO 失败，降级存 DB", device_id=device_id, error=str(e))
+
+            if celery_task_id:
+                dedupe_key = f"v1:celery:backup:incremental:{device_id}:{celery_task_id}"
+                acquired = await _try_acquire_idempotency_key(dedupe_key)
+                if not acquired:
+                    celery_task_logger.info(
+                        "幂等 Key 已存在，跳过增量备份保存",
+                        device_id=device_id,
+                        task_id=celery_task_id,
+                    )
+                    continue
+
+            backup_data = BackupCreate(
+                device_id=UUID(device_id),
+                backup_type=BackupType.INCREMENTAL,
+                content=content,
+                content_path=content_path,
+                content_size=content_size,
+                md5_hash=new_md5,
+                status=BackupStatus.SUCCESS,
+            )
+            backup = Backup(**backup_data.model_dump())
+            db.add(backup)
+            await db.flush()
+            await db.refresh(backup)
+            backup_triggered += 1
+
+            # 触发配置变更告警（写入 DB + 可选 Webhook）
+            try:
+                diff_text = ""
+                if old_content:
+                    diff_text = _compute_unified_diff(old_content, config, context_lines=3)
+
+                alert_service = AlertService(db, alert_crud)
+                notification_service = NotificationService()
+                alert = await alert_service.create_alert(
+                    AlertCreate(
+                        alert_type=AlertType.CONFIG_CHANGE,
+                        severity=AlertSeverity.MEDIUM,
+                        title=f"设备配置变更: {name}",
+                        message=f"检测到设备配置变更: {name}",
+                        details={
+                            "device_id": str(device_id),
+                            "device_name": name,
+                            "old_backup_id": str(old_backup_id) if old_backup_id else None,
+                            "new_backup_id": str(backup.id),
+                            "old_md5": old_md5,
+                            "new_md5": new_md5,
+                            "diff": diff_text[:8000] if diff_text else "",
+                        },
+                        source="diff",
+                        related_device_id=UUID(device_id),
+                    )
+                )
+                await notification_service.send_webhook(alert)
+            except Exception as e:
+                celery_task_logger.warning("配置变更告警触发失败", error=str(e))
+
+            # 分批提交事务，减少单个事务的持续时间
+            if idx % batch_commit_size == 0:
+                await db.commit()
+                celery_task_logger.debug("分批提交事务", processed=idx, total=len(changed_devices))
+
+        # 提交剩余的事务
+        await db.commit()
+
+    return backup_triggered
+
+
 async def _perform_incremental_check(task, celery_task_id: str | None) -> dict[str, Any]:
     """
     执行增量配置检查。
@@ -895,7 +1078,7 @@ async def _perform_incremental_check(task, celery_task_id: str | None) -> dict[s
     total_checked = 0
     changed_count = 0
     backup_triggered = 0
-    changed_devices = []
+    changed_devices_summary: list[dict[str, Any]] = []
 
     async with AsyncSessionLocal() as db:
         # 获取可自动备份的设备
@@ -909,9 +1092,9 @@ async def _perform_incremental_check(task, celery_task_id: str | None) -> dict[s
                 "message": "没有可检查的设备",
             }
 
-        # 获取设备的最新备份信息（MD5 + 内容，用于差异与告警）
+        # 获取设备的最新备份信息（仅 MD5 + 备份ID）
         device_ids = [UUID(h["device_id"]) for h in hosts_data if h.get("device_id")]
-        old_info_map = await backup_crud.get_devices_latest_backup_info(db, device_ids)
+        old_info_map = await backup_crud.get_devices_latest_backup_info(db, device_ids, include_content=False)
 
         total_checked = len(hosts_data)
 
@@ -920,7 +1103,7 @@ async def _perform_incremental_check(task, celery_task_id: str | None) -> dict[s
     for i in range(0, len(hosts_data), batch_size):
         batch = hosts_data[i : i + batch_size]
 
-        safe_update_state(
+        await safe_update_state_async(
             task,
             celery_task_id,
             state="PROGRESS",
@@ -941,6 +1124,8 @@ async def _perform_incremental_check(task, celery_task_id: str | None) -> dict[s
             num_workers=min(10, len(batch)),
         )
         summary = _convert_async_results_to_summary(results)
+
+        changed_in_batch: list[dict[str, Any]] = []
 
         # 对比 MD5
         for host in batch:
@@ -964,117 +1149,40 @@ async def _perform_incremental_check(task, celery_task_id: str | None) -> dict[s
             old_info = old_info_map.get(UUID(device_id), {})
             old_md5 = old_info.get("md5_hash")
             old_backup_id = old_info.get("backup_id")
-            old_content = old_info.get("content") or ""
 
             if old_md5 != new_md5:
                 changed_count += 1
-                changed_devices.append(
+                changed_in_batch.append(
                     {
                         "device_id": device_id,
                         "device_name": display_name,
                         "old_md5": old_md5,
                         "new_md5": new_md5,
                         "config": config,
-                        "old_content": old_content,
+                        "old_backup_id": old_backup_id,
+                    }
+                )
+                changed_devices_summary.append(
+                    {
+                        "device_id": device_id,
+                        "device_name": display_name,
+                        "old_md5": old_md5,
+                        "new_md5": new_md5,
                         "old_backup_id": old_backup_id,
                     }
                 )
 
-    # 批量保存变更设备的备份（分批提交，每 10 个设备提交一次）
-    BATCH_COMMIT_SIZE = settings.BACKUP_BATCH_SIZE
-    if changed_devices:
-        async with AsyncSessionLocal() as db:
-            for idx, device_info in enumerate(changed_devices, start=1):
-                device_id = device_info["device_id"]
-                name = device_info["device_name"]
-                config = device_info["config"]
-                old_content = device_info["old_content"]
-                old_backup_id = device_info["old_backup_id"]
-                new_md5 = device_info["new_md5"]
-                old_md5 = device_info["old_md5"]
-
-                content_size = len(config.encode("utf-8"))
-
-                # 处理大配置：存储到 MinIO（使用熔断器保护）
-                content = None
-                content_path = None
-                if content_size < settings.BACKUP_CONTENT_SIZE_THRESHOLD_BYTES:
-                    content = config
-                else:
-                    try:
-                        from app.core.minio_client import put_text_safe
-
-                        object_name = f"backups/{device_id}/{datetime.now(UTC).strftime('%Y%m%d_%H%M%S')}.txt"
-                        success = await put_text_safe(object_name, config)
-                        if success:
-                            content_path = object_name
-                        else:
-                            # 熔断器打开或写入失败，降级存 DB
-                            content = config
-                    except Exception as e:
-                        # MinIO 不可用时降级存 DB
-                        content = config
-                        celery_task_logger.warning("大配置存 MinIO 失败，降级存 DB", device_id=device_id, error=str(e))
-
-                backup_data = BackupCreate(
-                    device_id=UUID(device_id),
-                    backup_type=BackupType.INCREMENTAL,
-                    content=content,
-                    content_path=content_path,
-                    content_size=content_size,
-                    md5_hash=new_md5,
-                    status=BackupStatus.SUCCESS,
-                )
-                backup = Backup(**backup_data.model_dump())
-                db.add(backup)
-                await db.flush()
-                await db.refresh(backup)
-                backup_triggered += 1
-
-                # 触发配置变更告警（写入 DB + 可选 Webhook）
-                try:
-                    diff_text = ""
-                    if old_content:
-                        diff_text = _compute_unified_diff(old_content, config, context_lines=3)
-
-                    alert_service = AlertService(db, alert_crud)
-                    notification_service = NotificationService()
-                    alert = await alert_service.create_alert(
-                        AlertCreate(
-                            alert_type=AlertType.CONFIG_CHANGE,
-                            severity=AlertSeverity.MEDIUM,
-                            title=f"设备配置变更: {name}",
-                            message=f"检测到设备配置变更: {name}",
-                            details={
-                                "device_id": str(device_id),
-                                "device_name": name,
-                                "old_backup_id": str(old_backup_id) if old_backup_id else None,
-                                "new_backup_id": str(backup.id),
-                                "old_md5": old_md5,
-                                "new_md5": new_md5,
-                                "diff": diff_text[:8000] if diff_text else "",
-                            },
-                            source="diff",
-                            related_device_id=UUID(device_id),
-                        )
-                    )
-                    await notification_service.send_webhook(alert)
-                except Exception as e:
-                    celery_task_logger.warning("配置变更告警触发失败", error=str(e))
-
-                # 分批提交事务，减少单个事务的持续时间
-                if idx % BATCH_COMMIT_SIZE == 0:
-                    await db.commit()
-                    celery_task_logger.debug("分批提交事务", processed=idx, total=len(changed_devices))
-
-            # 提交剩余的事务
-            await db.commit()
+        if changed_in_batch:
+            backup_triggered += await _persist_incremental_changes(
+                changed_in_batch,
+                celery_task_id=celery_task_id,
+            )
 
     return {
         "total_checked": total_checked,
         "changed_count": changed_count,
         "backup_triggered": backup_triggered,
-        "changed_devices": changed_devices[:10],  # 只返回前 10 个变更设备
+        "changed_devices": changed_devices_summary[:10],  # 只返回前 10 个变更设备
     }
 
 
@@ -1254,8 +1362,11 @@ def async_backup_devices(
                 summary,
                 backup_type=backup_type,
                 operator_id=operator_id,
+                celery_task_id=celery_task_id,
             )
         )
+
+        sanitized_summary = _sanitize_summary_for_result(summary)
 
         self.update_state(
             state="PROGRESS",
@@ -1274,7 +1385,7 @@ def async_backup_devices(
             failed=summary["failed"],
         )
 
-        return summary
+        return sanitized_summary
 
     except Exception as e:
         celery_details_logger.error(
@@ -1284,5 +1395,3 @@ def async_backup_devices(
             exc_info=True,
         )
         raise
-
-

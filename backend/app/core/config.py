@@ -113,6 +113,9 @@ class Settings(BaseSettings):
     # Celery 配置
     CELERY_BROKER_DB: int = 1  # Celery Broker 使用 Redis DB 1
     CELERY_RESULT_DB: int = 2  # Celery 结果存储使用 Redis DB 2
+    CELERY_RESULT_EXPIRES_SECONDS: int = 3600  # Celery 结果保留时间（秒）
+    CELERY_RESULT_EXTENDED: bool = False  # 是否保存扩展结果元信息
+    CELERY_TASK_IDEMPOTENCY_TTL_SECONDS: int = 7200  # 任务幂等 Key 过期时间（秒）
 
     # Flower 监控配置
     FLOWER_PORT: int = 5555  # Flower Web UI 端口
