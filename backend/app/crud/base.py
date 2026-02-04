@@ -7,7 +7,7 @@
 """
 
 from collections.abc import Iterable, Sequence
-from typing import Any, TypeAlias, TypeVar, cast
+from typing import Any, TypeVar, cast
 from uuid import UUID
 
 from pydantic import BaseModel
@@ -23,7 +23,7 @@ CreateSchemaType = TypeVar("CreateSchemaType", bound=BaseModel)
 UpdateSchemaType = TypeVar("UpdateSchemaType", bound=BaseModel)
 
 # 类型别名，减少重复注解
-ConditionList: TypeAlias = list[ColumnElement[bool]]
+type ConditionList = list[ColumnElement[bool]]
 
 
 class CRUDBase[ModelType: Base, CreateSchemaType: BaseModel, UpdateSchemaType: BaseModel]:
@@ -218,12 +218,19 @@ class CRUDBase[ModelType: Base, CreateSchemaType: BaseModel, UpdateSchemaType: B
             (field_name, operator): 字段名和操作符
         """
         operators = (
-            "__gte", "__lte", "__gt", "__lt",
-            "__in", "__not_in",
-            "__is", "__is_not",
-            "__like", "__ilike",
+            "__gte",
+            "__lte",
+            "__gt",
+            "__lt",
+            "__in",
+            "__not_in",
+            "__is",
+            "__is_not",
+            "__like",
+            "__ilike",
             "__contains",
-            "__ne", "__eq",
+            "__ne",
+            "__eq",
         )
         for op in operators:
             if key.endswith(op):
@@ -333,8 +340,12 @@ class CRUDBase[ModelType: Base, CreateSchemaType: BaseModel, UpdateSchemaType: B
         Returns:
             记录是否存在
         """
-        query = select(func.count()).select_from(self.model).where(
-            self.model.id == id  # pyright: ignore[reportAttributeAccessIssue]
+        query = (
+            select(func.count())
+            .select_from(self.model)
+            .where(
+                self.model.id == id  # pyright: ignore[reportAttributeAccessIssue]
+            )
         )
 
         if self._supports_soft_delete:

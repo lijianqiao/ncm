@@ -23,6 +23,7 @@
 ## 快速开始
 
 ```bash
+uv venv --python 3.14
 # 1. 安装依赖
 uv sync
 
