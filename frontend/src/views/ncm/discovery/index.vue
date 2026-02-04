@@ -41,7 +41,6 @@ import {
   exportDiscoveryRecords,
   type DiscoveryRecord,
   type DiscoverySearchParams,
-  type DiscoveryStatus,
   type ScanTaskStatus,
   type OfflineDevice,
 } from '@/api/discovery'
@@ -859,24 +858,18 @@ const handleCompareCMDB = () => {
             <tbody>
               <tr v-for="item in shadowAssets" :key="item.id">
                 <td>
-                  <span
-                    v-if="item.ip_address"
-                    class="ip-cell"
-                    title="点击复制"
-                    @click="copyToClipboard(item.ip_address, 'IP 已复制')"
-                  >
+                  <span v-if="item.ip_address" class="ip-cell" title="点击复制"
+                    @click="copyToClipboard(item.ip_address, 'IP 已复制')">
                     {{ item.ip_address }}
-                    <n-icon :size="12" style="opacity: 0.5"><CopyOutline /></n-icon>
+                    <n-icon :size="12" style="opacity: 0.5">
+                      <CopyOutline />
+                    </n-icon>
                   </span>
                   <span v-else class="text-gray">-</span>
                 </td>
                 <td>
-                  <code
-                    v-if="item.mac_address"
-                    class="mac-cell"
-                    title="点击复制"
-                    @click="copyToClipboard(item.mac_address, 'MAC 已复制')"
-                  >
+                  <code v-if="item.mac_address" class="mac-cell" title="点击复制"
+                    @click="copyToClipboard(item.mac_address, 'MAC 已复制')">
                     {{ item.mac_address }}
                     <n-icon :size="12" style="opacity: 0.5"><CopyOutline /></n-icon>
                   </code>
@@ -919,14 +912,12 @@ const handleCompareCMDB = () => {
               <tr v-for="item in offlineDevices" :key="item.device_id">
                 <td>{{ item.device_name }}</td>
                 <td>
-                  <span
-                    v-if="item.ip_address"
-                    class="ip-cell"
-                    title="点击复制"
-                    @click="copyToClipboard(item.ip_address, 'IP 已复制')"
-                  >
+                  <span v-if="item.ip_address" class="ip-cell" title="点击复制"
+                    @click="copyToClipboard(item.ip_address, 'IP 已复制')">
                     {{ item.ip_address }}
-                    <n-icon :size="12" style="opacity: 0.5"><CopyOutline /></n-icon>
+                    <n-icon :size="12" style="opacity: 0.5">
+                      <CopyOutline />
+                    </n-icon>
                   </span>
                   <span v-else class="text-gray">-</span>
                 </td>

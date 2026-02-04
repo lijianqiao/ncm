@@ -1,11 +1,10 @@
 <script setup lang="ts">
-import { h, ref } from 'vue'
+import { ref } from 'vue'
 import {
   NDrawer,
   NDrawerContent,
   NDescriptions,
   NDescriptionsItem,
-  NTag,
   type DataTableColumns,
   type DropdownOption,
 } from 'naive-ui'
@@ -14,7 +13,6 @@ import { formatDateTime } from '@/utils/date'
 import {
   renderIpAddress,
   renderBooleanStatus,
-  renderUserAgent,
   renderUuid,
 } from '@/composables/useStyledRenders'
 import ProTable from '@/components/common/ProTable.vue'
