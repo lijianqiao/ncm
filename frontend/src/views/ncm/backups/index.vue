@@ -194,10 +194,10 @@ const columns: DataTableColumns<Backup> = [
     render: (row) =>
       row.device?.device_group
         ? renderEnumTag(
-            row.device.device_group as DeviceGroup,
-            DeviceGroupLabels,
-            DeviceGroupColors,
-          )
+          row.device.device_group as DeviceGroup,
+          DeviceGroupLabels,
+          DeviceGroupColors,
+        )
         : '-',
   },
   {
@@ -599,16 +599,17 @@ const submitManualBackup = async () => {
 // ==================== OTP 输入处理 ====================
 
 interface OTPRequiredDetails {
-  type?: string
+  type?: 'otp_required' | 'otp_timeout' | string
   message?: string
-  dept_id: string
-  device_group: string
-  failed_devices?: string[]
-  pending_device_ids?: string[]
-  task_id?: string
-  otp_wait_status?: string
-  otp_wait_timeout?: number
-  otp_cache_ttl?: number
+  otp_credential_id?: string | null
+  otp_credential_username?: string | null
+  otp_credential_device_group?: string | null
+  otp_failed_device_ids?: string[]
+  otp_wait_status?: 'waiting' | 'timeout' | 'ready' | string | null
+  otp_wait_timeout?: number | null
+  otp_cache_ttl?: number | null
+  pending_device_ids?: string[] | null
+  task_id?: string | null
 }
 
 const resolveOtpPayload = (error: unknown): OTPRequiredDetails | null => {
@@ -627,16 +628,17 @@ const resolveOtpPayload = (error: unknown): OTPRequiredDetails | null => {
     (dataPayload as { otp_notice?: OTPRequiredDetails } | undefined)?.otp_notice ||
     (dataPayload as OTPRequiredDetails | undefined) ||
     (data?.details as OTPRequiredDetails | undefined)
-  if (!candidate?.dept_id || !candidate?.device_group) return null
+  if (!candidate?.otp_credential_id) return null
   return {
-    dept_id: candidate.dept_id,
-    device_group: candidate.device_group,
-    failed_devices: candidate.failed_devices || [],
-    pending_device_ids: candidate.pending_device_ids,
-    task_id: candidate.task_id,
+    otp_credential_id: candidate.otp_credential_id,
+    otp_credential_username: candidate.otp_credential_username,
+    otp_credential_device_group: candidate.otp_credential_device_group,
+    otp_failed_device_ids: candidate.otp_failed_device_ids || [],
     otp_wait_status: candidate.otp_wait_status,
     otp_wait_timeout: candidate.otp_wait_timeout,
     otp_cache_ttl: candidate.otp_cache_ttl,
+    pending_device_ids: candidate.pending_device_ids,
+    task_id: candidate.task_id,
     message: candidate.message || data?.message,
   }
 }
@@ -678,10 +680,12 @@ const submitOTP = async (otpCode: string) => {
 
     // 重试备份
     if (pendingBatchBackup.value) {
-      // 批量备份：仍通过专用缓存接口写入 (按 dept/group)
+      if (!otpRequiredInfo.value.otp_credential_id) {
+        $alert.error('OTP 凭据ID缺失，无法恢复任务')
+        return
+      }
       const cacheRequest: OTPCacheRequest = {
-        dept_id: otpRequiredInfo.value.dept_id,
-        device_group: otpRequiredInfo.value.device_group as OTPCacheRequest['device_group'],
+        credential_id: otpRequiredInfo.value.otp_credential_id,
         otp_code: otpCode,
       }
       await cacheOTP(cacheRequest)
@@ -690,10 +694,7 @@ const submitOTP = async (otpCode: string) => {
         $alert.error('任务ID丢失，无法恢复')
         return
       }
-      await resumeTaskGroup(resumeTaskId, {
-        dept_id: otpRequiredInfo.value.dept_id,
-        group: otpRequiredInfo.value.device_group,
-      })
+      await resumeTaskGroup(resumeTaskId, { credential_id: otpRequiredInfo.value.otp_credential_id })
       $alert.success('OTP 已缓存，已发起恢复')
       startPollingTaskStatus(resumeTaskId)
     } else if (pendingBackupDeviceId.value) {
@@ -719,7 +720,7 @@ const submitOTP = async (otpCode: string) => {
 }
 
 const buildOtpKey = (payload: OTPRequiredDetails) =>
-  `${payload.dept_id}|${payload.device_group}|${payload.task_id || ''}`
+  `${payload.otp_credential_id || ''}|${payload.otp_credential_device_group || ''}|${payload.task_id || ''}`
 
 const applyNextOtp = () => {
   const next = otpQueue.value.shift()
@@ -802,21 +803,21 @@ const {
         tableRef.value?.reload()
       }, 1000)
     } else if (status.status === 'running') {
-      // 检查运行中是否返回了 OTP 要求（兼容旧格式和新格式）
-      // 假设新格式下，getBackupTaskStatus 正常返回 200，但 data 中包含 otp_notice
+      // 检查运行中是否返回了 OTP 要求
       const otpNotice = status.otp_notice
-      if (otpNotice) {
+      if (otpNotice?.otp_credential_id) {
         stopPollingTaskStatus()
         $alert.warning(otpNotice.message || '部分设备需要 OTP 验证码，请输入以继续')
         const payload: OTPRequiredDetails = {
-          dept_id: otpNotice.dept_id,
-          device_group: otpNotice.device_group,
-          failed_devices: otpNotice.failed_devices?.map(d => d.name) || [],
-          pending_device_ids: otpNotice.pending_device_ids,
-          task_id: otpNotice.task_id,
+          otp_credential_id: otpNotice.otp_credential_id,
+          otp_credential_username: otpNotice.otp_credential_username,
+          otp_credential_device_group: otpNotice.otp_credential_device_group,
+          otp_failed_device_ids: otpNotice.otp_failed_device_ids || [],
           otp_wait_status: otpNotice.otp_wait_status,
           otp_wait_timeout: otpNotice.otp_wait_timeout,
           otp_cache_ttl: otpNotice.otp_cache_ttl,
+          pending_device_ids: otpNotice.pending_device_ids,
+          task_id: otpNotice.task_id,
         }
         enqueueOtp(payload)
         if (otpNotice.task_id) {
@@ -1110,20 +1111,23 @@ watch(autoRefresh, () => {
     </n-modal>
 
     <!-- OTP 输入 Modal（通用组件） -->
-    <OtpModal :show="showOTPModal" :loading="otpLoading" :idle-timeout-ms="otpIdleTimeoutMs"
-      :queue-hint="otpQueueHint"
-      title="需要 OTP 验证码" alert-title="设备需要 OTP 认证"
-      alert-text="请输入当前有效的 OTP 验证码以继续操作。" :info-items="otpRequiredInfo
+    <OtpModal :show="showOTPModal" :loading="otpLoading" :idle-timeout-ms="otpIdleTimeoutMs" :queue-hint="otpQueueHint"
+      title="需要 OTP 验证码" alert-title="设备需要 OTP 认证" alert-text="请输入当前有效的 OTP 验证码以继续操作。" :info-items="otpRequiredInfo
         ? [
-          {
-            label: '设备分组',
-            value:
-              deviceGroupLabels[otpRequiredInfo.device_group] || otpRequiredInfo.device_group,
-          },
+          ...(otpRequiredInfo.otp_credential_username
+            ? [{ label: '凭据账号', value: otpRequiredInfo.otp_credential_username }]
+            : otpRequiredInfo.otp_credential_id
+              ? [{ label: '凭据ID', value: otpRequiredInfo.otp_credential_id }]
+              : []),
+          ...(otpRequiredInfo.otp_credential_device_group
+            ? [{
+              label: '设备分组',
+              value: (deviceGroupLabels as Record<string, string>)[otpRequiredInfo.otp_credential_device_group] || otpRequiredInfo.otp_credential_device_group,
+            }]
+            : []),
         ]
         : []
-        " confirm-text="确认" @confirm="submitOTP" @timeout="handleOtpTimeout"
-      @update:show="handleOtpModalUpdate" />
+        " confirm-text="确认" @confirm="submitOTP" @timeout="handleOtpTimeout" @update:show="handleOtpModalUpdate" />
   </div>
 </template>
 

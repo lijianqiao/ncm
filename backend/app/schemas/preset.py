@@ -44,8 +44,13 @@ class PresetExecuteResult(BaseModel):
     parse_error: str | None = Field(default=None, description="解析错误信息（如有）")
     error_message: str | None = Field(default=None, description="执行错误信息（如有）")
 
-    # OTP 断点续传（otp_manual 模式）
+    # OTP 断点续传（otp_manual 模式，字段命名与 OtpMeta 保持一致）
     otp_required: bool = Field(default=False, description="是否需要输入 OTP")
-    otp_required_groups: list[dict[str, str]] = Field(default_factory=list, description="需要 OTP 的设备分组")
-    expires_in: int | None = Field(default=None, description="OTP 缓存剩余有效期（秒）")
+    otp_credential_id: str | None = Field(default=None, description="需要 OTP 的凭据 ID")
+    otp_credential_username: str | None = Field(default=None, description="需要 OTP 的凭据账号")
+    otp_credential_device_group: str | None = Field(default=None, description="需要 OTP 的凭据分组")
+    otp_failed_device_ids: list[str] = Field(default_factory=list, description="OTP 验证失败的设备 ID 列表")
+    otp_wait_status: str | None = Field(default=None, description="等待状态 waiting/timeout/ready")
+    otp_wait_timeout: int | None = Field(default=None, description="等待 OTP 超时时间（秒）")
+    otp_cache_ttl: int | None = Field(default=None, description="OTP 缓存有效期（秒）")
     next_action: str | None = Field(default=None, description="建议的下一步动作")

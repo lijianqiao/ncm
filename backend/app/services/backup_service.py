@@ -8,7 +8,6 @@
 
 from datetime import UTC, datetime, timedelta
 from enum import Enum
-from re import S
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -16,14 +15,19 @@ from scrapli.exceptions import ScrapliAuthenticationFailed
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.celery.tasks.task_grouping import build_backup_batches
 from app.core.config import settings
 from app.core.decorator import transactional
 from app.core.enums import AuthType, BackupStatus, BackupType, DeviceStatus
 from app.core.exceptions import BadRequestException, NotFoundException, OTPRequiredException
 from app.core.logger import logger
 from app.core.minio_client import delete_object, get_text, put_text
-from app.core.otp import otp_coordinator
-from app.celery.tasks.task_grouping import build_backup_batches
+from app.core.otp import (
+    OtpMetaBuilder,
+    build_otp_notice_from_info,
+    otp_coordinator,
+    record_pause_and_build_notice,
+)
 from app.core.otp_service import otp_service
 from app.crud.crud_backup import CRUDBackup
 from app.crud.crud_credential import CRUDCredential
@@ -43,7 +47,6 @@ from app.schemas.backup import (
 )
 from app.schemas.credential import DeviceCredential
 from app.services.base import DeviceCredentialMixin
-from app.core.otp_helpers import build_otp_notice_from_info, build_otp_required_info, record_pause_and_build_notice
 from app.utils.validators import compute_text_md5, should_skip_backup_save_due_to_unchanged_md5
 
 
@@ -408,11 +411,9 @@ class BackupService(DeviceCredentialMixin):
         # 2. 如为手动 OTP 且传入 otp_code，则先缓存
         auth_type = AuthType(device.auth_type)
         if otp_code and auth_type == AuthType.OTP_MANUAL:
-            if not device.dept_id:
-                raise BadRequestException(message=f"设备 {device.name} 缺少部门关联")
-            if not device.device_group:
-                raise BadRequestException(message=f"设备 {device.name} 缺少设备分组")
-            ttl = await otp_service.cache_otp(device.dept_id, device.device_group, otp_code)
+            if not device.credential_id:
+                raise BadRequestException(message=f"设备 {device.name} 缺少凭据ID")
+            ttl = await otp_service.cache_otp(device.credential_id, otp_code)
             if ttl == 0:
                 raise BadRequestException(message="OTP 缓存失败：Redis 服务未连接，请联系管理员")
 
@@ -461,8 +462,18 @@ class BackupService(DeviceCredentialMixin):
         except ScrapliAuthenticationFailed as e:
             # 认证失败：调用 OTP 处理逻辑（清除缓存并抛出 OTPRequiredException）
             # 注意：这将中断当前请求并返回 428
+            credential_username = None
+            credential_device_group = None
+            if device.credential_id:
+                credential_row = await self.credential_crud.get(self.db, device.credential_id)
+                if credential_row:
+                    credential_username = credential_row.username
+                    credential_device_group = credential_row.device_group
             host_data = {
                 "auth_type": "otp_manual" if AuthType(device.auth_type) == AuthType.OTP_MANUAL else "static",
+                "credential_id": str(device.credential_id) if device.credential_id else None,
+                "credential_username": credential_username,
+                "credential_device_group": credential_device_group,
                 "dept_id": str(device.dept_id) if device.dept_id else None,
                 "device_group": device.device_group,
                 "device_id": str(device.id),
@@ -541,8 +552,18 @@ class BackupService(DeviceCredentialMixin):
 
         except ScrapliAuthenticationFailed as e:
             # 认证失败：调用 OTP 处理逻辑（使用异步版本）
+            credential_username = None
+            credential_device_group = None
+            if device.credential_id:
+                credential_row = await self.credential_crud.get(self.db, device.credential_id)
+                if credential_row:
+                    credential_username = credential_row.username
+                    credential_device_group = credential_row.device_group
             host_data = {
                 "auth_type": "otp_manual" if AuthType(device.auth_type) == AuthType.OTP_MANUAL else "static",
+                "credential_id": str(device.credential_id) if device.credential_id else None,
+                "credential_username": credential_username,
+                "credential_device_group": credential_device_group,
                 "dept_id": str(device.dept_id) if device.dept_id else None,
                 "device_group": device.device_group,
                 "device_id": str(device.id),
@@ -805,66 +826,97 @@ class BackupService(DeviceCredentialMixin):
             )
 
         # 2. 批量获取设备
-        devices = await self.device_crud.get_by_ids(self.db, device_ids_to_backup, options=self.device_crud._DEVICE_OPTIONS)
+        devices = await self.device_crud.get_by_ids(
+            self.db, device_ids_to_backup, options=self.device_crud._DEVICE_OPTIONS
+        )
         if not devices:
             raise BadRequestException(message="没有找到有效设备")
 
-        # 3. 按认证类型/部门/分组拆分并按 100 台分批
+        # 3. 按凭据分组并按 50 台分批
         selected_devices = list(devices)
-        batches = build_backup_batches(selected_devices, chunk_size=100)
+        batches = build_backup_batches(selected_devices, chunk_size=50)
         if not batches:
             raise BadRequestException(message="没有可备份的设备")
 
         batch_id = request.resume_task_id or str(uuid4())
         children: list[dict[str, Any]] = []
-        pending_notice: tuple[UUID, str, list[str], str] | None = None
-        waiting_notice: tuple[UUID, str, list[str], str] | None = None
-        waiting_groups: dict[tuple[str, str], dict[str, Any]] = {}
+        waiting_groups: dict[str, dict[str, Any]] = {}
 
         from app.celery.tasks.backup import async_backup_devices
 
+        # ===== 阶段 1: 收集所有凭证并预检 OTP 状态 =====
+        credential_otp_cache: dict[str, str] = {}  # credential_id -> otp_code
+        credential_info_cache: dict[str, dict[str, Any]] = {}  # credential_id -> credential info
+
+        # 收集所有涉及的 credential_id
+        all_credential_ids: set[str] = set()
         for batch in batches:
-            dept_id = batch.get("dept_id")
-            device_group = batch.get("device_group")
+            credential_id = batch.get("credential_id")
+            auth_bucket = batch.get("auth_bucket")
+            if credential_id and auth_bucket in (AuthType.OTP_MANUAL.value, AuthType.OTP_SEED.value):
+                all_credential_ids.add(str(credential_id))
+
+        # 预检所有凭证的 OTP 状态
+        for cred_id_str in all_credential_ids:
+            credential_uuid = UUID(cred_id_str)
+            otp_code = await otp_coordinator.get_cached_otp(credential_uuid)
+            if otp_code:
+                credential_otp_cache[cred_id_str] = otp_code
+                # 延长 OTP 缓存 TTL，确保所有批次都能使用
+                await otp_coordinator.extend_otp_ttl(credential_uuid, additional_seconds=300)
+
+        # ===== 阶段 2: 遍历批次，提交任务或记录等待 =====
+        for batch in batches:
+            credential_id = batch.get("credential_id")
+            auth_bucket = batch.get("auth_bucket")
             batch_devices: list[Device] = batch.get("devices") or []
             if not batch_devices:
                 continue
 
-            # OTP 手动设备预检
-            otp_device_ids = [str(d.id) for d in batch_devices if AuthType(d.auth_type) == AuthType.OTP_MANUAL]
             batch_device_ids = [str(d.id) for d in batch_devices]
-            if otp_device_ids:
-                if not dept_id or not device_group:
-                    raise BadRequestException(message="设备缺少部门或设备分组")
-                otp_check = await otp_coordinator.get_or_require_otp(
-                    dept_id,
-                    str(device_group),
-                    task_id=batch_id,
-                    pending_device_ids=batch_device_ids,
-                )
-                if otp_check["status"] != "ready":
+
+            # OTP 手动设备预检
+            if auth_bucket == AuthType.OTP_MANUAL.value:
+                if not credential_id:
+                    raise BadRequestException(message="设备缺少凭据ID")
+                cred_id_str = str(credential_id)
+
+                # 检查是否有预获取的 OTP
+                if cred_id_str not in credential_otp_cache:
+                    # 没有 OTP 缓存，记录到等待列表
+                    credential_uuid = UUID(cred_id_str)
+                    otp_check = await otp_coordinator.get_or_require_otp(
+                        credential_uuid,
+                        task_id=batch_id,
+                        pending_device_ids=batch_device_ids,
+                    )
                     await otp_coordinator.record_pause(
                         batch_id,
-                        dept_id,
-                        str(device_group),
+                        credential_uuid,
                         batch_device_ids,
                         reason="otp_required",
                     )
-                    key = (str(dept_id), str(device_group))
-                    entry = waiting_groups.get(key)
+                    entry = waiting_groups.get(cred_id_str)
                     if not entry:
+                        # 获取凭证信息
+                        if cred_id_str not in credential_info_cache:
+                            credential_row = await self.credential_crud.get(self.db, credential_uuid)
+                            if credential_row:
+                                credential_info_cache[cred_id_str] = {
+                                    "username": credential_row.username,
+                                    "device_group": credential_row.device_group,
+                                }
+                        cred_info = credential_info_cache.get(cred_id_str, {})
                         entry = {
-                            "dept_id": str(dept_id),
-                            "device_group": str(device_group),
+                            "credential_id": cred_id_str,
                             "pending_device_ids": set(),
                             "otp_wait_status": otp_check["status"],
+                            "credential_username": cred_info.get("username"),
+                            "credential_device_group": cred_info.get("device_group"),
+                            "should_notify": otp_check["should_notify"],
                         }
-                        waiting_groups[key] = entry
+                        waiting_groups[cred_id_str] = entry
                     entry["pending_device_ids"].update(batch_device_ids)
-                    if waiting_notice is None:
-                        waiting_notice = (dept_id, str(device_group), batch_device_ids, otp_check["status"])
-                    if otp_check["should_notify"] and pending_notice is None:
-                        pending_notice = waiting_notice
                     continue
 
             hosts_data: list[dict[str, Any]] = []
@@ -872,33 +924,43 @@ class BackupService(DeviceCredentialMixin):
                 try:
                     auth_type = AuthType(device.auth_type)
                     if auth_type == AuthType.OTP_MANUAL:
-                        if not device.dept_id:
-                            raise BadRequestException(message=f"设备 {device.name} 缺少部门关联")
-                        credential_row = await self.credential_crud.get_by_dept_and_group(
-                            self.db,
-                            device.dept_id,
-                            self._normalize_device_group_value(device.device_group) or "",
-                        )
-                        if not credential_row:
-                            raise BadRequestException(message=f"设备 {device.name} 的凭据未配置")
-                        username = credential_row.username
-                        password = ""
+                        if not device.credential_id:
+                            raise BadRequestException(message=f"设备 {device.name} 缺少凭据ID")
+                        cred_id_str = str(device.credential_id)
+                        # 使用缓存的凭证信息或重新查询
+                        if cred_id_str in credential_info_cache:
+                            cred_info = credential_info_cache[cred_id_str]
+                            username = cred_info.get("username", "")
+                            device_group = cred_info.get("device_group")
+                        else:
+                            credential_row = await self.credential_crud.get(self.db, device.credential_id)
+                            if not credential_row:
+                                raise BadRequestException(message=f"设备 {device.name} 的凭据未配置")
+                            username = credential_row.username
+                            device_group = credential_row.device_group
+                            credential_info_cache[cred_id_str] = {
+                                "username": username,
+                                "device_group": device_group,
+                            }
+                        password = ""  # OTP 密码将在任务执行时通过预获取或缓存获取
+                        # 注入预获取的 OTP 密码
+                        prefetched_otp = credential_otp_cache.get(cred_id_str)
                         extra_data = {
                             "auth_type": "otp_manual",
+                            "credential_id": cred_id_str,
+                            "credential_username": username,
+                            "credential_device_group": device_group,
                             "dept_id": str(device.dept_id),
                             "device_group": str(device.device_group),
                             "device_id": str(device.id),
                             "device_name": device.name,
                             "vendor": device.vendor,
+                            "otp_password_prefetched": prefetched_otp,
                         }
                     elif auth_type == AuthType.OTP_SEED:
-                        if not device.dept_id:
-                            raise BadRequestException(message=f"设备 {device.name} 缺少部门关联")
-                        credential_row = await self.credential_crud.get_by_dept_and_group(
-                            self.db,
-                            device.dept_id,
-                            self._normalize_device_group_value(device.device_group) or "",
-                        )
+                        if not device.credential_id:
+                            raise BadRequestException(message=f"设备 {device.name} 缺少凭据ID")
+                        credential_row = await self.credential_crud.get(self.db, device.credential_id)
                         if not credential_row or not credential_row.otp_seed_encrypted:
                             raise BadRequestException(message=f"设备 {device.name} 的凭据未配置 OTP 种子")
                         username = credential_row.username
@@ -906,6 +968,9 @@ class BackupService(DeviceCredentialMixin):
                         extra_data = {
                             "auth_type": "otp_seed",
                             "otp_seed_encrypted": credential_row.otp_seed_encrypted,
+                            "credential_id": str(device.credential_id),
+                            "credential_username": credential_row.username,
+                            "credential_device_group": credential_row.device_group,
                             "dept_id": str(device.dept_id),
                             "device_group": str(device.device_group),
                             "device_id": str(device.id),
@@ -918,6 +983,7 @@ class BackupService(DeviceCredentialMixin):
                         password = credential.password
                         extra_data = {
                             "auth_type": "static",
+                            "credential_id": None,
                             "device_id": str(device.id),
                             "device_name": device.name,
                             "vendor": device.vendor,
@@ -960,23 +1026,25 @@ class BackupService(DeviceCredentialMixin):
             children.append(
                 {
                     "task_id": task.id,
-                    "dept_id": str(dept_id) if dept_id else None,
-                    "device_group": str(device_group) if device_group else None,
+                    "credential_id": str(credential_id) if credential_id else None,
                     "device_ids": [str(d.id) for d in batch_devices],
                     "batch_index": batch.get("batch_index"),
                 }
             )
 
+        # 构建等待分组的 payload（包含凭证信息）
         waiting_groups_payload = [
             {
-                "dept_id": entry["dept_id"],
-                "device_group": entry["device_group"],
+                "credential_id": entry.get("credential_id"),
                 "pending_device_ids": sorted(entry["pending_device_ids"]),
                 "otp_wait_status": entry.get("otp_wait_status"),
+                "otp_credential_username": entry.get("credential_username"),
+                "otp_credential_device_group": entry.get("credential_device_group"),
             }
             for entry in waiting_groups.values()
         ]
 
+        # 注册批次信息
         if request.resume_task_id:
             appended = await otp_coordinator.registry.append_children(batch_id, children)
             if not appended:
@@ -1004,24 +1072,39 @@ class BackupService(DeviceCredentialMixin):
                 },
             )
 
-        notice = pending_notice
-        if not notice and not children and waiting_notice:
-            notice = waiting_notice
-        if notice:
-            dept_id, device_group, pending_ids, wait_status = notice
-            message = "用户未提供 OTP 验证码，连接失败" if wait_status == "timeout" else "需要输入 OTP 验证码"
-            raise OTPRequiredException(
-                dept_id=dept_id,
-                device_group=device_group,
-                failed_devices=pending_ids,
-                message=message,
-                otp_wait_status=wait_status,
-                task_id=batch_id,
-                pending_device_ids=pending_ids,
-            )
-
-        if not children:
+        # ===== 阶段 3: 处理需要 OTP 的凭证 =====
+        # 只有在没有任何任务被提交时才抛出异常
+        if waiting_groups and not children:
+            # 找到第一个需要通知的凭证（should_notify=True）或第一个等待的凭证
+            first_notify_entry = None
+            first_entry = None
+            for entry in waiting_groups.values():
+                if first_entry is None:
+                    first_entry = entry
+                if entry.get("should_notify"):
+                    first_notify_entry = entry
+                    break
+            notice_entry = first_notify_entry or first_entry
+            if notice_entry:
+                wait_status = notice_entry.get("otp_wait_status")
+                message = "用户未提供 OTP 验证码，连接失败" if wait_status == "timeout" else "需要输入 OTP 验证码"
+                all_pending_ids = []
+                for entry in waiting_groups.values():
+                    all_pending_ids.extend(entry["pending_device_ids"])
+                raise OTPRequiredException(
+                    credential_id=notice_entry.get("credential_id"),
+                    failed_devices=list(set(all_pending_ids)),
+                    message=message,
+                    otp_wait_status=wait_status,
+                    task_id=batch_id,
+                    pending_device_ids=list(set(all_pending_ids)),
+                    credential_username=notice_entry.get("credential_username"),
+                    credential_device_group=notice_entry.get("credential_device_group"),
+                )
             raise BadRequestException(message="没有可备份的设备（全部等待 OTP）")
+
+        if not children and not waiting_groups:
+            raise BadRequestException(message="没有可备份的设备")
 
         logger.info(f"批量备份任务已提交: task_id={batch_id}, 子任务数={len(children)}")
         return BackupBatchResult(
@@ -1152,9 +1235,13 @@ class BackupService(DeviceCredentialMixin):
                 pending_ids = result.result.failed_devices or None
                 if isinstance(result.result.details, dict) and result.result.details.get("pending_device_ids"):
                     pending_ids = result.result.details.get("pending_device_ids")
-                info = build_otp_required_info(
-                    dept_id=str(result.result.dept_id) if result.result.dept_id else None,
-                    device_group=result.result.device_group,
+                credential_id = None
+                if isinstance(result.result.details, dict):
+                    credential_id = result.result.details.get("credential_id")
+                info = OtpMetaBuilder.build_info(
+                    credential_id=credential_id or "unknown",
+                    credential_username=result.result.credential_username,
+                    credential_device_group=result.result.credential_device_group,
                     failed_device_ids=pending_ids,
                     wait_status=wait_status,
                 )
@@ -1179,13 +1266,14 @@ class BackupService(DeviceCredentialMixin):
         from app.celery.app import celery_app
 
         children: list[dict[str, Any]] = batch_info.get("children") or []
-        latest_children: dict[tuple[str, str, int], dict[str, Any]] = {}
+        latest_children: dict[tuple[str, int], dict[str, Any]] = {}
         for child in children:
+            credential_id = str(child.get("credential_id") or "")
             dept_id = str(child.get("dept_id") or "")
             device_group = str(child.get("device_group") or "")
             batch_index_raw = child.get("batch_index")
             batch_index = int(batch_index_raw) if batch_index_raw is not None else -1
-            key = (dept_id, device_group, batch_index)
+            key = (credential_id or f"{dept_id}:{device_group}", batch_index)
             latest_children[key] = child
         effective_children = list(latest_children.values())
         total_devices = int(batch_info.get("total_devices") or 0) or sum(
@@ -1218,17 +1306,17 @@ class BackupService(DeviceCredentialMixin):
             if result.status == "SUCCESS":
                 info = result.result or {}
                 if isinstance(info, dict) and info.get("otp_required"):
-                    dept_id = info.get("otp_dept_id") or child.get("dept_id")
-                    device_group = info.get("otp_device_group") or child.get("device_group")
+                    credential_id = info.get("otp_credential_id") or child.get("credential_id")
                     pending_ids = child.get("device_ids") or info.get("otp_failed_device_ids") or []
-                    if dept_id and device_group:
+                    if credential_id:
                         notice = await record_pause_and_build_notice(
                             task_id=task_id,
-                            dept_id=UUID(str(dept_id)),
-                            device_group=str(device_group),
+                            credential_id=UUID(str(credential_id)),
                             pending_device_ids=pending_ids,
                             wait_status=info.get("otp_wait_status"),
                             message=info.get("message"),
+                            credential_username=info.get("otp_credential_username"),
+                            credential_device_group=info.get("otp_credential_device_group"),
                             force=True,
                         )
                         if notice:
@@ -1252,25 +1340,28 @@ class BackupService(DeviceCredentialMixin):
                 from app.core.exceptions import OTPRequiredException
 
                 if isinstance(result.result, OTPRequiredException):
-                    dept_id = result.result.details.get("dept_id") if isinstance(result.result.details, dict) else None
-                    device_group = result.result.details.get("device_group") if isinstance(result.result.details, dict) else None
+                    exc = result.result
+                    credential_id = exc.credential_id_str or (
+                        exc.details.get("credential_id") if isinstance(exc.details, dict) else None
+                    )
                     pending_ids = []
                     if child.get("device_ids"):
                         pending_ids.extend(child.get("device_ids") or [])
-                    if isinstance(result.result.details, dict) and result.result.details.get("pending_device_ids"):
-                        pending_ids.extend(result.result.details.get("pending_device_ids") or [])
+                    if isinstance(exc.details, dict) and exc.details.get("pending_device_ids"):
+                        pending_ids.extend(exc.details.get("pending_device_ids") or [])
                     pending_ids = list({str(x) for x in pending_ids if x})
-                    if dept_id and device_group:
+                    if credential_id:
                         wait_status = None
-                        if isinstance(result.result.details, dict):
-                            wait_status = result.result.details.get("otp_wait_status")
+                        if isinstance(exc.details, dict):
+                            wait_status = exc.details.get("otp_wait_status")
                         notice = await record_pause_and_build_notice(
                             task_id=task_id,
-                            dept_id=UUID(str(dept_id)),
-                            device_group=str(device_group),
+                            credential_id=UUID(str(credential_id)),
                             pending_device_ids=pending_ids,
                             wait_status=wait_status,
-                            message=str(result.result) or None,
+                            message=str(exc) or None,
+                            credential_username=exc.credential_username,
+                            credential_device_group=exc.credential_device_group,
                             force=True,
                         )
                         if notice:
@@ -1282,19 +1373,20 @@ class BackupService(DeviceCredentialMixin):
 
         waiting_groups_payload = batch_info.get("waiting_groups") or []
         for group in waiting_groups_payload:
-            dept_id = group.get("dept_id")
-            device_group = group.get("device_group")
-            if not dept_id or not device_group:
+            credential_id = group.get("credential_id") or group.get("otp_credential_id")
+            if not credential_id:
                 continue
-            pause_state = await otp_coordinator.get_pause(task_id, UUID(str(dept_id)), str(device_group))
+            pause_state = await otp_coordinator.get_pause(task_id, UUID(str(credential_id)))
             if not pause_state:
                 continue
             pending_ids = pause_state.get("pending_device_ids") or group.get("pending_device_ids") or []
-            info = build_otp_required_info(
-                dept_id=dept_id,
-                device_group=device_group,
+            info = OtpMetaBuilder.build_info(
+                credential_id=credential_id,
                 failed_device_ids=pending_ids,
                 wait_status=group.get("otp_wait_status"),
+                credential_username=group.get("otp_credential_username") or group.get("credential_username"),
+                credential_device_group=group.get("otp_credential_device_group")
+                or group.get("credential_device_group"),
             )
             notice = await build_otp_notice_from_info(info, task_id=task_id, force=True)
             if notice:
@@ -1303,7 +1395,7 @@ class BackupService(DeviceCredentialMixin):
 
         status_response.completed = completed
         status_response.total = total_devices
-        status_response.percent = int((completed * 100 / total_devices)) if total_devices > 0 else 0
+        status_response.percent = int(completed * 100 / total_devices) if total_devices > 0 else 0
         status_response.success_count = success_count
         status_response.failed_count = failed_count
         status_response.failed_devices = failed_devices

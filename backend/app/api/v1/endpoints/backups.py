@@ -16,7 +16,7 @@ from starlette.background import BackgroundTask
 from app.api.deps import BackupServiceDep, CurrentUser, SessionDep, require_permissions
 from app.core.config import settings
 from app.core.enums import BackupStatus, BackupType
-from app.core.otp_notice import build_otp_notice_response
+from app.core.otp import build_otp_notice_response
 from app.core.permissions import PermissionCode
 from app.features.import_export.backups import export_backups_df
 from app.import_export import ImportExportService, delete_export_file
@@ -36,6 +36,7 @@ from app.schemas.backup import (
 )
 from app.schemas.common import PaginatedResponse, ResponseBase
 from app.schemas.device import DeviceResponse
+
 router = APIRouter(tags=["配置备份"])
 
 

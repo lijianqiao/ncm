@@ -11,7 +11,7 @@ from typing import Any
 from fastapi import APIRouter, Depends
 
 from app.api import deps
-from app.core.otp_notice import build_otp_required_response_from_result
+from app.core.otp import build_otp_required_response_from_result
 from app.core.permissions import PermissionCode
 from app.schemas.common import ResponseBase
 from app.schemas.preset import PresetDetail, PresetExecuteRequest, PresetExecuteResult, PresetInfo

@@ -51,14 +51,7 @@ import { formatUserDisplayName } from '@/utils/user'
 import ProTable, { type FilterConfig } from '@/components/common/ProTable.vue'
 import RecycleBinModal from '@/components/common/RecycleBinModal.vue'
 import DeviceSelector from '@/components/common/DeviceSelector.vue'
-import type { DeviceGroupType } from '@/types/enums'
 import { globalOtpFlow } from '@/composables/useOtpFlow'
-
-/** OTP 所需分组信息 */
-interface OtpRequiredGroup {
-  dept_id: string
-  device_group: DeviceGroupType
-}
 
 defineOptions({
   name: 'DeployManagement',
@@ -424,32 +417,50 @@ const approveModel = ref({
 
 // ==================== OTP（手动输入） ====================
 
-const extractOtpRequiredGroups = (task: DeployTask): OtpRequiredGroup[] => {
+interface OtpCredentialInfo {
+  otp_credential_id: string
+  otp_credential_username?: string
+  otp_credential_device_group?: string
+  otp_failed_device_ids?: string[]
+}
+
+const extractOtpRequiredGroups = (task: DeployTask): OtpCredentialInfo[] => {
   const taskResult = task.result as Record<string, unknown> | undefined
   if (!taskResult || typeof taskResult !== 'object') return []
 
-  if (taskResult.otp_required && typeof taskResult.otp_dept_id === 'string' && typeof taskResult.otp_device_group === 'string') {
-    return [{ dept_id: taskResult.otp_dept_id, device_group: taskResult.otp_device_group as DeviceGroupType }]
+  // 单个凭据信息
+  if (taskResult.otp_required && typeof taskResult.otp_credential_id === 'string') {
+    return [{
+      otp_credential_id: taskResult.otp_credential_id as string,
+      otp_credential_username: taskResult.otp_credential_username as string | undefined,
+      otp_credential_device_group: taskResult.otp_credential_device_group as string | undefined,
+      otp_failed_device_ids: taskResult.otp_failed_device_ids as string[] | undefined,
+    }]
   }
 
-  const groups = taskResult.otp_required_groups
+  // 批量凭据信息
+  const groups = taskResult.otp_credentials as Array<{
+    otp_credential_id?: string
+    otp_credential_username?: string
+    otp_credential_device_group?: string
+    otp_failed_device_ids?: string[]
+  }> | undefined
   if (!Array.isArray(groups)) return []
 
   return groups
-    .filter(
-      (g): g is { dept_id: string; device_group: DeviceGroupType } =>
-        g !== null &&
-        typeof g === 'object' &&
-        typeof (g as Record<string, unknown>).dept_id === 'string' &&
-        typeof (g as Record<string, unknown>).device_group === 'string',
-    )
-    .map((g) => ({ dept_id: g.dept_id, device_group: g.device_group }))
+    .filter((g) => g !== null && typeof g === 'object' && typeof g.otp_credential_id === 'string')
+    .map((g) => ({
+      otp_credential_id: g.otp_credential_id as string,
+      otp_credential_username: g.otp_credential_username,
+      otp_credential_device_group: g.otp_credential_device_group,
+      otp_failed_device_ids: g.otp_failed_device_ids,
+    }))
 }
 
 const openOtpModal = (task: DeployTask) => {
   const groups = extractOtpRequiredGroups(task)
   if (!groups.length) {
-    $alert.warning('任务需要 OTP，但未返回分组信息')
+    $alert.warning('任务需要 OTP，但未返回凭据ID')
     return
   }
   const taskResult = task.result as Record<string, unknown> | undefined
@@ -459,21 +470,25 @@ const openOtpModal = (task: DeployTask) => {
     typeof taskResult?.otp_cache_ttl === 'number' ? (taskResult.otp_cache_ttl as number) : undefined
   const otpWaitStatus =
     typeof taskResult?.otp_wait_status === 'string' ? (taskResult.otp_wait_status as string) : undefined
+  const nextAction =
+    typeof taskResult?.next_action === 'string' ? (taskResult.next_action as string) : undefined
 
   groups.forEach((group) => {
     globalOtpFlow.open(
       {
-        dept_id: group.dept_id,
-        device_group: group.device_group,
-        failed_devices: [],
-        task_id: task.id,
+        otp_credential_id: group.otp_credential_id,
+        otp_credential_username: group.otp_credential_username,
+        otp_credential_device_group: group.otp_credential_device_group,
+        otp_failed_device_ids: group.otp_failed_device_ids || [],
         otp_wait_status: otpWaitStatus,
-        message: `任务 "${task.name}" 需要 OTP 验证码才能继续执行。`,
         otp_wait_timeout: otpWaitTimeout,
         otp_cache_ttl: otpCacheTtl,
+        task_id: task.id,
+        next_action: nextAction,
+        message: `任务 "${task.name}" 需要 OTP 验证码才能继续执行。`,
       },
       async () => {
-        await resumeTaskGroup(task.id, { dept_id: group.dept_id, group: group.device_group })
+        await resumeTaskGroup(task.id, { credential_id: group.otp_credential_id })
         $alert.success('OTP 已提交，任务已恢复')
         tableRef.value?.reload()
       },
@@ -546,13 +561,11 @@ const handleExecute = (row: DeployTask) => {
           const deviceRes = await getDevice(deviceIds[0])
           const device = deviceRes.data
 
-          // 如果设备配置为手动 OTP，且具备必要的部门/分组信息
-          if (device.auth_type === 'otp_manual' && device.dept_id && device.device_group) {
+          const credentialId = (device as { credential_id?: string }).credential_id
+          if (device.auth_type === 'otp_manual' && credentialId) {
             globalOtpFlow.open(
               {
-                dept_id: device.dept_id!,
-                device_group: device.device_group!,
-                failed_devices: [],
+                otp_credential_id: credentialId,
                 message: '安全下发需要进行 OTP 验证',
               },
               async () => {
@@ -892,10 +905,10 @@ const columns: DataTableColumns<DeployTask> = [
           <n-descriptions :column="2" label-placement="left" bordered>
             <n-descriptions-item label="任务名称" :span="2">{{
               viewData.name
-              }}</n-descriptions-item>
+            }}</n-descriptions-item>
             <n-descriptions-item label="模板">{{
               viewData.template_name || '-'
-              }}</n-descriptions-item>
+            }}</n-descriptions-item>
             <n-descriptions-item label="状态">
               <n-tag :type="statusColorMap[viewData.status]" size="small">
                 {{ statusLabelMap[viewData.status] }}
@@ -903,13 +916,13 @@ const columns: DataTableColumns<DeployTask> = [
             </n-descriptions-item>
             <n-descriptions-item label="Celery任务ID" :span="2">{{
               viewData.celery_task_id || '-'
-              }}</n-descriptions-item>
+            }}</n-descriptions-item>
             <n-descriptions-item label="设备数">{{
               getTaskDeviceCount(viewData)
-              }}</n-descriptions-item>
+            }}</n-descriptions-item>
             <n-descriptions-item label="创建人">{{
               viewData.created_by_name || '-'
-              }}</n-descriptions-item>
+            }}</n-descriptions-item>
             <n-descriptions-item label="变更说明" :span="2">
               <div style="white-space: pre-wrap; word-break: break-word">
                 {{ viewData.change_description || '-' }}

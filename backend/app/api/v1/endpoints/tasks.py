@@ -27,12 +27,12 @@ from app.api.deps import (
     get_current_active_superuser,
 )
 from app.celery.app import celery_app
+from app.core.enums import BackupType
 from app.core.exceptions import BadRequestException, NotFoundException
 from app.core.otp import otp_coordinator
 from app.models.user import User
 from app.schemas.backup import BackupBatchRequest
 from app.schemas.common import ResponseBase
-from app.core.enums import BackupType
 
 router = APIRouter(tags=["任务管理"])
 
@@ -158,8 +158,7 @@ async def resume_task_group(
     backup_service: BackupServiceDep,
     deploy_service: DeployServiceDep,
     _: SuperuserDep,
-    dept_id: UUID = Query(..., description="部门ID"),
-    group: str = Query(..., description="设备分组"),
+    credential_id: UUID = Query(..., description="凭据ID"),
 ) -> ResponseBase[dict]:
     """恢复指定任务中某个分组的执行。
 
@@ -168,8 +167,7 @@ async def resume_task_group(
         backup_service: 备份服务依赖。
         deploy_service: 下发服务依赖。
         _: 超级管理员权限依赖。
-        dept_id: 部门 ID。
-        group: 设备分组。
+        credential_id: 凭据 ID。
 
     Returns:
         ResponseBase[dict]: 恢复结果与任务 ID 信息。
@@ -182,11 +180,11 @@ async def resume_task_group(
     if not batch_info:
         raise NotFoundException(message="任务不存在或不支持恢复")
 
-    pause_state = await otp_coordinator.resume_group(task_id, dept_id, group)
+    pause_state = await otp_coordinator.resume_group(task_id, credential_id)
     pending_ids = [UUID(str(x)) for x in (pause_state.get("pending_device_ids") if pause_state else []) or []]
     task_type = batch_info.get("task_type")
     if not pending_ids and task_type == "deploy":
-        pending_ids = await deploy_service.get_group_device_ids(UUID(task_id), dept_id, group)
+        raise BadRequestException(message="未找到可恢复的设备")
     if not pending_ids:
         raise BadRequestException(message="未找到可恢复的设备")
     if task_type == "backup":

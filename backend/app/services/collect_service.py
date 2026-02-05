@@ -190,10 +190,10 @@ class CollectService(DeviceCredentialMixin, CacheMixin):
             )
 
         # 如果提供了 OTP，先缓存（用于 OTP_MANUAL 模式）
-        if otp_code and device.dept_id and device.device_group:
+        if otp_code and device.credential_id:
             auth_type = AuthType(device.auth_type) if device.auth_type else AuthType.STATIC
             if auth_type == AuthType.OTP_MANUAL:
-                await otp_service.cache_otp(device.dept_id, device.device_group, otp_code)
+                await otp_service.cache_otp(device.credential_id, otp_code)
 
         # 获取凭据（使用 DeviceCredentialMixin 统一方法）
         try:
@@ -273,6 +273,7 @@ class CollectService(DeviceCredentialMixin, CacheMixin):
 
             host_data = {
                 "auth_type": device.auth_type,
+                "credential_id": str(device.credential_id) if device.credential_id else None,
                 "dept_id": str(device.dept_id) if device.dept_id else None,
                 "device_group": device.device_group,
                 "device_id": str(device.id),
@@ -303,6 +304,7 @@ class CollectService(DeviceCredentialMixin, CacheMixin):
                     logger.warning(f"通过错误信息检测到认证失败 (Fallback): {e}")
                     host_data = {
                         "auth_type": device.auth_type,
+                        "credential_id": str(device.credential_id) if device.credential_id else None,
                         "dept_id": str(device.dept_id) if device.dept_id else None,
                         "device_group": device.device_group,
                         "device_id": str(device.id),
@@ -356,15 +358,17 @@ class CollectService(DeviceCredentialMixin, CacheMixin):
         # 如果提供了 OTP，先缓存
         if request.otp_code:
             # 获取设备列表确定需要缓存 OTP 的部分设备
-            devices = await self.device_crud.get_by_ids(self.db, request.device_ids, options=self.device_crud._DEVICE_OPTIONS)
+            devices = await self.device_crud.get_by_ids(
+                self.db, request.device_ids, options=self.device_crud._DEVICE_OPTIONS
+            )
             for device in devices:
                 auth_type_str = device.auth_type or AuthType.STATIC.value
                 try:
                     auth_type = AuthType(auth_type_str)
                 except ValueError:
                     auth_type = AuthType.STATIC
-                if auth_type == AuthType.OTP_MANUAL and device.dept_id and device.device_group:
-                    await otp_service.cache_otp(device.dept_id, device.device_group, request.otp_code)
+                if auth_type == AuthType.OTP_MANUAL and device.credential_id:
+                    await otp_service.cache_otp(device.credential_id, request.otp_code)
 
         async def collect_with_semaphore(device_id: UUID) -> DeviceCollectResult:
             async with semaphore:

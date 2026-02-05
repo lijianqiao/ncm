@@ -67,23 +67,24 @@ async def resolve_otp_password(auth_type: str | None, host_data: dict) -> str | 
     if auth_enum != AuthType.OTP_MANUAL:
         return None
 
-    dept_id = _extract_uuid(host_data.get("dept_id"))
-    device_group = host_data.get("device_group")
+    credential_id = _extract_uuid(host_data.get("credential_id"))
     device_id = host_data.get("device_id")
+    credential_username = host_data.get("credential_username")
+    credential_device_group = host_data.get("credential_device_group")
 
-    if not dept_id or not device_group:
+    if not credential_id:
         raise OTPRequiredException(
-            dept_id=dept_id or "unknown",
-            device_group=str(device_group or "unknown"),
+            credential_id=None,
             failed_devices=[str(device_id)] if device_id else None,
             pending_device_ids=[str(device_id)] if device_id else None,
             message="需要输入 OTP 验证码",
             otp_wait_status="waiting",
+            credential_username=credential_username,
+            credential_device_group=credential_device_group,
         )
 
     result = await otp_coordinator.get_or_require_otp(
-        dept_id,
-        str(device_group),
+        credential_id,
         pending_device_ids=[str(device_id)] if device_id else None,
     )
     if result["status"] == "ready" and result["otp_code"]:
@@ -91,12 +92,13 @@ async def resolve_otp_password(auth_type: str | None, host_data: dict) -> str | 
 
     message = "用户未提供 OTP 验证码，连接失败" if result["status"] == "timeout" else "需要输入 OTP 验证码"
     raise OTPRequiredException(
-        dept_id=dept_id,
-        device_group=str(device_group),
+        credential_id=credential_id,
         failed_devices=[str(device_id)] if device_id else None,
         pending_device_ids=[str(device_id)] if device_id else None,
         message=message,
         otp_wait_status=result["status"],
+        credential_username=credential_username,
+        credential_device_group=credential_device_group,
     )
 
 
@@ -144,39 +146,42 @@ async def handle_otp_auth_failure(
     if auth_type != "otp_manual":
         raise original_error
 
-    dept_id = _extract_uuid(host_data.get("dept_id"))
-    device_group = host_data.get("device_group")
+    credential_id = _extract_uuid(host_data.get("credential_id"))
     device_id = host_data.get("device_id")
+    credential_username = host_data.get("credential_username")
+    credential_device_group = host_data.get("credential_device_group")
 
-    if not dept_id or not device_group:
+    if not credential_id:
         raise OTPRequiredException(
-            dept_id=dept_id or "unknown",
-            device_group=str(device_group or "unknown"),
+            credential_id=None,
             failed_devices=failed_devices or ([str(device_id)] if device_id else None),
             pending_device_ids=failed_devices or ([str(device_id)] if device_id else None),
             message="需要输入 OTP 验证码",
             otp_wait_status="waiting",
+            credential_username=credential_username,
+            credential_device_group=credential_device_group,
         )
 
-    await otp_coordinator.invalidate_otp(dept_id, str(device_group))
+    await otp_coordinator.invalidate_otp(
+        credential_id
+    )
     await otp_coordinator.get_or_require_otp(
-        dept_id,
-        str(device_group),
+        credential_id,
         pending_device_ids=failed_devices or ([str(device_id)] if device_id else None),
     )
     logger.warning(
         "OTP 认证失败，等待重新输入",
-        dept_id=str(dept_id),
-        device_group=str(device_group),
+        credential_id=str(credential_id),
         error=str(original_error),
     )
     raise OTPRequiredException(
-        dept_id=dept_id,
-        device_group=str(device_group),
+        credential_id=credential_id,
         failed_devices=failed_devices or ([str(device_id)] if device_id else None),
         pending_device_ids=failed_devices or ([str(device_id)] if device_id else None),
         message="需要重新输入 OTP 验证码",
         otp_wait_status="waiting",
+        credential_username=credential_username,
+        credential_device_group=credential_device_group,
     )
 
 

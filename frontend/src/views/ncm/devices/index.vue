@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, h } from 'vue'
+import { ref, h, computed, watch } from 'vue'
 import {
   NButton,
   NIcon,
@@ -42,6 +42,7 @@ import {
   type DeviceSearchParams,
   type DeviceStatusCounts,
 } from '@/api/devices'
+import { getCredentials, type Credential } from '@/api/credentials'
 import {
   DeviceStatus,
   AuthType,
@@ -58,9 +59,11 @@ import {
   DeviceVendorLabels,
   DeviceStatusLabels,
   DeviceGroupLabels,
+  AuthTypeLabels,
   DeviceStatusColors,
   DeviceVendorColors,
   DeviceGroupColors,
+  AuthTypeColors,
 } from '@/types/enum-labels'
 import { renderIpAddress } from '@/composables/useStyledRenders'
 import { getDeptTree, type Dept } from '@/api/depts'
@@ -87,6 +90,30 @@ const statusColorMap = DeviceStatusColors
 const statusLabelMap = DeviceStatusLabels
 const vendorLabelMap = DeviceVendorLabels
 const groupLabelMap = DeviceGroupLabels
+
+// ==================== 凭据选项 ====================
+
+interface CredentialOption {
+  label: string
+  value: string
+}
+const credentialOptions = ref<CredentialOption[]>([])
+const credentialMap = ref<Map<string, Credential>>(new Map())
+
+/** 获取凭据列表 */
+const fetchCredentials = async () => {
+  try {
+    const res = await getCredentials({ page_size: 500 })
+    const items = res.data.items || []
+    credentialOptions.value = items.map((item) => ({
+      label: `${item.username} (${item.dept_name || '无部门'})`,
+      value: item.id,
+    }))
+    credentialMap.value = new Map(items.map((item) => [item.id, item]))
+  } catch {
+    // Error handled
+  }
+}
 
 // ==================== 生命周期统计 ====================
 
@@ -179,6 +206,28 @@ const columns: DataTableColumns<Device> = [
         { default: () => statusLabelMap[row.status] },
       ),
   },
+  {
+    title: '认证方式',
+    key: 'auth_type',
+    width: 110,
+    render: (row) =>
+      h(
+        NTag,
+        { type: AuthTypeColors[row.auth_type], bordered: false, size: 'small' },
+        { default: () => AuthTypeLabels[row.auth_type] },
+      ),
+  },
+  {
+    title: 'OTP 凭据',
+    key: 'credential',
+    width: 150,
+    ellipsis: { tooltip: true },
+    render: (row) => {
+      if (!row.credential_id || !row.credential) return '-'
+      return row.credential.username
+    },
+  },
+  { title: '领用人', key: 'assigned_to', width: 100, ellipsis: { tooltip: true }, render: (row) => row.assigned_to || '-' },
   { title: '位置', key: 'location', width: 120, ellipsis: { tooltip: true } },
   { title: '序列号', key: 'serial_number', width: 140, ellipsis: { tooltip: true } },
   { title: 'SSH端口', key: 'ssh_port', width: 90 },
@@ -248,6 +297,7 @@ const createModel = ref({
   description: '',
   ssh_port: 22,
   auth_type: AuthType.OTP_SEED as AuthTypeType,
+  credential_id: null as string | null,
   dept_id: null as string | null,
   device_group: null as DeviceGroupType | null,
   status: DeviceStatus.IN_STOCK as DeviceStatusType,
@@ -259,10 +309,37 @@ const createModel = ref({
   assigned_to: '',
 })
 
-const createRules = {
-  name: { required: true, message: '请输入设备名称', trigger: 'blur' },
-  ip_address: { required: true, message: '请输入IP地址', trigger: 'blur' },
-}
+/** 是否为 OTP 认证类型 */
+const isOtpAuthType = computed(() => {
+  return createModel.value.auth_type === AuthType.OTP_SEED || createModel.value.auth_type === AuthType.OTP_MANUAL
+})
+
+/** 监听 auth_type 变化，清空不需要的字段 */
+watch(
+  () => createModel.value.auth_type,
+  (newAuthType) => {
+    if (newAuthType === AuthType.STATIC) {
+      // 静态密码时清空凭据
+      createModel.value.credential_id = null
+    } else {
+      // OTP 类型时清空用户名密码
+      createModel.value.username = ''
+      createModel.value.password = ''
+    }
+  },
+)
+
+const createRules = computed(() => {
+  const rules: Record<string, object> = {
+    name: { required: true, message: '请输入设备名称', trigger: 'blur' },
+    ip_address: { required: true, message: '请输入IP地址', trigger: 'blur' },
+  }
+  // OTP 类型时凭据必填
+  if (isOtpAuthType.value) {
+    rules.credential_id = { required: true, message: '请选择 OTP 凭据', trigger: 'change' }
+  }
+  return rules
+})
 
 const handleCreate = () => {
   modalType.value = 'create'
@@ -277,6 +354,7 @@ const handleCreate = () => {
     description: '',
     ssh_port: 22,
     auth_type: AuthType.OTP_SEED as AuthTypeType,
+    credential_id: null,
     dept_id: null,
     device_group: null,
     status: DeviceStatus.IN_STOCK as DeviceStatusType,
@@ -288,6 +366,7 @@ const handleCreate = () => {
     assigned_to: '',
   }
   fetchDeptTree()
+  fetchCredentials()
   showCreateModal.value = true
 }
 
@@ -304,6 +383,7 @@ const handleEdit = (row: Device) => {
     description: row.description || '',
     ssh_port: row.ssh_port,
     auth_type: row.auth_type,
+    credential_id: row.credential_id,
     dept_id: row.dept_id,
     device_group: row.device_group,
     status: row.status,
@@ -315,6 +395,7 @@ const handleEdit = (row: Device) => {
     assigned_to: row.assigned_to || '',
   }
   fetchDeptTree()
+  fetchCredentials()
   showCreateModal.value = true
 }
 
@@ -323,11 +404,19 @@ const submitCreate = (e: MouseEvent) => {
   createFormRef.value?.validate(async (errors: unknown) => {
     if (!errors) {
       try {
+        // 根据 auth_type 处理 credential_id：静态密码时必须为空
+        const isOtp =
+          createModel.value.auth_type === AuthType.OTP_SEED ||
+          createModel.value.auth_type === AuthType.OTP_MANUAL
         const data = {
           ...createModel.value,
           vendor: createModel.value.vendor || undefined,
           device_group: createModel.value.device_group || undefined,
           dept_id: createModel.value.dept_id || undefined,
+          credential_id: isOtp ? createModel.value.credential_id || undefined : undefined,
+          // 静态密码时清空凭据相关字段
+          username: !isOtp ? createModel.value.username || undefined : undefined,
+          password: !isOtp ? createModel.value.password || undefined : undefined,
           stock_in_at: createModel.value.stock_in_at
             ? new Date(createModel.value.stock_in_at).toISOString()
             : undefined,
@@ -635,6 +724,12 @@ const handleRecycleBin = () => {
           <n-grid-item>
             <n-form-item label="认证类型">
               <n-select v-model:value="createModel.auth_type" :options="authTypeOptions" placeholder="请选择认证类型" />
+            </n-form-item>
+          </n-grid-item>
+          <n-grid-item v-if="isOtpAuthType">
+            <n-form-item label="OTP 凭据" path="credential_id">
+              <n-select v-model:value="createModel.credential_id" :options="credentialOptions"
+                placeholder="请选择 OTP 凭据" clearable filterable />
             </n-form-item>
           </n-grid-item>
           <n-grid-item v-if="createModel.auth_type === 'static'">

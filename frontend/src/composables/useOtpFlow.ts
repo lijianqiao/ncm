@@ -1,19 +1,22 @@
 import { computed, ref } from 'vue'
 import { verifyOTP } from '@/api/credentials'
-import type { DeviceGroup } from '@/api/devices'
+import type { OTPCacheRequest } from '@/api/credentials'
 import { $alert } from '@/utils/alert'
 
+/** OTP 需求详情（统一数据结构） */
 export interface OtpRequiredDetails {
-  type?: string
+  type?: 'otp_required' | 'otp_timeout' | string
   message?: string
-  dept_id: string
-  device_group: string
-  failed_devices: string[]
+  otp_credential_id?: string | null
+  otp_credential_username?: string | null
+  otp_credential_device_group?: string | null
+  otp_failed_device_ids?: string[]
+  otp_wait_status?: 'waiting' | 'timeout' | 'ready' | string | null
+  otp_wait_timeout?: number | null
+  otp_cache_ttl?: number | null
   pending_device_ids?: string[]
   task_id?: string
-  otp_wait_status?: string
-  otp_wait_timeout?: number
-  otp_cache_ttl?: number
+  next_action?: string | null
 }
 
 type AxiosLikeError = {
@@ -44,7 +47,9 @@ export function useOtpFlow(options?: { length?: number }) {
   const queue = ref<Array<{ details: OtpRequiredDetails; action: (otpCode: string) => Promise<void> }>>([])
   const queueCount = computed(() => queue.value.length)
 
-  const buildKey = (d: OtpRequiredDetails) => `${d.dept_id}|${d.device_group}|${d.task_id || ''}`
+  const buildKey = (d: OtpRequiredDetails) => {
+    return `${d.otp_credential_id || ''}|${d.otp_credential_device_group || ''}|${d.task_id || ''}`
+  }
 
   const applyNext = () => {
     if (queue.value.length === 0) return
@@ -76,13 +81,20 @@ export function useOtpFlow(options?: { length?: number }) {
   const infoItems = computed<InfoItem[]>(() => {
     const d = details.value
     if (!d) return []
-    const items: InfoItem[] = [
-      { label: '部门ID', value: formatListValue(d.dept_id) },
-      { label: '设备组', value: formatListValue(d.device_group) },
-    ]
-    if (d.failed_devices && d.failed_devices.length > 0) {
-      const preview = d.failed_devices.slice(0, maxListItems)
-      const suffix = d.failed_devices.length > maxListItems ? ' ...' : ''
+    const items: InfoItem[] = []
+
+    if (d.otp_credential_username) {
+      items.push({ label: '凭据账号', value: formatListValue(d.otp_credential_username) })
+    }
+    if (d.otp_credential_id && !d.otp_credential_username) {
+      items.push({ label: '凭据ID', value: formatListValue(d.otp_credential_id) })
+    }
+    if (d.otp_credential_device_group) {
+      items.push({ label: '设备组', value: formatListValue(d.otp_credential_device_group) })
+    }
+    if (d.otp_failed_device_ids && d.otp_failed_device_ids.length > 0) {
+      const preview = d.otp_failed_device_ids.slice(0, maxListItems)
+      const suffix = d.otp_failed_device_ids.length > maxListItems ? ' ...' : ''
       items.push({ label: '失败设备', value: `${preview.join(', ')}${suffix}` })
     }
     return items
@@ -134,82 +146,113 @@ export function useOtpFlow(options?: { length?: number }) {
     // 支持 HTTP 428 或 业务码 428
     if (status !== 428 && code !== 428) return null
 
-    // 1. 优先从 details 获取（最新结构）
+    // 1. 优先从 details 获取
     const details = err?.response?.data?.details as {
       otp_required?: boolean
-      dept_id?: string
-      device_group?: string
-      failed_devices?: string[]
-      task_id?: string
+      otp_credential_id?: string
+      otp_credential_username?: string
+      otp_credential_device_group?: string
+      otp_failed_device_ids?: string[]
       otp_wait_status?: string
       otp_wait_timeout?: number
       otp_cache_ttl?: number
+      pending_device_ids?: string[]
+      task_id?: string
+      next_action?: string
     } | undefined
 
-    if (details && details.dept_id && details.device_group) {
+    if (details?.otp_credential_id) {
       return {
-        dept_id: details.dept_id,
-        device_group: details.device_group,
-        failed_devices: details.failed_devices || [],
-        message: err?.response?.data?.message || '需要 OTP 验证',
-        task_id: details.task_id,
+        otp_credential_id: details.otp_credential_id,
+        otp_credential_username: details.otp_credential_username,
+        otp_credential_device_group: details.otp_credential_device_group,
+        otp_failed_device_ids: details.otp_failed_device_ids || [],
         otp_wait_status: details.otp_wait_status,
         otp_wait_timeout: details.otp_wait_timeout,
         otp_cache_ttl: details.otp_cache_ttl,
+        pending_device_ids: details.pending_device_ids,
+        task_id: details.task_id,
+        next_action: details.next_action,
+        message: err?.response?.data?.message || '需要 OTP 验证',
       }
     }
 
-    // 2. 尝试从 data.otp_required_groups 获取 (列表结构)
+    // 2. 尝试从 data 直接获取（428 响应体）
     const data = err?.response?.data?.data as {
-      otp_required_groups?: Array<{ dept_id: string; device_group: string }>
-      dept_id?: string
-      device_group?: string
-      failed_devices?: string[]
       otp_required?: boolean
-      task_id?: string
+      otp_credential_id?: string
+      otp_credential_username?: string
+      otp_credential_device_group?: string
+      otp_failed_device_ids?: string[]
       otp_wait_status?: string
+      otp_wait_timeout?: number
+      otp_cache_ttl?: number
+      pending_device_ids?: string[]
+      task_id?: string
+      next_action?: string
+      otp_credentials?: Array<{
+        otp_credential_id?: string
+        otp_credential_username?: string
+        otp_credential_device_group?: string
+        otp_failed_device_ids?: string[]
+        pending_device_ids?: string[]
+        otp_wait_status?: string
+      }>
     } | undefined
 
-    if (data?.otp_required_groups && data.otp_required_groups.length > 0) {
-      const first = data.otp_required_groups[0]
+    // 2.1 检查 otp_credentials
+    if (data?.otp_credentials && data.otp_credentials.length > 0) {
+      const first = data.otp_credentials[0]
       if (first) {
         return {
-          dept_id: first.dept_id,
-          device_group: first.device_group,
-          failed_devices: [],
-          message: err?.response?.data?.message || '回滚需要输入 OTP',
+          otp_credential_id: first.otp_credential_id,
+          otp_credential_username: first.otp_credential_username,
+          otp_credential_device_group: first.otp_credential_device_group,
+          otp_failed_device_ids: first.otp_failed_device_ids || [],
+          otp_wait_status: first.otp_wait_status,
+          otp_wait_timeout: data.otp_wait_timeout,
+          otp_cache_ttl: data.otp_cache_ttl,
+          pending_device_ids: first.pending_device_ids || data.pending_device_ids,
+          task_id: data.task_id,
+          next_action: data.next_action,
+          message: err?.response?.data?.message || '需要 OTP 验证',
         }
       }
     }
 
-    // 3. 尝试从 data 直接获取
-    if (data && data.dept_id && data.device_group) {
+    // 2.2 从 data 直接获取单个凭据信息
+    if (data?.otp_credential_id) {
       return {
-        dept_id: data.dept_id,
-        device_group: data.device_group,
-        failed_devices: data.failed_devices || [],
+        otp_credential_id: data.otp_credential_id,
+        otp_credential_username: data.otp_credential_username,
+        otp_credential_device_group: data.otp_credential_device_group,
+        otp_failed_device_ids: data.otp_failed_device_ids || [],
+        otp_wait_status: data.otp_wait_status,
+        otp_wait_timeout: data.otp_wait_timeout,
+        otp_cache_ttl: data.otp_cache_ttl,
+        pending_device_ids: data.pending_device_ids,
+        task_id: data.task_id,
+        next_action: data.next_action,
         message: err?.response?.data?.message || '需要 OTP 验证',
-        task_id: (data as { task_id?: string }).task_id,
-        otp_wait_status: (data as { otp_wait_status?: string }).otp_wait_status,
-        otp_wait_timeout: (data as { otp_wait_timeout?: number }).otp_wait_timeout,
-        otp_cache_ttl: (data as { otp_cache_ttl?: number }).otp_cache_ttl,
       }
     }
 
-    // 4. 优先尝试从 data.otp_notice 获取 (旧结构)
+    // 3. 尝试从 data.otp_notice 获取（任务状态中的 OTP 提示）
     const otpNotice = err?.response?.data?.data?.otp_notice as OtpRequiredDetails | undefined
-    if (otpNotice && otpNotice.dept_id && otpNotice.device_group) {
+    if (otpNotice?.otp_credential_id) {
       return {
         type: otpNotice.type,
         message: otpNotice.message,
-        dept_id: otpNotice.dept_id,
-        device_group: otpNotice.device_group,
-        failed_devices: otpNotice.failed_devices || [],
-        pending_device_ids: otpNotice.pending_device_ids,
-        task_id: otpNotice.task_id,
+        otp_credential_id: otpNotice.otp_credential_id,
+        otp_credential_username: otpNotice.otp_credential_username,
+        otp_credential_device_group: otpNotice.otp_credential_device_group,
+        otp_failed_device_ids: otpNotice.otp_failed_device_ids || [],
         otp_wait_status: otpNotice.otp_wait_status,
         otp_wait_timeout: otpNotice.otp_wait_timeout,
         otp_cache_ttl: otpNotice.otp_cache_ttl,
+        pending_device_ids: otpNotice.pending_device_ids,
+        task_id: otpNotice.task_id,
+        next_action: otpNotice.next_action,
       }
     }
 
@@ -234,14 +277,16 @@ export function useOtpFlow(options?: { length?: number }) {
     }
 
     try {
-      // 1. 先验证 OTP
-      // 注意：DeviceGroup 类型在 api/devices 中定义，这里简单的强制转换，或者在 api 调用时兼容 string
-      // 实际上后端需要的是 string 类型的枚举值
-      const verifyRes = await verifyOTP({
-        dept_id: d.dept_id,
-        device_group: d.device_group as DeviceGroup,
+      if (!d.otp_credential_id) {
+        errorMessage.value = '缺少 OTP 凭据信息，请重新操作'
+        return
+      }
+      const verifyPayload = {
+        credential_id: d.otp_credential_id,
         otp_code: otpCode.trim(),
-      })
+      }
+
+      const verifyRes = await verifyOTP(verifyPayload)
 
       if (verifyRes.data?.verified) {
         $alert.success(verifyRes.data.message || 'OTP 验证成功')
@@ -286,20 +331,10 @@ export function useOtpFlow(options?: { length?: number }) {
     error: unknown,
     action: (otpCode: string) => Promise<void>,
   ): boolean => {
-    let d = extractOtpRequiredDetails(error)
+    const d = extractOtpRequiredDetails(error)
     if (!d) {
-      const err = error as AxiosLikeError
-      const status = err?.response?.status
-      const code = err?.response?.data?.code
-      if (status !== 428 && code !== 428) return false
-      d = {
-        dept_id: '未知',
-        device_group: '未知',
-        failed_devices: [],
-        message: err?.response?.data?.message || '需要 OTP 验证',
-      }
+      return false
     }
-
     open(d, action)
     return true
   }

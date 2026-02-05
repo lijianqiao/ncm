@@ -8,6 +8,7 @@
 
 import hashlib
 import json
+from enum import Enum
 from uuid import UUID
 
 from sqlalchemy import func, select
@@ -51,6 +52,38 @@ class DeviceService(CacheMixin):
         self.device_crud = device_crud
         self.credential_crud = credential_crud
         self._post_commit_tasks: list = []
+
+    def _normalize_device_group_value(self, value: str | Enum | None) -> str | None:
+        """标准化设备分组值。"""
+        if value is None:
+            return None
+        if isinstance(value, Enum):
+            return str(value.value)
+        text = str(value)
+        if text.startswith("DeviceGroup."):
+            text = text.split(".", maxsplit=1)[-1]
+        return text
+
+    async def _resolve_credential_id(
+        self,
+        auth_type: AuthType,
+        *,
+        dept_id: UUID | None,
+        device_group: str | None,
+    ) -> UUID | None:
+        """根据认证类型解析凭据 ID。"""
+        if auth_type == AuthType.STATIC:
+            return None
+        if auth_type in (AuthType.OTP_SEED, AuthType.OTP_MANUAL):
+            if not dept_id:
+                raise BadRequestException(message="OTP 认证类型必须关联部门")
+            if not device_group:
+                raise BadRequestException(message="OTP 认证类型必须关联设备分组")
+            credential = await self.credential_crud.get_by_dept_and_group(self.db, dept_id, device_group)
+            if not credential:
+                raise BadRequestException(message=f"部门 {dept_id} 的设备分组 {device_group} 没有配置凭据")
+            return credential.id
+        return None
 
     async def get_devices_paginated(self, query: DeviceListQuery) -> tuple[list[Device], int]:
         """
@@ -143,21 +176,16 @@ class DeviceService(CacheMixin):
             if not obj_in.username or not obj_in.password:
                 raise BadRequestException(message="静态认证类型必须提供用户名和密码")
 
-        # 3. OTP 认证类型校验
-        if obj_in.auth_type in (AuthType.OTP_SEED, AuthType.OTP_MANUAL):
-            if not obj_in.dept_id:
-                raise BadRequestException(message="OTP 认证类型必须关联部门")
-            # 检查对应的凭据是否存在
-            credential = await self.credential_crud.get_by_dept_and_group(
-                self.db, obj_in.dept_id, obj_in.device_group.value
-            )
-            if not credential:
-                raise BadRequestException(
-                    message=f"部门 {obj_in.dept_id} 的设备分组 {obj_in.device_group.value} 没有配置凭据"
-                )
+        # 3. 凭据解析（OTP 认证类型）
+        credential_id = await self._resolve_credential_id(
+            obj_in.auth_type,
+            dept_id=obj_in.dept_id,
+            device_group=self._normalize_device_group_value(obj_in.device_group),
+        )
 
         # 4. 准备创建数据
         create_data = obj_in.model_dump(exclude={"password"}, exclude_unset=True)
+        create_data["credential_id"] = credential_id
 
         # 5. 处理静态密码加密
         if obj_in.auth_type == AuthType.STATIC and obj_in.password:
@@ -205,7 +233,17 @@ class DeviceService(CacheMixin):
             if auth_type == AuthType.STATIC:
                 update_data["password_encrypted"] = encrypt_password(obj_in.password)
 
-        # 5. 更新设备
+        # 5. 处理凭据更新
+        auth_type = obj_in.auth_type or AuthType(device.auth_type)
+        dept_id = obj_in.dept_id if obj_in.dept_id is not None else device.dept_id
+        device_group = self._normalize_device_group_value(obj_in.device_group or device.device_group)
+        update_data["credential_id"] = await self._resolve_credential_id(
+            auth_type,
+            dept_id=dept_id,
+            device_group=device_group,
+        )
+
+        # 6. 更新设备
         return await self.device_crud.update(self.db, db_obj=device, obj_in=update_data)
 
     @transactional()
@@ -261,19 +299,39 @@ class DeviceService(CacheMixin):
         Returns:
             DeviceBatchResult: 批量操作结果
         """
-        # 预处理：为静态认证类型加密密码
-        for device_create in obj_in.devices:
-            if device_create.auth_type == AuthType.STATIC and device_create.password:
-                # 密码会在 CRUD 层排除，这里标记处理
-                pass
+        valid_devices: list[DeviceCreate] = []
+        credential_ids: list[UUID | None] = []
+        failed_items: list[dict] = []
 
-        created_devices, failed_items = await self.device_crud.batch_create(self.db, devices_in=obj_in.devices)
+        for device_create in obj_in.devices:
+            try:
+                credential_id = await self._resolve_credential_id(
+                    device_create.auth_type,
+                    dept_id=device_create.dept_id,
+                    device_group=self._normalize_device_group_value(device_create.device_group),
+                )
+                valid_devices.append(device_create)
+                credential_ids.append(credential_id)
+            except BadRequestException as e:
+                failed_items.append(
+                    {
+                        "ip_address": device_create.ip_address,
+                        "name": device_create.name,
+                        "reason": e.message,
+                    }
+                )
+
+        created_devices, create_failed_items = await self.device_crud.batch_create(self.db, devices_in=valid_devices)
+        failed_items.extend(create_failed_items)
 
         # 处理成功创建的设备的密码加密
         for i, device in enumerate(created_devices):
-            device_create = obj_in.devices[i] if i < len(obj_in.devices) else None
+            device_create = valid_devices[i] if i < len(valid_devices) else None
             if device_create and device_create.auth_type == AuthType.STATIC and device_create.password:
                 device.password_encrypted = encrypt_password(device_create.password)
+                self.db.add(device)
+            if i < len(credential_ids):
+                device.credential_id = credential_ids[i]
                 self.db.add(device)
 
         await self.db.flush()

@@ -345,7 +345,11 @@ class CredentialService(BaseService):
         from app.core.exceptions import BadRequestException
 
         try:
-            ttl = await otp_service.cache_otp(request.dept_id, request.device_group, request.otp_code)
+            credential = await self.credential_crud.get(self.db, request.credential_id)
+            if not credential:
+                raise BadRequestException(message="凭据不存在")
+
+            ttl = await otp_service.cache_otp(credential.id, request.otp_code)
             # cache_otp 返回 0 表示 Redis 未连接或缓存失败
             if ttl == 0:
                 raise BadRequestException(message="OTP 缓存失败：Redis 服务未连接，请联系管理员")
@@ -389,11 +393,10 @@ class CredentialService(BaseService):
         from app.models.device import Device
         from app.network.platform_config import get_platform_for_vendor, get_scrapli_options
 
-        # 1. 查找一台代表设备（指定部门+分组+otp_manual）
+        # 1. 查找一台代表设备（指定凭据 + otp_manual）
         query = (
             select(Device)
-            .where(Device.dept_id == request.dept_id)
-            .where(Device.device_group == request.device_group.value)
+            .where(Device.credential_id == request.credential_id)
             .where(Device.auth_type == AuthType.OTP_MANUAL.value)
             .where(Device.is_deleted.is_(False))
             .limit(1)
@@ -402,12 +405,12 @@ class CredentialService(BaseService):
         test_device = result.scalars().first()
 
         if not test_device:
-            raise BadRequestException(message="该部门/分组下没有 otp_manual 类型的设备可供测试")
+            raise BadRequestException(message="该凭据下没有 otp_manual 类型的设备可供测试")
 
         # 2. 获取该设备组的凭据（用户名）
-        credential = await credential_crud.get_by_dept_and_group(self.db, request.dept_id, request.device_group.value)
+        credential = await credential_crud.get(self.db, request.credential_id)
         if not credential:
-            raise BadRequestException(message="该部门/分组未配置凭据")
+            raise BadRequestException(message="凭据不存在")
 
         # 3. 构建 Scrapli 连接参数
         platform = get_platform_for_vendor(test_device.vendor or "hp_comware")
@@ -431,8 +434,7 @@ class CredentialService(BaseService):
             "OTP 验证：尝试连接设备",
             device=test_device.name,
             ip=test_device.ip_address,
-            dept_id=str(request.dept_id),
-            device_group=request.device_group.value,
+            credential_id=str(credential.id),
         )
 
         try:
@@ -453,8 +455,8 @@ class CredentialService(BaseService):
                     pass
 
             # 5. 验证成功，先失效旧 OTP 再缓存新 OTP（避免缓存不一致）
-            await otp_service.invalidate_otp(request.dept_id, request.device_group)
-            ttl = await otp_service.cache_otp(request.dept_id, request.device_group, request.otp_code)
+            await otp_service.invalidate_otp(credential.id)
+            ttl = await otp_service.cache_otp(credential.id, request.otp_code)
 
             return OTPVerifyResponse(
                 verified=True,
@@ -471,10 +473,11 @@ class CredentialService(BaseService):
                 error=str(e),
             )
             raise OTPRequiredException(
-                dept_id=request.dept_id,
-                device_group=request.device_group.value,
+                credential_id=credential.id,
                 failed_devices=[str(test_device.id)],
                 message="OTP 验证失败，请检查验证码是否正确",
+                credential_username=credential.username,
+                credential_device_group=credential.device_group,
             ) from e
 
         except (ScrapliConnectionError, TimeoutError, OSError) as e:

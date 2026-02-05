@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, h, computed, onMounted, onUnmounted, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import {
   NButton,
   NCard,
@@ -29,9 +29,6 @@ import {
   exportAlerts,
   type Alert,
   type AlertSearchParams,
-  type AlertType,
-  type AlertSeverity,
-  type AlertStatus,
 } from '@/api/alerts'
 import { formatDateTime } from '@/utils/date'
 import { renderEnumTag } from '@/composables/useStyledRenders'
@@ -42,7 +39,9 @@ import {
   AlertSeverityColors,
   AlertStatusLabels,
   AlertStatusColors,
+  type TagType,
 } from '@/types/enum-labels'
+import { AlertType, AlertSeverity, AlertStatus } from '@/types/enums'
 import ProTable, { type FilterConfig } from '@/components/common/ProTable.vue'
 import DataImportExport from '@/components/common/DataImportExport.vue'
 
@@ -79,6 +78,11 @@ const statusOptions = [
 ]
 
 // 使用集中式枚举标签和颜色（从 @/types/enum-labels 导入）
+const alertTypeLabelMap = AlertTypeLabels as unknown as Record<string, string>
+const severityLabelMap = AlertSeverityLabels as unknown as Record<string, string>
+const severityColorMap = AlertSeverityColors as unknown as Record<string, TagType>
+const statusLabelMap = AlertStatusLabels as unknown as Record<string, string>
+const statusColorMap = AlertStatusColors as unknown as Record<string, TagType>
 
 // ==================== 表格列定义 ====================
 
@@ -96,21 +100,21 @@ const columns: DataTableColumns<Alert> = [
     key: 'alert_type',
     width: 100,
     render: (row) =>
-      renderEnumTag(row.alert_type, AlertTypeLabels, AlertTypeColors),
+      renderEnumTag(row.alert_type as AlertType, AlertTypeLabels, AlertTypeColors),
   },
   {
     title: '级别',
     key: 'severity',
     width: 80,
     render: (row) =>
-      renderEnumTag(row.severity, AlertSeverityLabels, AlertSeverityColors),
+      renderEnumTag(row.severity as AlertSeverity, AlertSeverityLabels, AlertSeverityColors),
   },
   {
     title: '状态',
     key: 'status',
     width: 100,
     render: (row) =>
-      renderEnumTag(row.status, AlertStatusLabels, AlertStatusColors),
+      renderEnumTag(row.status as AlertStatus, AlertStatusLabels, AlertStatusColors),
   },
   {
     title: '关联设备',

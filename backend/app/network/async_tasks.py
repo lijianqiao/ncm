@@ -75,6 +75,9 @@ def _get_scrapli_kwargs(host: "Host") -> dict[str, Any]:
 async def _apply_otp_manual_password(host: "Host", kwargs: dict[str, Any]) -> dict[str, Any]:
     """应用 OTP 密码到 Scrapli 连接参数（使用统一的 OTP 解析逻辑）。
 
+    优先使用预获取的 OTP 密码（otp_password_prefetched），避免任务执行期间
+    OTP 缓存过期导致后续设备无法获取密码。
+
     Args:
         host: Nornir Host 对象
         kwargs: Scrapli 连接参数字典
@@ -83,8 +86,15 @@ async def _apply_otp_manual_password(host: "Host", kwargs: dict[str, Any]) -> di
         dict[str, Any]: 更新后的连接参数字典，包含 auth_password（如果解析到 OTP）
     """
     auth_type = host.data.get("auth_type")
-    host_data = {"name": host.name, **dict(host.data)}
 
+    # 优先使用预获取的 OTP 密码（由 Celery 任务启动时预获取）
+    prefetched_otp = host.data.get("otp_password_prefetched")
+    if prefetched_otp and auth_type == "otp_manual":
+        kwargs["auth_password"] = prefetched_otp
+        return kwargs
+
+    # 回退到常规 OTP 解析逻辑
+    host_data = {"name": host.name, **dict(host.data)}
     otp_password = await resolve_otp_password(auth_type, host_data)
     if otp_password is not None:
         kwargs["auth_password"] = otp_password

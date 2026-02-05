@@ -7,11 +7,11 @@
 
 路由顺序规则（重要）:
     FastAPI 按定义顺序匹配路由，静态路由必须在动态路由之前定义。
-    
+
     1. 根路由: `/` (GET 列表, POST 创建)
     2. 静态路由: `/recycle-bin`, `/batch`, `/batch/restore`, `/batch/hard`
     3. 动态路由: `/{task_id:uuid}`, `/{task_id:uuid}/approve`, `/{task_id:uuid}/execute` 等
-    
+
     错误示例: 如果 `/{task_id:uuid}` 在 `/recycle-bin` 之前定义，
     访问 `/recycle-bin` 时会被 `/{task_id:uuid}` 错误匹配。
 """
@@ -25,8 +25,7 @@ from fastapi.responses import JSONResponse
 from app.api import deps
 from app.api.deps import CurrentUser, DeployServiceDep, require_permissions
 from app.core.enums import TaskStatus
-from app.core.otp_notice import (
-    build_otp_required_response,
+from app.core.otp import (
     build_otp_required_response_from_result,
     build_otp_timeout_response,
 )

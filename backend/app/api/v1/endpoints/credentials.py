@@ -18,7 +18,7 @@ from starlette.background import BackgroundTask
 from app.api import deps
 from app.core.config import settings
 from app.core.enums import DeviceGroup
-from app.core.otp_notice import build_otp_required_response
+from app.core.otp import build_otp_required_response
 from app.core.permissions import PermissionCode
 from app.features.import_export.credentials import (
     CREDENTIAL_IMPORT_COLUMN_ALIASES,

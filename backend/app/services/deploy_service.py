@@ -12,11 +12,10 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import settings
 from app.core.decorator import transactional
 from app.core.enums import ApprovalStatus, AuthType, DeviceStatus, TaskStatus, TaskType, TemplateStatus
 from app.core.exceptions import BadRequestException, ForbiddenException, NotFoundException
-from app.core.otp import otp_coordinator
+from app.core.otp import OtpMetaBuilder, dedupe_otp_groups, otp_coordinator
 from app.core.otp_service import otp_service
 from app.crud.crud_credential import CRUDCredential
 from app.crud.crud_device import CRUDDevice
@@ -33,7 +32,6 @@ from app.schemas.deploy import (
     RollbackPreviewResponse,
 )
 from app.services.base import BaseService
-from app.core.otp_helpers import build_otp_required_task_result, dedupe_otp_groups
 from app.services.render_service import RenderService
 
 
@@ -352,7 +350,8 @@ class DeployService(BaseService):
         if not devices:
             raise BadRequestException("没有可下发的设备")
 
-        otp_required_groups: list[dict] = []
+        # 使用 OtpMetaBuilder 统一构建 OTP 元数据
+        otp_metas: list[dict] = []
         for device in devices:
             auth_type = AuthType(device.auth_type)
 
@@ -361,10 +360,10 @@ class DeployService(BaseService):
                     raise BadRequestException(f"设备 {device.name} 缺少静态凭据配置")
                 continue
 
-            if not device.dept_id:
-                raise BadRequestException(f"设备 {device.name} 缺少部门关联")
+            if not device.credential_id:
+                raise BadRequestException(f"设备 {device.name} 缺少凭据ID")
 
-            credential = await self.credential_crud.get_by_dept_and_group(self.db, device.dept_id, device.device_group)
+            credential = await self.credential_crud.get(self.db, device.credential_id)
             if not credential:
                 raise BadRequestException(f"设备 {device.name} 的设备组凭据未配置")
 
@@ -376,24 +375,27 @@ class DeployService(BaseService):
             if auth_type == AuthType.OTP_MANUAL:
                 if not credential.username:
                     raise BadRequestException(f"设备 {device.name} 的设备组账号未配置")
-                cached = await otp_service.get_cached_otp(device.dept_id, device.device_group)
+                cached = await otp_service.get_cached_otp(device.credential_id)
                 if not cached:
-                    otp_required_groups.append(
-                        {
-                            "dept_id": str(device.dept_id),
-                            "device_group": device.device_group,
-                        }
+                    # 使用 OtpMetaBuilder 构建元数据
+                    meta = OtpMetaBuilder.build(
+                        credential_id=device.credential_id,
+                        credential_username=credential.username,
+                        credential_device_group=credential.device_group,
+                        wait_status="waiting",
                     )
+                    otp_metas.append(OtpMetaBuilder.serialize(meta))
                 continue
 
             raise BadRequestException(f"不支持的认证类型: {device.auth_type}")
 
-        if otp_required_groups:
-            unique_groups = dedupe_otp_groups(otp_required_groups)
+        if otp_metas:
+            # 去重（基于 credential_id）
+            unique_groups = dedupe_otp_groups(otp_metas)
 
             task.status = TaskStatus.PAUSED.value
             task.error_message = f"需要输入 OTP（共 {len(unique_groups)} 个设备分组）"
-            task.result = build_otp_required_task_result(
+            task.result = OtpMetaBuilder.build_task_result(
                 unique_groups,
                 next_action="cache_otp_and_retry_execute",
                 wait_status="waiting",
@@ -647,9 +649,7 @@ class DeployService(BaseService):
         # 状态检查
         allowed_statuses = {TaskStatus.SUCCESS.value, TaskStatus.PARTIAL.value, TaskStatus.ROLLBACK.value}
         if task.status not in allowed_statuses:
-            raise BadRequestException(
-                f"任务状态为 {task.status}，无法回滚（仅成功、部分成功或已回滚的任务可回滚）"
-            )
+            raise BadRequestException(f"任务状态为 {task.status}，无法回滚（仅成功、部分成功或已回滚的任务可回滚）")
 
         # 检查是否有变更前备份
         pre_change_backup_ids: dict = {}
@@ -663,39 +663,41 @@ class DeployService(BaseService):
         if check_otp:
             device_ids = self._get_target_device_ids(task)
             if device_ids:
-                devices = await self.device_crud.get_by_ids(self.db, device_ids, options=self.device_crud._DEVICE_OPTIONS)
+                devices = await self.device_crud.get_by_ids(
+                    self.db, device_ids, options=self.device_crud._DEVICE_OPTIONS
+                )
 
-                otp_required_groups: list[dict] = []
+                # 使用 OtpMetaBuilder 统一构建 OTP 元数据
+                otp_metas: list[dict] = []
                 for device in devices:
                     auth_type = AuthType(device.auth_type)
 
                     if auth_type != AuthType.OTP_MANUAL:
                         continue
 
-                    if not device.dept_id:
+                    if not device.credential_id:
                         continue
 
-                    credential = await self.credential_crud.get_by_dept_and_group(
-                        self.db, device.dept_id, device.device_group
-                    )
+                    credential = await self.credential_crud.get(self.db, device.credential_id)
                     if not credential or not credential.username:
                         continue
 
-                    cached = await otp_service.get_cached_otp(device.dept_id, device.device_group)
+                    cached = await otp_service.get_cached_otp(device.credential_id)
                     if not cached:
-                        otp_required_groups.append(
-                            {
-                                "dept_id": str(device.dept_id),
-                                "device_group": device.device_group,
-                            }
+                        meta = OtpMetaBuilder.build(
+                            credential_id=device.credential_id,
+                            credential_username=credential.username,
+                            credential_device_group=credential.device_group,
+                            wait_status="waiting",
                         )
+                        otp_metas.append(OtpMetaBuilder.serialize(meta))
 
-                if otp_required_groups:
-                    unique_groups = dedupe_otp_groups(otp_required_groups)
+                if otp_metas:
+                    unique_groups = dedupe_otp_groups(otp_metas)
 
                     task.status = TaskStatus.PAUSED.value
                     task.error_message = f"回滚需要输入 OTP（共 {len(unique_groups)} 个设备分组）"
-                    task.result = build_otp_required_task_result(
+                    task.result = OtpMetaBuilder.build_task_result(
                         unique_groups,
                         next_action="cache_otp_and_retry_rollback",
                         wait_status="waiting",
@@ -831,21 +833,24 @@ class DeployService(BaseService):
                 continue
 
             backup_info[dev_id_str] = {"expected_md5": expected_md5, "device": device}
-            hosts_data.append({
-                "name": dev_id_str,
-                "hostname": device.ip_address,
-                "platform": device.platform or get_platform_for_vendor(device.vendor),
-                "username": cred.username,
-                "password": cred.password,
-                "port": device.ssh_port or 22,
-                "data": {
-                    "device_id": dev_id_str,
-                    "device_name": device.name,
-                    "auth_type": device.auth_type,
-                    "dept_id": str(device.dept_id) if device.dept_id else None,
-                    "device_group": device.device_group,
-                },
-            })
+            hosts_data.append(
+                {
+                    "name": dev_id_str,
+                    "hostname": device.ip_address,
+                    "platform": device.platform or get_platform_for_vendor(device.vendor),
+                    "username": cred.username,
+                    "password": cred.password,
+                    "port": device.ssh_port or 22,
+                    "data": {
+                        "device_id": dev_id_str,
+                        "device_name": device.name,
+                        "auth_type": device.auth_type,
+                        "credential_id": str(device.credential_id) if device.credential_id else None,
+                        "dept_id": str(device.dept_id) if device.dept_id else None,
+                        "device_group": device.device_group,
+                    },
+                }
+            )
 
         # 第二步：连接设备获取当前配置
         if hosts_data:
@@ -937,24 +942,26 @@ class DeployService(BaseService):
                 raise ValueError("设备缺少用户名或密码配置")
             return await otp_service.get_credential_for_static_device(device.username, device.password_encrypted)
 
-        if not device.dept_id:
-            raise ValueError("设备缺少部门关联")
+        if not device.credential_id:
+            raise ValueError("设备缺少凭据ID")
 
-        credential = await self.credential_crud.get_by_dept_and_group(self.db, device.dept_id, device.device_group)
+        credential = await self.credential_crud.get(self.db, device.credential_id)
         if not credential:
             raise ValueError("设备组凭据未配置")
 
         if auth_type == AuthType.OTP_SEED:
             if not credential.otp_seed_encrypted:
                 raise ValueError("设备组 OTP 种子未配置")
-            return await otp_service.get_credential_for_otp_seed_device(credential.username, credential.otp_seed_encrypted)
+            return await otp_service.get_credential_for_otp_seed_device(
+                credential.username, credential.otp_seed_encrypted
+            )
 
         if auth_type == AuthType.OTP_MANUAL:
             # detect 时使用已验证过的 OTP（validate_rollback 已检查）
             return await otp_service.get_credential_for_otp_manual_device(
                 username=credential.username,
-                dept_id=device.dept_id,
-                device_group=device.device_group,
+                credential_id=device.credential_id,
+                credential_device_group=credential.device_group,
                 failed_devices=[str(device.id)],
             )
 

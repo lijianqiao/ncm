@@ -12,8 +12,12 @@ from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 
 from app.api.deps import CollectServiceDep, CurrentUser, require_permissions
-from app.core.otp_helpers import extract_otp_failed_device_ids
-from app.core.otp_notice import build_otp_required_response, build_otp_required_response_for_failed_devices, is_otp_error_text
+from app.core.otp import (
+    build_otp_required_response,
+    build_otp_required_response_for_failed_devices,
+    extract_otp_failed_device_ids,
+    is_otp_error_text,
+)
 from app.core.permissions import PermissionCode
 from app.schemas.collect import (
     ARPTableResponse,

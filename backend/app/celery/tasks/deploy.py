@@ -14,6 +14,7 @@ from typing import Any
 from uuid import UUID
 
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.exc import StaleDataError
 
 from app.celery.app import celery_app
@@ -153,22 +154,46 @@ def _check_otp_exception_in_results(results) -> OTPRequiredException | None:
         if multi_result.failed:
             result_data = multi_result[0].result if multi_result else {}
             if result_data and result_data.get("otp_required"):
-                dept_id = result_data.get("otp_dept_id")
-                device_group = result_data.get("otp_device_group")
+                credential_id = result_data.get("otp_credential_id") or result_data.get("credential_id")
                 pending_device_ids = result_data.get("pending_device_ids") or []
-                if dept_id and device_group:
+                if credential_id:
                     return OTPRequiredException(
-                        dept_id=dept_id,
-                        device_group=str(device_group),
+                        credential_id=credential_id,
                         failed_devices=[str(_host_name)],
                         pending_device_ids=[str(x) for x in pending_device_ids] if pending_device_ids else None,
                         message=result_data.get("error") or "需要重新输入 OTP 验证码",
                         otp_wait_status=result_data.get("otp_wait_status"),
+                        credential_username=result_data.get("otp_credential_username"),
+                        credential_device_group=result_data.get("otp_credential_device_group"),
                     )
             exc = multi_result[0].exception if multi_result else None
             if isinstance(exc, OTPRequiredException):
                 return exc
     return None
+
+
+async def _get_credential_meta_by_id(
+    db: AsyncSession, credential_id: str | None
+) -> tuple[str | None, str | None]:
+    """根据凭据ID获取账号与设备分组信息。
+
+    Args:
+        db: 数据库会话。
+        credential_id: 凭据 ID（字符串）。
+
+    Returns:
+        tuple[str | None, str | None]: (用户名, 设备分组)
+    """
+    if not credential_id:
+        return None, None
+    try:
+        credential_uuid = UUID(str(credential_id))
+    except Exception:
+        return None, None
+    credential = await credential_crud.get(db, credential_uuid)
+    if not credential:
+        return None, None
+    return credential.username, credential.device_group
 
 
 async def _get_device_credential(db, device: Device, failed_devices: list[str] | None = None):
@@ -192,17 +217,13 @@ async def _get_device_credential(db, device: Device, failed_devices: list[str] |
         case AuthType.STATIC:
             if not device.username or not device.password_encrypted:
                 raise ValueError("设备缺少用户名或密码配置")
-            return await otp_service.get_credential_for_static_device(
-                device.username, device.password_encrypted
-            )
+            return await otp_service.get_credential_for_static_device(device.username, device.password_encrypted)
 
         case AuthType.OTP_SEED:
             # OTP 种子类型
-            if not device.dept_id:
-                raise ValueError("设备缺少部门关联")
-            credential = await credential_crud.get_by_dept_and_group(
-                db, device.dept_id, device.device_group
-            )
+            if not device.credential_id:
+                raise ValueError("设备缺少凭据ID")
+            credential = await credential_crud.get(db, device.credential_id)
             if not credential:
                 raise ValueError("设备组凭据未配置")
             if not credential.otp_seed_encrypted:
@@ -213,17 +234,15 @@ async def _get_device_credential(db, device: Device, failed_devices: list[str] |
 
         case AuthType.OTP_MANUAL:
             # OTP 手动输入类型
-            if not device.dept_id:
-                raise ValueError("设备缺少部门关联")
-            credential = await credential_crud.get_by_dept_and_group(
-                db, device.dept_id, device.device_group
-            )
+            if not device.credential_id:
+                raise ValueError("设备缺少凭据ID")
+            credential = await credential_crud.get(db, device.credential_id)
             if not credential:
                 raise ValueError("设备组凭据未配置")
             return await otp_service.get_credential_for_otp_manual_device(
                 username=credential.username,
-                dept_id=device.dept_id,
-                device_group=device.device_group,
+                credential_id=device.credential_id,
+                credential_device_group=credential.device_group,
                 failed_devices=failed_devices,
             )
 
@@ -359,30 +378,36 @@ async def _rollback_task_async(self, task_id: str) -> dict[str, Any]:
 
             # 检查厂商支持
             if d.vendor and d.vendor.lower() not in SUPPORTED_ROLLBACK_VENDORS:
-                cannot_rollback_devices.append({
-                    "device_id": device_id_str,
-                    "device_name": d.name,
-                    "reason": f"厂商 {d.vendor} 暂不支持回滚",
-                })
+                cannot_rollback_devices.append(
+                    {
+                        "device_id": device_id_str,
+                        "device_name": d.name,
+                        "reason": f"厂商 {d.vendor} 暂不支持回滚",
+                    }
+                )
                 continue
 
             # 检查备份存在
             backup_id = pre_change_backup_ids.get(device_id_str)
             if not backup_id:
-                cannot_rollback_devices.append({
-                    "device_id": device_id_str,
-                    "device_name": d.name,
-                    "reason": "无变更前备份",
-                })
+                cannot_rollback_devices.append(
+                    {
+                        "device_id": device_id_str,
+                        "device_name": d.name,
+                        "reason": "无变更前备份",
+                    }
+                )
                 continue
 
             backup = await db.get(Backup, UUID(backup_id))
             if not backup or not backup.content:
-                cannot_rollback_devices.append({
-                    "device_id": device_id_str,
-                    "device_name": d.name,
-                    "reason": "变更前备份内容不存在",
-                })
+                cannot_rollback_devices.append(
+                    {
+                        "device_id": device_id_str,
+                        "device_name": d.name,
+                        "reason": "变更前备份内容不存在",
+                    }
+                )
                 continue
 
             # 获取凭据
@@ -396,11 +421,13 @@ async def _rollback_task_async(self, task_id: str) -> dict[str, Any]:
                 await db.commit()
                 return {"status": "paused", "otp_required": e.details}
             except Exception as e:
-                cannot_rollback_devices.append({
-                    "device_id": device_id_str,
-                    "device_name": d.name,
-                    "reason": f"凭据获取失败: {e}",
-                })
+                cannot_rollback_devices.append(
+                    {
+                        "device_id": device_id_str,
+                        "device_name": d.name,
+                        "reason": f"凭据获取失败: {e}",
+                    }
+                )
                 continue
 
             expected_md5 = backup.md5_hash or hashlib.md5(backup.content.encode("utf-8")).hexdigest()
@@ -414,20 +441,25 @@ async def _rollback_task_async(self, task_id: str) -> dict[str, Any]:
                 "cred": cred,
             }
 
-            check_hosts_data.append({
-                "name": device_id_str,
-                "hostname": d.ip_address,
-                "platform": d.platform or get_platform_for_vendor(d.vendor),
-                "username": cred.username,
-                "password": cred.password,
-                "port": d.ssh_port or 22,
-                "data": {
-                    "device_id": device_id_str,
-                    "auth_type": d.auth_type,
-                    "dept_id": str(d.dept_id) if d.dept_id else None,
-                    "device_group": d.device_group,
-                },
-            })
+            check_hosts_data.append(
+                {
+                    "name": device_id_str,
+                    "hostname": d.ip_address,
+                    "platform": d.platform or get_platform_for_vendor(d.vendor),
+                    "username": cred.username,
+                    "password": cred.password,
+                    "port": d.ssh_port or 22,
+                    "data": {
+                        "device_id": device_id_str,
+                        "auth_type": d.auth_type,
+                        "credential_id": str(d.credential_id) if d.credential_id else None,
+                        "credential_username": cred.username,
+                        "credential_device_group": d.device_group,
+                        "dept_id": str(d.dept_id) if d.dept_id else None,
+                        "device_group": d.device_group,
+                    },
+                }
+            )
 
         if not check_hosts_data:
             return {
@@ -473,13 +505,15 @@ async def _rollback_task_async(self, task_id: str) -> dict[str, Any]:
 
                 if current_md5 == expected_md5:
                     # 配置未变化，跳过
-                    skipped_devices.append({
-                        "device_id": device_id_str,
-                        "device_name": device.name,
-                        "reason": "配置未变化",
-                        "current_md5": current_md5,
-                        "expected_md5": expected_md5,
-                    })
+                    skipped_devices.append(
+                        {
+                            "device_id": device_id_str,
+                            "device_name": device.name,
+                            "reason": "配置未变化",
+                            "current_md5": current_md5,
+                            "expected_md5": expected_md5,
+                        }
+                    )
                     celery_task_logger.info("配置未变化，跳过回滚", device_id=device_id_str)
                     continue
 
@@ -487,21 +521,26 @@ async def _rollback_task_async(self, task_id: str) -> dict[str, Any]:
             cred = info["cred"]
             cmds = info["cmds"]
             verify_expected_md5[device_id_str] = expected_md5
-            rollback_hosts_data.append({
-                "name": device_id_str,
-                "hostname": device.ip_address,
-                "platform": device.platform or get_platform_for_vendor(device.vendor),
-                "username": cred.username,
-                "password": cred.password,
-                "port": device.ssh_port or 22,
-                "data": {
-                    "deploy_configs": cmds,
-                    "device_id": device_id_str,
-                    "auth_type": device.auth_type,
-                    "dept_id": str(device.dept_id) if device.dept_id else None,
-                    "device_group": device.device_group,
-                },
-            })
+            rollback_hosts_data.append(
+                {
+                    "name": device_id_str,
+                    "hostname": device.ip_address,
+                    "platform": device.platform or get_platform_for_vendor(device.vendor),
+                    "username": cred.username,
+                    "password": cred.password,
+                    "port": device.ssh_port or 22,
+                    "data": {
+                        "deploy_configs": cmds,
+                        "device_id": device_id_str,
+                        "auth_type": device.auth_type,
+                        "credential_id": str(device.credential_id) if device.credential_id else None,
+                        "credential_username": cred.username,
+                        "credential_device_group": device.device_group,
+                        "dept_id": str(device.dept_id) if device.dept_id else None,
+                        "device_group": device.device_group,
+                    },
+                }
+            )
 
         if not rollback_hosts_data:
             # 所有设备都跳过了
@@ -731,7 +770,10 @@ async def _async_deploy_task_impl(self, task_id: str, *, celery_task_id: str | N
         template = await db.get(Template, task.template_id) if task.template_id else None
         if not template or template.is_deleted:
             raise ValueError("模板不存在或已被删除")
-        if template.status != TemplateStatus.APPROVED.value or template.approval_status != ApprovalStatus.APPROVED.value:
+        if (
+            template.status != TemplateStatus.APPROVED.value
+            or template.approval_status != ApprovalStatus.APPROVED.value
+        ):
             raise ValueError("模板未处于已审批状态")
 
         deploy_plan = task.deploy_plan or {}
@@ -814,6 +856,9 @@ async def _async_deploy_task_impl(self, task_id: str, *, celery_task_id: str | N
                             "device_name": d.name,
                             # OTP 认证所需字段
                             "auth_type": d.auth_type,
+                            "credential_id": str(d.credential_id) if d.credential_id else None,
+                            "credential_username": cred.username,
+                            "credential_device_group": d.device_group,
                             "dept_id": str(d.dept_id) if d.dept_id else None,
                             "device_group": d.device_group,
                         },
@@ -858,24 +903,23 @@ async def _async_deploy_task_impl(self, task_id: str, *, celery_task_id: str | N
         backup_completed: list[str] = []
         pre_change_timeout_device_ids: list[str] = []
         pre_change_timeout_info: dict[str, Any] = {}
-        otp_timeout_group_set: set[tuple[str, str]] = set()
-        backup_otp_group: tuple[str, str] | None = None
+        otp_timeout_group_set: set[str] = set()
+        backup_otp_group: str | None = None
 
         for host_name, multi_result in backup_results.items():
             if multi_result.failed:
                 result_data = multi_result[0].result if multi_result else {}
                 if result_data and result_data.get("otp_required"):
                     wait_status = result_data.get("otp_wait_status")
-                    dept_id = result_data.get("otp_dept_id")
-                    device_group = result_data.get("otp_device_group")
+                    credential_id = result_data.get("otp_credential_id") or result_data.get("credential_id")
                     if wait_status == "timeout":
                         backup_otp_timeout.append(host_name)
-                        if dept_id and device_group:
-                            otp_timeout_group_set.add((str(dept_id), str(device_group)))
+                        if credential_id:
+                            otp_timeout_group_set.add(str(credential_id))
                     else:
                         backup_otp_errors.append(host_name)
-                        if dept_id and device_group and backup_otp_group is None:
-                            backup_otp_group = (str(dept_id), str(device_group))
+                        if credential_id and backup_otp_group is None:
+                            backup_otp_group = str(credential_id)
                     continue
                 if isinstance(multi_result[0].exception if multi_result else None, OTPRequiredException):
                     backup_otp_errors.append(host_name)
@@ -904,8 +948,7 @@ async def _async_deploy_task_impl(self, task_id: str, *, celery_task_id: str | N
             }
             if otp_timeout_group_set:
                 pre_change_timeout_info["otp_timeout_groups"] = [
-                    {"dept_id": dept_id, "device_group": device_group}
-                    for dept_id, device_group in sorted(otp_timeout_group_set)
+                    {"credential_id": credential_id} for credential_id in sorted(otp_timeout_group_set)
                 ]
             pre_change_timeout_info["otp_wait_timeout"] = settings.OTP_WAIT_TIMEOUT_SECONDS
             pre_change_timeout_info["otp_cache_ttl"] = settings.OTP_CACHE_TTL_SECONDS
@@ -940,13 +983,15 @@ async def _async_deploy_task_impl(self, task_id: str, *, celery_task_id: str | N
         if backup_otp_errors:
             task.status = TaskStatus.PAUSED.value
             task.error_message = "需要重新输入 OTP 验证码"
+            otp_username, otp_device_group = await _get_credential_meta_by_id(db, backup_otp_group)
             task.result = {
                 "otp_required": True,
                 "otp_wait_status": "waiting",
                 "otp_failed_device_ids": backup_otp_errors,
                 "pending_device_ids": backup_otp_errors,
-                "otp_dept_id": backup_otp_group[0] if backup_otp_group else None,
-                "otp_device_group": backup_otp_group[1] if backup_otp_group else None,
+                "otp_credential_id": backup_otp_group,
+                "otp_credential_username": otp_username,
+                "otp_credential_device_group": otp_device_group,
                 "task_id": str(task_id),
                 "otp_wait_timeout": settings.OTP_WAIT_TIMEOUT_SECONDS,
                 "otp_cache_ttl": settings.OTP_CACHE_TTL_SECONDS,
@@ -977,29 +1022,28 @@ async def _async_deploy_task_impl(self, task_id: str, *, celery_task_id: str | N
         success_count = 0
         failed_count = 0
         deploy_timeout_info: dict[str, Any] = {}
-        deploy_otp_group: tuple[str, str] | None = None
+        deploy_otp_group: str | None = None
 
         for host_name, multi_result in deploy_results.items():
             if multi_result.failed:
                 result_data = multi_result[0].result if multi_result else {}
                 if result_data and result_data.get("otp_required"):
                     wait_status = result_data.get("otp_wait_status")
-                    dept_id = result_data.get("otp_dept_id")
-                    device_group = result_data.get("otp_device_group")
+                    credential_id = result_data.get("otp_credential_id") or result_data.get("credential_id")
                     if wait_status == "timeout":
                         deploy_otp_timeout.append(host_name)
                         if result_data.get("skipped"):
                             deploy_skipped.append(host_name)
-                        if dept_id and device_group:
-                            otp_timeout_group_set.add((str(dept_id), str(device_group)))
+                        if credential_id:
+                            otp_timeout_group_set.add(str(credential_id))
                         all_results["results"][host_name] = {
                             "status": "otp_timeout",
                             "error": result_data.get("error", "等待 OTP 超时"),
                         }
                     else:
                         deploy_otp_errors.append(host_name)
-                        if dept_id and device_group and deploy_otp_group is None:
-                            deploy_otp_group = (str(dept_id), str(device_group))
+                        if credential_id and deploy_otp_group is None:
+                            deploy_otp_group = str(credential_id)
                         all_results["results"][host_name] = {
                             "status": "otp_required",
                             "error": result_data.get("error", "需要输入 OTP 验证码"),
@@ -1043,8 +1087,7 @@ async def _async_deploy_task_impl(self, task_id: str, *, celery_task_id: str | N
             }
             if otp_timeout_group_set:
                 deploy_timeout_info["otp_timeout_groups"] = [
-                    {"dept_id": dept_id, "device_group": device_group}
-                    for dept_id, device_group in sorted(otp_timeout_group_set)
+                    {"credential_id": credential_id} for credential_id in sorted(otp_timeout_group_set)
                 ]
             deploy_timeout_info["otp_wait_timeout"] = settings.OTP_WAIT_TIMEOUT_SECONDS
             deploy_timeout_info["otp_cache_ttl"] = settings.OTP_CACHE_TTL_SECONDS
@@ -1059,13 +1102,15 @@ async def _async_deploy_task_impl(self, task_id: str, *, celery_task_id: str | N
         if deploy_otp_errors:
             task.status = TaskStatus.PAUSED.value
             task.error_message = "需要重新输入 OTP 验证码"
+            otp_username, otp_device_group = await _get_credential_meta_by_id(db, deploy_otp_group)
             task.result = {
                 "otp_required": True,
                 "otp_wait_status": "waiting",
                 "otp_failed_device_ids": deploy_otp_errors,
                 "pending_device_ids": deploy_otp_errors,
-                "otp_dept_id": deploy_otp_group[0] if deploy_otp_group else None,
-                "otp_device_group": deploy_otp_group[1] if deploy_otp_group else None,
+                "otp_credential_id": deploy_otp_group,
+                "otp_credential_username": otp_username,
+                "otp_credential_device_group": otp_device_group,
                 "task_id": str(task_id),
                 "pre_change_backup_ids": pre_change_backup_ids,
                 "otp_wait_timeout": settings.OTP_WAIT_TIMEOUT_SECONDS,

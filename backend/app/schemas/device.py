@@ -176,6 +176,7 @@ class DeviceResponse(BaseModel):
         auth_type (AuthType): 认证类型。
         dept_id (UUID | None): 所属部门 ID。
         device_group (DeviceGroup): 设备分组。
+        credential_id (UUID | None): 设备凭据ID（OTP 设备）。
         status (DeviceStatus): 设备状态。
         serial_number (str | None): 序列号。
         os_version (str | None): 操作系统版本。
@@ -202,6 +203,7 @@ class DeviceResponse(BaseModel):
     auth_type: AuthType
     dept_id: UUID | None = None
     device_group: DeviceGroup
+    credential_id: UUID | None = None
     status: DeviceStatus
     serial_number: str | None = None
     os_version: str | None = None

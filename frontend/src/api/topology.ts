@@ -92,26 +92,52 @@ export interface TopologyCollectRequest {
   async_mode?: boolean
 }
 
+/** 设备 LLDP 采集结果 */
+export interface DeviceLLDPResult {
+  device_id: string
+  device_name: string | null
+  success: boolean
+  links_count: number
+  error: string | null
+}
+
 /** 拓扑采集结果 */
 export interface TopologyCollectResult {
+  task_id?: string | null
   total_devices: number
   success_count: number
   failed_count: number
   total_links: number
-  // OTP 相关字段（当任务需要 OTP 时返回）
+  results?: DeviceLLDPResult[]
+  started_at?: string | null
+  completed_at?: string | null
+  // OTP 相关字段（与 OtpMeta 保持一致）
   otp_required?: boolean
-  otp_dept_id?: string
-  otp_device_group?: string
-  otp_failed_devices?: string[]
+  otp_credential_id?: string | null
+  otp_credential_username?: string | null
+  otp_credential_device_group?: string | null
+  otp_failed_device_ids?: string[]
+  otp_wait_status?: 'waiting' | 'timeout' | 'ready' | string | null
+  otp_wait_timeout?: number | null
+  otp_cache_ttl?: number | null
 }
 
 /** 拓扑任务状态 */
 export interface TopologyTaskStatus {
   task_id: string
-  status: string
+  status: string  // 可能为 'otp_required'
   progress: number | null
   result: TopologyCollectResult | null
   error: string | null
+  // OTP 相关字段（当 status === 'otp_required' 时）
+  otp_required?: boolean
+  otp_credential_id?: string | null
+  otp_credential_username?: string | null
+  otp_credential_device_group?: string | null
+  otp_failed_device_ids?: string[] | null
+  otp_wait_status?: string | null
+  otp_wait_timeout?: number | null
+  otp_cache_ttl?: number | null
 }
 
 /** 拓扑任务响应 */

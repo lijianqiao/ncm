@@ -153,11 +153,15 @@ class TopologyCollectResult(BaseModel):
     started_at: datetime | None = Field(default=None, description="开始时间")
     completed_at: datetime | None = Field(default=None, description="完成时间")
 
-    # OTP 相关字段（当任务需要 OTP 时返回）
+    # OTP 相关字段（当任务需要 OTP 时返回，字段命名与 OtpMeta 保持一致）
     otp_required: bool = Field(default=False, description="是否需要 OTP 验证")
-    otp_dept_id: str | None = Field(default=None, description="需要 OTP 的部门 ID")
-    otp_device_group: str | None = Field(default=None, description="需要 OTP 的设备组")
-    otp_failed_devices: list[str] = Field(default_factory=list, description="OTP 验证失败的设备 ID 列表")
+    otp_credential_id: str | None = Field(default=None, description="需要 OTP 的凭据 ID")
+    otp_credential_username: str | None = Field(default=None, description="需要 OTP 的凭据账号")
+    otp_credential_device_group: str | None = Field(default=None, description="需要 OTP 的凭据分组")
+    otp_failed_device_ids: list[str] = Field(default_factory=list, description="OTP 验证失败的设备 ID 列表")
+    otp_wait_status: str | None = Field(default=None, description="等待状态 waiting/timeout/ready")
+    otp_wait_timeout: int | None = Field(default=None, description="等待 OTP 超时时间（秒）")
+    otp_cache_ttl: int | None = Field(default=None, description="OTP 缓存有效期（秒）")
 
 
 class TopologyTaskStatus(BaseModel):

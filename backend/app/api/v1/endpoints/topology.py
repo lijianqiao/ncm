@@ -431,9 +431,10 @@ async def get_topology_task_status(task_id: str) -> ResponseBase[TopologyTaskSta
                     total_links=0,
                     results=[],
                     otp_required=True,
-                    otp_dept_id=task_result.get("dept_id"),
-                    otp_device_group=task_result.get("device_group"),
-                    otp_failed_devices=task_result.get("failed_devices", []),
+                    otp_credential_id=task_result.get("otp_credential_id") or task_result.get("credential_id"),
+                    otp_credential_username=task_result.get("otp_credential_username"),
+                    otp_credential_device_group=task_result.get("otp_credential_device_group"),
+                    otp_failed_device_ids=task_result.get("failed_devices", []),
                 )
             else:
                 status.result = TopologyCollectResult.model_validate(task_result)

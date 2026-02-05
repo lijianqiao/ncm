@@ -36,15 +36,15 @@ def _normalize_device_group(value: str | Enum | None) -> str | None:
     return text
 
 
-def build_backup_batches(devices: list[Device], *, chunk_size: int = 100) -> list[dict[str, Any]]:
+def build_backup_batches(devices: list[Device], *, chunk_size: int = 50) -> list[dict[str, Any]]:
     """
     批量备份分组规则：
-    - 非 otp_manual：合并为一个任务，按 100 台分批
-    - otp_manual：按 (dept_id, device_group) 分组后再按 100 台分批
+    - static：不按凭据分组，按 50 台分批
+    - otp_seed/otp_manual：按 credential_id 分组后再按 50 台分批
 
     Args:
         devices (list[Device]): 设备列表。
-        chunk_size (int): 每批设备数量，默认为 100。
+        chunk_size (int): 每批设备数量，默认为 50。
 
     Returns:
         list[dict[str, Any]]: 分组后的批次列表，每个批次包含设备信息和元数据。
@@ -52,53 +52,59 @@ def build_backup_batches(devices: list[Device], *, chunk_size: int = 100) -> lis
     Raises:
         BadRequestException: 当设备缺少部门或设备分组时。
     """
-    otp_manual_devices: dict[tuple[UUID, str], list[Device]] = {}
-    non_otp_devices: list[Device] = []
+    otp_devices: dict[UUID, list[Device]] = {}
+    static_devices: list[Device] = []
 
     for device in devices:
         auth_type = AuthType(device.auth_type)
-        if auth_type == AuthType.OTP_MANUAL:
-            if not device.dept_id or not device.device_group:
-                raise BadRequestException(message=f"设备 {device.name} 缺少部门或设备分组")
-            group_value = _normalize_device_group(device.device_group) or str(device.device_group)
-            key = (device.dept_id, group_value)
-            otp_manual_devices.setdefault(key, []).append(device)
-        else:
-            non_otp_devices.append(device)
+        if auth_type == AuthType.STATIC:
+            static_devices.append(device)
+            continue
+        if auth_type in (AuthType.OTP_SEED, AuthType.OTP_MANUAL):
+            if not device.credential_id:
+                raise BadRequestException(message=f"设备 {device.name} 缺少凭据ID")
+            otp_devices.setdefault(device.credential_id, []).append(device)
+            continue
+        static_devices.append(device)
 
     batches: list[dict[str, Any]] = []
 
-    if non_otp_devices:
-        total = len(non_otp_devices)
+    if static_devices:
+        total = len(static_devices)
         total_batches = max(1, (total + chunk_size - 1) // chunk_size)
         for idx in range(0, total, chunk_size):
-            batch_devices = non_otp_devices[idx : idx + chunk_size]
+            batch_devices = static_devices[idx : idx + chunk_size]
             batches.append(
                 {
                     "dept_id": None,
                     "device_group": None,
+                    "credential_id": None,
                     "devices": batch_devices,
                     "batch_index": idx // chunk_size,
                     "batch_total": total_batches,
                     "group_total": total,
-                    "auth_bucket": "non_otp",
+                    "auth_bucket": "static",
                 }
             )
 
-    for (dept_id, device_group), group_devices in otp_manual_devices.items():
+    for credential_id, group_devices in otp_devices.items():
         total = len(group_devices)
         total_batches = max(1, (total + chunk_size - 1) // chunk_size)
+        device_group = _normalize_device_group(group_devices[0].device_group) if group_devices else None
+        dept_id = group_devices[0].dept_id if group_devices else None
         for idx in range(0, total, chunk_size):
             batch_devices = group_devices[idx : idx + chunk_size]
+            auth_type = AuthType(batch_devices[0].auth_type) if batch_devices else AuthType.OTP_SEED
             batches.append(
                 {
                     "dept_id": dept_id,
                     "device_group": device_group,
+                    "credential_id": str(credential_id),
                     "devices": batch_devices,
                     "batch_index": idx // chunk_size,
                     "batch_total": total_batches,
                     "group_total": total,
-                    "auth_bucket": "otp_manual",
+                    "auth_bucket": auth_type.value,
                 }
             )
 

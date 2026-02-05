@@ -62,16 +62,31 @@ export interface CredentialSearchParams {
 
 /** OTP 缓存请求 */
 export interface OTPCacheRequest {
-  dept_id: string
-  device_group: DeviceGroup
-  otp_code: string
+  credential_id?: string
+  dept_id?: string
+  device_group?: DeviceGroup
+  otp_code: string  // 6-8位
 }
 
 /** OTP 缓存响应 */
 export interface OTPCacheResponse {
   success: boolean
   message: string
-  expires_in: number
+  expires_in: number  // OTP 缓存剩余有效期（秒）
+}
+
+/** OTP 验证请求 */
+export interface OTPVerifyRequest {
+  credential_id: string
+  otp_code: string  // 6-8位
+}
+
+/** OTP 验证响应 */
+export interface OTPVerifyResponse {
+  verified: boolean
+  message: string
+  expires_in: number       // OTP 缓存剩余有效期（秒）
+  device_tested: string | null  // 测试连接的设备名称
 }
 
 // ==================== API 函数 ====================

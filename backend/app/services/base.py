@@ -297,10 +297,10 @@ class DeviceCredentialMixin:
 
         elif auth_type == AuthType.OTP_SEED:
             # OTP 种子：从 DeviceGroupCredential 获取
-            if not device.dept_id:
-                raise BadRequestException(message=f"设备 {device.name} 缺少部门关联")
+            if not device.credential_id:
+                raise BadRequestException(message=f"设备 {device.name} 缺少凭据ID")
 
-            credential = await self.credential_crud.get_by_dept_and_group(self.db, device.dept_id, device.device_group)
+            credential = await self.credential_crud.get(self.db, device.credential_id)
             if not credential or not credential.otp_seed_encrypted:
                 raise BadRequestException(message=f"设备 {device.name} 的凭据未配置 OTP 种子")
 
@@ -311,17 +311,17 @@ class DeviceCredentialMixin:
 
         elif auth_type == AuthType.OTP_MANUAL:
             # 手动 OTP：从 Redis 缓存获取
-            if not device.dept_id:
-                raise BadRequestException(message=f"设备 {device.name} 缺少部门关联")
+            if not device.credential_id:
+                raise BadRequestException(message=f"设备 {device.name} 缺少凭据ID")
 
-            credential = await self.credential_crud.get_by_dept_and_group(self.db, device.dept_id, device.device_group)
+            credential = await self.credential_crud.get(self.db, device.credential_id)
             if not credential:
                 raise BadRequestException(message=f"设备 {device.name} 的凭据未配置")
 
             return await otp_service.get_credential_for_otp_manual_device(
                 username=credential.username,
-                dept_id=device.dept_id,
-                device_group=device.device_group,
+                credential_id=device.credential_id,
+                credential_device_group=credential.device_group,
                 failed_devices=failed_devices,
             )
 

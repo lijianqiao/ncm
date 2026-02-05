@@ -8,8 +8,9 @@
 提供 LLDP 拓扑采集、拓扑构建和 vis.js 格式数据输出。
 """
 
+from collections.abc import Callable
 from datetime import datetime, timedelta
-from typing import Any, Callable
+from typing import Any
 from uuid import UUID
 
 import redis.asyncio as redis
@@ -19,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.enums import DeviceStatus
 from app.core.logger import celery_details_logger, logger
+from app.core.otp import OtpMetaBuilder, dedupe_otp_groups
 from app.crud.crud_credential import CRUDCredential
 from app.crud.crud_device import CRUDDevice
 from app.crud.crud_topology import CRUDTopology
@@ -27,6 +29,7 @@ from app.models.topology import TopologyLink
 from app.network.async_runner import run_async_tasks
 from app.network.async_tasks import async_get_lldp_neighbors
 from app.network.nornir_config import init_nornir_async
+from app.network.platform_config import get_scrapli_platform
 from app.schemas.topology import (
     DeviceLLDPResult,
     DeviceNeighborsResponse,
@@ -39,8 +42,6 @@ from app.schemas.topology import (
     TopologyStats,
 )
 from app.services.base import DeviceCredentialMixin
-from app.core.otp_helpers import build_otp_required_info, dedupe_otp_groups
-from app.network.platform_config import get_scrapli_platform
 
 # 拓扑缓存键
 TOPOLOGY_CACHE_KEY = "ncm:topology:data"
@@ -133,8 +134,8 @@ class TopologyService(DeviceCredentialMixin):
             device_map: dict[str, Device] = {}
             failed_device_ids: list[str] = []
 
-            # 收集所有需要 OTP 的设备组（避免多次触发 428）
-            otp_required_groups: list[dict[str, Any]] = []
+            # 收集所有需要 OTP 的设备组（使用 OtpMetaBuilder 统一构建）
+            otp_metas: list[dict[str, Any]] = []
 
             for device in devices:
                 if not device.ip_address:
@@ -171,16 +172,24 @@ class TopologyService(DeviceCredentialMixin):
                         "username": credential.username,
                         "password": credential.password,
                         "platform": get_scrapli_platform(device.vendor),
+                        "data": {
+                            "auth_type": device.auth_type,
+                            "credential_id": str(device.credential_id) if device.credential_id else None,
+                            "credential_username": credential.username if credential else None,
+                            "credential_device_group": device.device_group,
+                            "dept_id": str(device.dept_id) if device.dept_id else None,
+                            "device_group": str(device.device_group),
+                            "device_id": str(device.id),
+                        },
                     }
                     hosts_data.append(host_data)
                     # 使用 device.name 作为 key，与 Nornir host_name 保持一致
                     device_map[device.name] = device
 
                 except OTPRequiredException as e:
-                    # 收集所有需要 OTP 的设备组，最后统一抛出
-                    otp_required_groups.append(
-                        {"dept_id": e.dept_id_str, "device_group": e.device_group}
-                    )
+                    # 使用 OtpMetaBuilder 统一构建 OTP 元数据
+                    meta = OtpMetaBuilder.from_exception(e)
+                    otp_metas.append(OtpMetaBuilder.serialize(meta))
                     failed_device_ids.append(str(device.id))
                     result.failed_count += 1
                     result.results.append(
@@ -188,7 +197,7 @@ class TopologyService(DeviceCredentialMixin):
                             device_id=device.id,
                             device_name=device.name,
                             success=False,
-                            error=f"需要 OTP: {e.device_group}",
+                            error=f"需要 OTP: {e.credential_device_group or 'unknown'}",
                         )
                     )
                     # 记录 OTP 需求到详细日志
@@ -196,7 +205,8 @@ class TopologyService(DeviceCredentialMixin):
                         "设备需要 OTP 认证",
                         device=device.name,
                         device_id=str(device.id),
-                        device_group=e.device_group,
+                        credential_id=e.credential_id_str,
+                        credential_device_group=e.credential_device_group,
                     )
                 except Exception as e:
                     # 其他凭据错误，记录并跳过该设备
@@ -221,21 +231,20 @@ class TopologyService(DeviceCredentialMixin):
                     )
 
             # 如果有需要 OTP 的设备组，抛出异常（只返回第一个）
-            if otp_required_groups:
-                unique_groups = [
-                    group
-                    for group in dedupe_otp_groups(otp_required_groups)
-                    if group.get("dept_id") and group.get("device_group")
-                ]
+            if otp_metas:
+                unique_groups = dedupe_otp_groups(otp_metas)
                 if unique_groups:
                     first_group = unique_groups[0]
+                    credential_username = first_group.get("otp_credential_username")
+                    credential_device_group = first_group.get("otp_credential_device_group")
                     raise OTPRequiredException(
-                        dept_id=str(first_group.get("dept_id")),
-                        device_group=str(first_group.get("device_group")),
+                        credential_id=first_group.get("otp_credential_id"),
                         failed_devices=failed_device_ids,
                         message=f"需要输入 OTP 验证码（共 {len(unique_groups)} 个设备组需要验证）",
+                        credential_username=credential_username,
+                        credential_device_group=credential_device_group,
                     )
-                logger.warning("OTP 需要验证但缺少部门或设备分组信息", groups=otp_required_groups)
+                logger.warning("OTP 需要验证但缺少凭据信息", groups=otp_metas)
 
             # 报告进度：凭据准备完成
             if progress_callback:
@@ -278,18 +287,19 @@ class TopologyService(DeviceCredentialMixin):
             aggregated = self._convert_lldp_results(nornir_results)
 
             if aggregated.get("otp_required"):
-                dept_id_str = aggregated.get("otp_dept_id")
-                device_group = aggregated.get("otp_device_group")
-
-                if dept_id_str and device_group:
+                credential_id = aggregated.get("otp_credential_id") or aggregated.get("credential_id")
+                if credential_id:
+                    credential_username = aggregated.get("otp_credential_username")
+                    credential_device_group = aggregated.get("otp_credential_device_group")
                     raise OTPRequiredException(
-                        dept_id=UUID(str(dept_id_str)),
-                        device_group=str(device_group),
+                        credential_id=credential_id,
                         failed_devices=aggregated.get("otp_failed_device_ids"),
                         message="OTP 认证失败",
+                        credential_username=credential_username,
+                        credential_device_group=credential_device_group,
                     )
                 else:
-                    logger.warning("Nornir 结果显示 OTP 失败但缺少部门信息", aggregated=aggregated)
+                    logger.warning("Nornir 结果显示 OTP 失败但缺少凭据信息", aggregated=aggregated)
 
             # 处理采集结果
             total_links = 0
@@ -432,10 +442,11 @@ class TopologyService(DeviceCredentialMixin):
                     aggregated["failed"] += 1
                     if wait_status == "timeout":
                         otp_timeout_device_ids.append(host_name)
-                    if otp_required_info is None and result_data.get("otp_dept_id") and result_data.get("otp_device_group"):
-                        otp_required_info = build_otp_required_info(
-                            dept_id=result_data.get("otp_dept_id"),
-                            device_group=result_data.get("otp_device_group"),
+                    if otp_required_info is None and result_data.get("otp_credential_id"):
+                        otp_required_info = OtpMetaBuilder.build_info(
+                            credential_id=result_data.get("otp_credential_id"),
+                            credential_username=result_data.get("otp_credential_username"),
+                            credential_device_group=result_data.get("otp_credential_device_group"),
                             failed_device_ids=result_data.get("otp_failed_device_ids"),
                             wait_status=wait_status,
                         )
@@ -444,9 +455,10 @@ class TopologyService(DeviceCredentialMixin):
                     wait_status = None
                     if isinstance(exc.details, dict):
                         wait_status = exc.details.get("otp_wait_status")
-                    otp_required_info = build_otp_required_info(
-                        dept_id=exc.dept_id,
-                        device_group=exc.device_group,
+                    otp_required_info = OtpMetaBuilder.build_info(
+                        credential_id=exc.credential_id_str or "unknown",
+                        credential_username=exc.credential_username,
+                        credential_device_group=exc.credential_device_group,
                         failed_device_ids=exc.failed_devices,
                         wait_status=wait_status,
                     )
@@ -839,7 +851,11 @@ class TopologyService(DeviceCredentialMixin):
 
         # 批量预加载目标设备信息，避免 N+1 查询
         target_ids = [link.target_device_id for link in links if link.target_device_id]
-        target_devices = await self.device_crud.get_by_ids(db, target_ids, options=self.device_crud._DEVICE_OPTIONS) if target_ids else []
+        target_devices = (
+            await self.device_crud.get_by_ids(db, target_ids, options=self.device_crud._DEVICE_OPTIONS)
+            if target_ids
+            else []
+        )
         target_map: dict[UUID, Device] = {d.id: d for d in target_devices}
 
         # 转换为响应格式

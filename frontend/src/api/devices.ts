@@ -41,6 +41,13 @@ export interface DeptSimple {
   parent_id: string | null
 }
 
+/** 凭据简要信息 */
+export interface CredentialSimple {
+  id: string
+  username: string
+  dept_name: string | null
+}
+
 /** 设备响应接口 */
 export interface Device {
   id: string
@@ -53,6 +60,8 @@ export interface Device {
   description: string | null
   ssh_port: number
   auth_type: AuthType
+  credential_id: string | null
+  credential: CredentialSimple | null
   dept_id: string | null
   dept: DeptSimple | null
   device_group: DeviceGroup | null
@@ -80,6 +89,7 @@ export interface DeviceCreate {
   description?: string
   ssh_port?: number
   auth_type?: AuthType
+  credential_id?: string
   dept_id?: string
   device_group?: DeviceGroup
   status?: DeviceStatus

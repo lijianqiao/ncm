@@ -328,8 +328,9 @@ def _handle_otp_exception(
         "status": "otp_required",
         "error": error_text,
         "result": None,
-        "otp_dept_id": str(otp_exc.dept_id),
-        "otp_device_group": otp_exc.device_group,
+        "otp_credential_id": otp_exc.credential_id_str,
+        "otp_credential_username": otp_exc.credential_username,
+        "otp_credential_device_group": otp_exc.credential_device_group,
     }
     if otp_exc.failed_devices:
         otp_failed_device_ids.extend(str(did) for did in otp_exc.failed_devices)
@@ -337,8 +338,9 @@ def _handle_otp_exception(
     if otp_required_info is None:
         otp_required_info = {
             "otp_required": True,
-            "otp_dept_id": str(otp_exc.dept_id),
-            "otp_device_group": otp_exc.device_group,
+            "otp_credential_id": otp_exc.credential_id_str,
+            "otp_credential_username": otp_exc.credential_username,
+            "otp_credential_device_group": otp_exc.credential_device_group,
         }
     return host_result, otp_required_info
 
@@ -382,8 +384,9 @@ def aggregate_results(results: AggregatedResult) -> dict[str, Any]:
         - results (dict): 各主机的详细结果
         - otp_failed_device_ids (list[str]): OTP 失败设备 ID 列表
         - otp_required (bool): 是否需要 OTP（可选）
-        - otp_dept_id (str): OTP 部门 ID（可选）
-        - otp_device_group (str): OTP 设备组（可选）
+        - otp_credential_id (str): OTP 凭据 ID（可选）
+        - otp_credential_username (str): OTP 凭据账号（可选）
+        - otp_credential_device_group (str): OTP 凭据分组（可选）
     """
     success_hosts: list[str] = []
     failed_hosts: list[str] = []

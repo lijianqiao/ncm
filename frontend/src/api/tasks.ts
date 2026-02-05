@@ -15,7 +15,7 @@ export interface ResumeTaskResponse {
   celery_task_id?: string
 }
 
-export function resumeTaskGroup(taskId: string, params: { dept_id: string; group: string }) {
+export function resumeTaskGroup(taskId: string, params: { credential_id: string }) {
   return request<ResponseBase<ResumeTaskResponse>>({
     url: `/tasks/${taskId}/resume`,
     method: 'post',

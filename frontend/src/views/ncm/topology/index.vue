@@ -271,18 +271,21 @@ const {
   },
   onComplete: (status) => {
     // 检查是否需要 OTP
-    if (status.status === 'otp_required' && status.result?.otp_required) {
+    if (status.status === 'otp_required' && status.result?.otp_required && status.result?.otp_credential_id) {
       const result = status.result
-      // 打开 OTP 弹窗，输入成功后重新发起任务
       globalOtpFlow.open(
         {
-          dept_id: result.otp_dept_id || '未知',
-          device_group: result.otp_device_group || '未知',
-          failed_devices: result.otp_failed_devices || [],
+          otp_credential_id: result.otp_credential_id,
+          otp_credential_username: result.otp_credential_username,
+          otp_credential_device_group: result.otp_credential_device_group,
+          otp_failed_device_ids: result.otp_failed_device_ids || [],
+          otp_wait_status: result.otp_wait_status,
+          otp_wait_timeout: result.otp_wait_timeout,
+          otp_cache_ttl: result.otp_cache_ttl,
           message: status.error || '需要输入 OTP 验证码',
         },
         async () => {
-          // OTP 验证成功后，重新发起拓扑刷新任务
+          // 注意：缓存 OTP 后需要重新发起 POST /topology/refresh（创建新任务）
           closeRefreshModal()
           await doRefreshTopology()
         },

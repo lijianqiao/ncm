@@ -77,33 +77,45 @@ export interface BatchBackupRequest {
   skip_device_ids?: string[]
 }
 
-/** OTP 通知结构 */
+/** OTP 通知结构（统一数据结构） */
 export interface OTPNotice {
-  type?: string
+  type?: 'otp_required' | 'otp_timeout' | string
   message?: string
-  dept_id: string
-  device_group: string
-  failed_devices?: Array<{ name: string; error: string }>
-  pending_device_ids?: string[]
-  task_id?: string
-  otp_wait_status?: string
-  otp_wait_timeout?: number
-  otp_cache_ttl?: number
+  otp_credential_id?: string | null
+  otp_credential_username?: string | null
+  otp_credential_device_group?: string | null
+  otp_failed_device_ids?: string[] | null
+  pending_device_ids?: string[] | null
+  task_id?: string | null
+  otp_wait_status?: 'waiting' | 'timeout' | 'ready' | null
+  otp_wait_timeout?: number | null
+  otp_cache_ttl?: number | null
 }
 
 /** 批量备份结果 */
 export interface BackupBatchResult {
   task_id: string
-  total: number
+  total?: number
+  total_devices?: number
   /** 同步接口返回 */
   success_count?: number
   failed_count?: number
-  failed_devices?: Array<{ device_id: string; error: string }>
+  success_devices?: string[]
+  failed_devices?: FailedDevice[] | Array<{ device_id: string; error: string }>
+  /** 断点续传支持 */
+  can_resume?: boolean
+  pending_device_ids?: string[] | null
   /** 异步任务返回 */
   success?: number
   failed?: number
   /** 设备级别的详细结果（异步任务返回） */
   results?: Record<string, { status: string; error?: string; result?: unknown }>
+}
+
+/** 失败设备信息 */
+export interface FailedDevice {
+  name: string
+  error: string
 }
 
 /** 备份任务状态 */
@@ -112,29 +124,23 @@ export interface BackupTaskStatus {
   status: 'pending' | 'running' | 'success' | 'failed'
 
   // 进度信息
-  progress?:
-  | number
-  | {
-    stage: string
-    message: string
-  }
+  progress?: Record<string, unknown> | null
 
   // 进度数值（用于进度条）
-  completed?: number // 已完成设备数
-  total?: number // 总设备数
-  percent?: number // 百分比 0-100
+  completed?: number | null
+  total?: number | null
+  percent?: number | null  // 0-100
 
-  // 完成后的统计
-  total_devices?: number
-  success_count?: number
-  failed_count?: number
-  failed_devices?: Array<{ name: string; error: string }>
+  // 结果摘要
+  total_devices?: number | null
+  success_count?: number | null
+  failed_count?: number | null
+  failed_devices?: FailedDevice[] | null
 
-  // OTP 相关
-  otp_notice?: OTPNotice
+  // OTP 提示信息（唯一来源）
+  otp_notice?: OTPNotice | null
 
-  // 兼容旧字段
-  result?: BackupBatchResult | null
+  // 错误信息
   error?: string | null
 }
 

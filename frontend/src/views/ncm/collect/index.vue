@@ -125,17 +125,18 @@ const submitManualCollect = async () => {
 
   const device = getSelectedDevice(collectModel.value.device_id)
   if (isOtpManualDevice(device)) {
-    globalOtpFlow.open(
-      {
-        dept_id: device?.dept_id || '',
-        device_group: String(device?.device_group || 'access'),
-        failed_devices: [],
-      },
-      async () => {
-        await runManualCollect(collectModel.value.device_id)
-      },
-    )
-    return
+    const credentialId = (device as { credential_id?: string })?.credential_id
+    if (credentialId) {
+      globalOtpFlow.open(
+        {
+          otp_credential_id: credentialId,
+        },
+        async () => {
+          await runManualCollect(collectModel.value.device_id)
+        },
+      )
+      return
+    }
   }
 
   try {
@@ -192,16 +193,18 @@ const submitBatchCollect = async () => {
   const otpManualDevices = selectedDevices.filter((d) => String(d.auth_type) === 'otp_manual')
 
   if (otpManualDevices.length > 0) {
-    const groups = new Set(
-      otpManualDevices.map((d) => `${d.dept_id || 'null'}::${String(d.device_group || 'null')}`),
+    const credentialIds = Array.from(
+      new Set(
+        otpManualDevices
+          .map((d) => (d as { credential_id?: string }).credential_id)
+          .filter((id): id is string => Boolean(id)),
+      ),
     )
-    if (groups.size === 1) {
-      const first = otpManualDevices[0]!
+    if (credentialIds.length === 1) {
+      const credentialId = credentialIds[0]!
       globalOtpFlow.open(
         {
-          dept_id: first.dept_id || '',
-          device_group: String(first.device_group || 'access'),
-          failed_devices: [],
+          otp_credential_id: credentialId,
         },
         async () => {
           await submitBatchCollectInternal()
@@ -209,7 +212,9 @@ const submitBatchCollect = async () => {
       )
       return
     }
-    $alert.warning('所选设备包含多个部门/分组的 OTP 手动认证设备，建议按部门+分组分批采集')
+    if (credentialIds.length > 1) {
+      $alert.warning('所选设备包含多个 OTP 凭据，建议按凭据分批采集')
+    }
   }
 
   await submitBatchCollectInternal()
@@ -251,11 +256,14 @@ const retryOtpExpiredDevices = () => {
   }
   batchCollectModel.value.device_ids = ids
   const first = getSelectedDevice(ids[0] || '')
+  const credentialId = (first as { credential_id?: string } | undefined)?.credential_id
+  if (!credentialId) {
+    $alert.warning('未获取到 OTP 凭据ID，请重新选择设备')
+    return
+  }
   globalOtpFlow.open(
     {
-      dept_id: first?.dept_id || '',
-      device_group: String(first?.device_group || 'access'),
-      failed_devices: [],
+      otp_credential_id: credentialId,
     },
     async () => {
       await submitBatchCollectInternal()

@@ -32,9 +32,15 @@ export interface PresetExecuteResult {
   parse_error: string | null
   error_message: string | null
 
+  // OTP 断点续传字段（与 OtpMeta 保持一致）
   otp_required?: boolean
-  otp_required_groups?: Array<{ dept_id: string; device_group: string }>
-  expires_in?: number | null
+  otp_credential_id?: string | null
+  otp_credential_username?: string | null
+  otp_credential_device_group?: string | null
+  otp_failed_device_ids?: string[]
+  otp_wait_status?: 'waiting' | 'timeout' | 'ready' | string | null
+  otp_wait_timeout?: number | null
+  otp_cache_ttl?: number | null
   next_action?: string | null
 }
 

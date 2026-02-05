@@ -26,7 +26,7 @@ from app.core.enums import AlertSeverity, AlertType, AuthType, BackupStatus, Bac
 from app.core.exceptions import OTPRequiredException
 from app.core.logger import celery_details_logger, celery_task_logger
 from app.core.minio_client import delete_object, put_text
-from app.core.otp import otp_coordinator
+from app.core.otp import OtpMetaBuilder, otp_coordinator
 from app.core.otp_service import otp_service
 from app.crud.crud_alert import alert_crud
 from app.crud.crud_backup import backup as backup_crud
@@ -256,8 +256,9 @@ def _convert_async_results_to_summary(
             otp_required: OTPRequiredException | None = None
             is_otp_required = False
             otp_wait_status = None
-            otp_dept_id = None
-            otp_device_group = None
+            otp_credential_id = None
+            otp_credential_username = None
+            otp_credential_device_group = None
 
             if multi_result and len(multi_result) > 0:
                 r = multi_result[0]
@@ -272,10 +273,12 @@ def _convert_async_results_to_summary(
                             error_msg = result_data.get("error", "用户未提供 OTP 验证码，连接失败")
                         else:
                             error_msg = result_data.get("error", "需要输入 OTP 验证码")
-                    if result_data.get("otp_dept_id"):
-                        otp_dept_id = result_data.get("otp_dept_id")
-                    if result_data.get("otp_device_group"):
-                        otp_device_group = result_data.get("otp_device_group")
+                    if result_data.get("otp_credential_id"):
+                        otp_credential_id = result_data.get("otp_credential_id")
+                    if result_data.get("otp_credential_username"):
+                        otp_credential_username = result_data.get("otp_credential_username")
+                    if result_data.get("otp_credential_device_group"):
+                        otp_credential_device_group = result_data.get("otp_credential_device_group")
 
                 if r.exception:
                     error_msg = str(r.exception)
@@ -283,29 +286,37 @@ def _convert_async_results_to_summary(
                         otp_required = r.exception
                         if isinstance(r.exception.details, dict):
                             otp_wait_status = r.exception.details.get("otp_wait_status") or otp_wait_status
-                            otp_dept_id = r.exception.details.get("dept_id") or otp_dept_id
-                            otp_device_group = r.exception.details.get("device_group") or otp_device_group
+                            otp_credential_id = r.exception.details.get("credential_id") or otp_credential_id
+                            otp_credential_username = (
+                                r.exception.details.get("otp_credential_username") or otp_credential_username
+                            )
+                            otp_credential_device_group = (
+                                r.exception.details.get("otp_credential_device_group") or otp_credential_device_group
+                            )
 
             if include_otp_info and (otp_required is not None or is_otp_required):
+                # 使用 OtpMetaBuilder 构建 OTP 元数据
+                otp_meta = OtpMetaBuilder.build(
+                    credential_id=otp_required.credential_id_str if otp_required else otp_credential_id,
+                    credential_username=otp_required.credential_username if otp_required else otp_credential_username,
+                    credential_device_group=(
+                        otp_required.credential_device_group if otp_required else otp_credential_device_group
+                    ),
+                    wait_status=otp_wait_status,
+                    failed_device_ids=[str(device_id)] if device_id else None,
+                )
                 results_dict[host_key] = {
                     "status": "otp_required",
                     "error": error_msg,
                     "result": None,
                     "device_id": device_id,
                     "device_name": device_name,
-                    "otp_dept_id": str(otp_required.dept_id) if otp_required else otp_dept_id,
-                    "otp_device_group": otp_required.device_group if otp_required else otp_device_group,
-                    "otp_wait_status": otp_wait_status,
+                    **OtpMetaBuilder.serialize(otp_meta),
                 }
                 if device_id:
                     otp_failed_device_ids.append(str(device_id))
                 if otp_required_info is None:
-                    otp_required_info = {
-                        "otp_required": True,
-                        "otp_dept_id": str(otp_required.dept_id) if otp_required else otp_dept_id,
-                        "otp_device_group": otp_required.device_group if otp_required else otp_device_group,
-                        "otp_wait_status": otp_wait_status,
-                    }
+                    otp_required_info = OtpMetaBuilder.serialize(otp_meta)
             else:
                 results_dict[host_key] = {
                     "status": "failed",
@@ -826,12 +837,12 @@ async def _get_devices_for_scheduled_backup() -> tuple[list[dict], list[str]]:
                     }
                 elif auth_type == AuthType.OTP_SEED:
                     # 从 DeviceGroupCredential 获取
-                    if not device.dept_id:
-                        celery_task_logger.warning("设备缺少部门关联，跳过", device_name=device.name)
+                    if not device.credential_id:
+                        celery_task_logger.warning("设备缺少凭据ID，跳过", device_name=device.name)
                         skipped_devices.append(device.name)
                         continue
 
-                    cred = await credential_crud.get_by_dept_and_group(db, device.dept_id, device.device_group)
+                    cred = await credential_crud.get(db, device.credential_id)
                     if not cred or not cred.otp_seed_encrypted:
                         celery_task_logger.warning("设备的凭据未配置 OTP 种子，跳过", device_name=device.name)
                         skipped_devices.append(device.name)
@@ -841,6 +852,9 @@ async def _get_devices_for_scheduled_backup() -> tuple[list[dict], list[str]]:
                     extra_data = {
                         "auth_type": "otp_seed",
                         "otp_seed_encrypted": cred.otp_seed_encrypted,
+                        "credential_id": str(device.credential_id),
+                        "credential_username": cred.username,
+                        "credential_device_group": cred.device_group,
                         "dept_id": str(device.dept_id),
                         "device_group": str(device.device_group),
                         "device_id": str(device.id),
@@ -1243,6 +1257,37 @@ def async_backup_devices(
     )
 
     try:
+        # 预获取所有 OTP 手动设备的 OTP 密码，避免任务执行期间 OTP 缓存过期
+        async def _prefetch_otp_passwords() -> dict[str, str]:
+            """按 credential_id 预获取 OTP 密码。"""
+            otp_passwords: dict[str, str] = {}
+            for host in hosts_data:
+                host_data = host.get("data") or {}
+                auth_type = host_data.get("auth_type")
+                credential_id = host_data.get("credential_id")
+                if auth_type == "otp_manual" and credential_id and credential_id not in otp_passwords:
+                    otp_code = await otp_coordinator.get_cached_otp(UUID(str(credential_id)))
+                    if otp_code:
+                        otp_passwords[credential_id] = otp_code
+                        celery_task_logger.debug(
+                            "预获取 OTP 密码成功",
+                            credential_id=credential_id,
+                        )
+            return otp_passwords
+
+        # 执行预获取
+        prefetched_otp = run_async(_prefetch_otp_passwords())
+
+        # 将预获取的 OTP 密码注入到 hosts_data 中
+        for host in hosts_data:
+            host_data = host.get("data") or {}
+            auth_type = host_data.get("auth_type")
+            credential_id = host_data.get("credential_id")
+            if auth_type == "otp_manual" and credential_id and credential_id in prefetched_otp:
+                if "data" not in host:
+                    host["data"] = {}
+                host["data"]["otp_password_prefetched"] = prefetched_otp[credential_id]
+
         # 初始化异步 Inventory
         inventory = init_nornir_async(hosts_data)
 
@@ -1272,26 +1317,32 @@ def async_backup_devices(
                 otp_notice_sent = True
                 device_id = name_to_id.get(host_name)
                 otp_exc = _result.exception
+                credential_id_raw = getattr(otp_exc, "credential_id_str", None)
                 try:
-                    can_notify = await otp_coordinator.should_notify_group(
-                        otp_exc.dept_id,
-                        str(otp_exc.device_group),
-                        task_id=celery_task_id,
-                        pending_device_ids=[str(device_id)] if device_id else None,
-                    )
+                    credential_id = UUID(str(credential_id_raw)) if credential_id_raw else None
+                    if credential_id:
+                        can_notify = await otp_coordinator.should_notify_group(
+                            credential_id,
+                            task_id=celery_task_id,
+                            pending_device_ids=[str(device_id)] if device_id else None,
+                        )
+                    else:
+                        can_notify = True
                 except Exception:
                     can_notify = True
                 if can_notify:
                     wait_status = None
                     if isinstance(otp_exc.details, dict):
                         wait_status = otp_exc.details.get("otp_wait_status")
-                    otp_meta = {
-                        "otp_required": True,
-                        "otp_dept_id": str(otp_exc.dept_id),
-                        "otp_device_group": otp_exc.device_group,
-                        "otp_failed_device_ids": [str(device_id)] if device_id else [],
-                        "otp_wait_status": wait_status,
-                    }
+                    # 使用 OtpMetaBuilder 构建 OTP 元数据
+                    built_meta = OtpMetaBuilder.build(
+                        credential_id=credential_id_raw,
+                        credential_username=otp_exc.credential_username,
+                        credential_device_group=otp_exc.credential_device_group,
+                        failed_device_ids=[str(device_id)] if device_id else None,
+                        wait_status=wait_status,
+                    )
+                    otp_meta = OtpMetaBuilder.serialize(built_meta)
                     await safe_update_state_async(
                         celery_task,
                         celery_task_id,

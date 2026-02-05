@@ -18,6 +18,7 @@ from app.models.base import AuditableModel
 
 if TYPE_CHECKING:
     from app.models.backup import Backup
+    from app.models.credential import DeviceGroupCredential
     from app.models.dept import Department
 
 
@@ -40,6 +41,7 @@ class Device(AuditableModel):
         password_encrypted (str | None): 加密后的静态密码（仅 static 类型）。
         dept_id (UUID | None): 所属部门 ID（区域）。
         device_group (str): 设备分组（core/distribution/access）。
+        credential_id (UUID | None): 设备凭据 ID（OTP 设备）。
         status (str): 设备状态（IN_STOCK/IN_USE/ACTIVE/MAINTENANCE/RETIRED）。
         stock_in_at (datetime | None): 入库时间。
         assigned_to (str | None): 领用人。
@@ -93,6 +95,14 @@ class Device(AuditableModel):
         comment="设备分组(core/distribution/access)",
     )
 
+    # 设备凭据（OTP 认证设备使用）
+    credential_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("ncm_device_group_credential.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+        comment="设备凭据ID",
+    )
+
     # 生命周期
     status: Mapped[str] = mapped_column(
         String(20), default=DeviceStatus.IN_USE.value, nullable=False, comment="设备状态"
@@ -115,6 +125,7 @@ class Device(AuditableModel):
     dept: Mapped[Optional["Department"]] = relationship("Department", lazy="selectin")
     # backups 使用 lazy="raise" 避免意外加载大量备份，需要时显式 selectinload
     backups: Mapped[list["Backup"]] = relationship("Backup", back_populates="device", lazy="raise")
+    credential: Mapped[Optional["DeviceGroupCredential"]] = relationship("DeviceGroupCredential", lazy="selectin")
 
     def __repr__(self) -> str:
         return f"<Device(name={self.name}, ip={self.ip_address}, vendor={self.vendor})>"

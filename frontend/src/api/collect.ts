@@ -81,10 +81,19 @@ export interface CollectResult {
 /** 采集任务状态 */
 export interface CollectTaskStatus {
   task_id: string
-  status: 'PENDING' | 'STARTED' | 'SUCCESS' | 'FAILURE'
+  status: 'PENDING' | 'STARTED' | 'SUCCESS' | 'FAILURE' | string
   progress: number | null
-  result: CollectResult | null
-  error: string | null
+  result?: CollectResult | null
+  error?: string | null
+  // OTP 相关字段
+  otp_required?: boolean
+  otp_credential_id?: string | null
+  otp_credential_username?: string | null
+  otp_credential_device_group?: string | null
+  otp_failed_device_ids?: string[] | null
+  otp_wait_status?: 'waiting' | 'timeout' | 'ready' | null
+  otp_wait_timeout?: number | null
+  otp_cache_ttl?: number | null
 }
 
 /** 定位响应 */

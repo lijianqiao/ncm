@@ -9,92 +9,71 @@
 """
 
 import json
-from typing import Any, Mapping
+from collections.abc import Mapping
+from typing import Any
 from uuid import UUID
 
 from app.core import cache as cache_module
 from app.core.logger import logger
 
-OTP_CACHE_PREFIX = "ncm:otp:v1:cache"
-OTP_WAIT_LOCK_PREFIX = "ncm:otp:v1:wait:lock"
-OTP_WAIT_STATE_PREFIX = "ncm:otp:v1:wait:state"
-OTP_TASK_PAUSE_PREFIX = "ncm:otp:v1:task:pause"
-OTP_BATCH_PREFIX = "ncm:otp:v1:task:batch"
+OTP_CACHE_PREFIX_V2 = "ncm:otp:v2:cache"
+OTP_WAIT_LOCK_PREFIX_V2 = "ncm:otp:v2:wait:lock"
+OTP_WAIT_STATE_PREFIX_V2 = "ncm:otp:v2:wait:state"
+OTP_TASK_PAUSE_PREFIX_V2 = "ncm:otp:v2:task:pause"
+OTP_BATCH_PREFIX_V2 = "ncm:otp:v2:task:batch"
 
 
-def _normalize_group(device_group: str) -> str:
+def otp_cache_key_by_credential(credential_id: UUID | str) -> str:
     """
-    规范化设备分组名称。
-
-    移除 "DeviceGroup." 前缀并转换为小写。
+    生成 OTP 缓存键名（按凭据 ID）。
 
     Args:
-        device_group: 设备分组名称
-
-    Returns:
-        str: 规范化后的设备分组名称
-    """
-    raw = str(device_group)
-    if raw.startswith("DeviceGroup."):
-        raw = raw.split(".", maxsplit=1)[-1]
-    return raw.lower()
-
-
-def otp_cache_key(dept_id: UUID, device_group: str) -> str:
-    """
-    生成 OTP 缓存键名。
-
-    Args:
-        dept_id: 部门 ID
-        device_group: 设备分组
+        credential_id: 设备凭据 ID
 
     Returns:
         str: Redis 键名
     """
-    return f"{OTP_CACHE_PREFIX}:{dept_id}:{_normalize_group(device_group)}"
+    return f"{OTP_CACHE_PREFIX_V2}:{credential_id}"
 
 
-def otp_wait_lock_key(dept_id: UUID, device_group: str) -> str:
+def otp_wait_lock_key_by_credential(credential_id: UUID | str) -> str:
     """
-    生成 OTP 等待锁键名。
+    生成 OTP 等待锁键名（按凭据 ID）。
 
     Args:
-        dept_id: 部门 ID
-        device_group: 设备分组
+        credential_id: 设备凭据 ID
 
     Returns:
         str: Redis 键名
     """
-    return f"{OTP_WAIT_LOCK_PREFIX}:{dept_id}:{_normalize_group(device_group)}"
+    return f"{OTP_WAIT_LOCK_PREFIX_V2}:{credential_id}"
 
 
-def otp_wait_state_key(dept_id: UUID, device_group: str) -> str:
+def otp_wait_state_key_by_credential(credential_id: UUID | str) -> str:
     """
-    生成 OTP 等待状态键名。
+    生成 OTP 等待状态键名（按凭据 ID）。
 
     Args:
-        dept_id: 部门 ID
-        device_group: 设备分组
+        credential_id: 设备凭据 ID
 
     Returns:
         str: Redis 键名
     """
-    return f"{OTP_WAIT_STATE_PREFIX}:{dept_id}:{_normalize_group(device_group)}"
+    return f"{OTP_WAIT_STATE_PREFIX_V2}:{credential_id}"
 
 
-def otp_task_pause_key(task_id: str, dept_id: UUID, device_group: str) -> str:
+def otp_task_pause_key_by_credential(task_id: str, credential_id: UUID | str) -> str:
     """
-    生成 OTP 任务暂停状态键名。
+    生成 OTP 任务暂停状态键名（按凭据 ID）。
 
     Args:
         task_id: 任务 ID
-        dept_id: 部门 ID
-        device_group: 设备分组
+        credential_id: 设备凭据 ID
 
     Returns:
         str: Redis 键名
     """
-    return f"{OTP_TASK_PAUSE_PREFIX}:{task_id}:{dept_id}:{_normalize_group(device_group)}"
+    return f"{OTP_TASK_PAUSE_PREFIX_V2}:{task_id}:{credential_id}"
 
 
 def otp_batch_key(batch_id: str) -> str:
@@ -107,7 +86,7 @@ def otp_batch_key(batch_id: str) -> str:
     Returns:
         str: Redis 键名
     """
-    return f"{OTP_BATCH_PREFIX}:{batch_id}"
+    return f"{OTP_BATCH_PREFIX_V2}:{batch_id}"
 
 
 async def redis_get(key: str) -> str | None:
@@ -196,6 +175,49 @@ async def redis_delete(key: str) -> bool:
         return bool(deleted)
     except Exception as exc:
         logger.warning("删除 Redis 失败", key=key, error=str(exc))
+        return False
+
+
+async def redis_ttl(key: str) -> int:
+    """
+    获取 Redis 键的剩余 TTL。
+
+    Args:
+        key: Redis 键名
+
+    Returns:
+        int: 剩余秒数。-2 表示键不存在，-1 表示无过期时间。
+    """
+    client = cache_module.redis_client
+    if client is None:
+        return -2
+    try:
+        ttl = await client.ttl(key)
+        return ttl if ttl is not None else -2
+    except Exception as exc:
+        logger.warning("获取 Redis TTL 失败", key=key, error=str(exc))
+        return -2
+
+
+async def redis_expire(key: str, ttl_seconds: int) -> bool:
+    """
+    设置 Redis 键的过期时间。
+
+    Args:
+        key: Redis 键名
+        ttl_seconds: 过期时间（秒）
+
+    Returns:
+        bool: 是否设置成功（键存在时返回 True，不存在时返回 False）
+    """
+    client = cache_module.redis_client
+    if client is None:
+        return False
+    try:
+        ok = await client.expire(key, max(1, int(ttl_seconds)))
+        return bool(ok)
+    except Exception as exc:
+        logger.warning("设置 Redis 过期时间失败", key=key, error=str(exc))
         return False
 
 

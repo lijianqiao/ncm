@@ -17,7 +17,7 @@ from pydantic import ValidationError
 
 from app.core.exceptions import CustomException, OTPRequiredException
 from app.core.logger import logger
-from app.core.otp_notice import build_otp_required_response
+from app.core.otp import build_otp_required_response
 from fastapi_import_export.exceptions import ImportExportError
 
 

@@ -8,11 +8,11 @@
 集中管理厂商、平台、命令映射关系，支持多厂商统一接口调用。
 """
 
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 
-class VendorType(str, Enum):
+class VendorType(StrEnum):
     """设备厂商类型枚举。
 
     Attributes:
@@ -30,7 +30,7 @@ class VendorType(str, Enum):
     JUNIPER = "juniper"
 
 
-class ScrapliPlatform(str, Enum):
+class ScrapliPlatform(StrEnum):
     """Scrapli 平台标识枚举。
 
     Attributes:

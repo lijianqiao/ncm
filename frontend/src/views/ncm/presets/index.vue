@@ -183,29 +183,17 @@ const doExecutePreset = async (
   })
 
   // 断点：需要 OTP
-  if (res.data?.otp_required) {
-    const groups = res.data.otp_required_groups || []
-    let first = groups[0] as { dept_id: string; device_group: string } | undefined
-
-    if (!first) {
-      // 如果没有分组信息，尝试从当前选中设备构建
-      if (selectedDevice.value?.dept_id && selectedDevice.value?.device_group) {
-        first = {
-          dept_id: selectedDevice.value.dept_id,
-          device_group: selectedDevice.value.device_group,
-        }
-      } else {
-        $alert.warning('需要 OTP 但缺少分组信息')
-        return
-      }
-    }
-
+  if (res.data?.otp_required && res.data.otp_credential_id) {
     showExecuteModal.value = false
     globalOtpFlow.open(
       {
-        dept_id: first!.dept_id,
-        device_group: first!.device_group,
-        failed_devices: [],
+        otp_credential_id: res.data.otp_credential_id,
+        otp_credential_username: res.data.otp_credential_username,
+        otp_credential_device_group: res.data.otp_credential_device_group,
+        otp_failed_device_ids: res.data.otp_failed_device_ids || [],
+        otp_wait_status: res.data.otp_wait_status,
+        otp_wait_timeout: res.data.otp_wait_timeout,
+        otp_cache_ttl: res.data.otp_cache_ttl,
         message: '操作需要 OTP 验证码',
       },
       async () => {
@@ -296,31 +284,25 @@ const handleExecute = async () => {
 
   // otp_manual：执行前先提示输入 OTP
   if (currentDev.auth_type === 'otp_manual') {
-    if (!currentDev.dept_id || !currentDev.device_group) {
-      $alert.warning('当前设备缺少 dept_id 或 device_group，无法缓存 OTP')
+    const credentialId = (currentDev as { credential_id?: string }).credential_id
+    if (credentialId) {
+      globalOtpFlow.open(
+        {
+          otp_credential_id: credentialId,
+          message: `设备 "${currentDev.device_name}" 需要 OTP 验证码`,
+        },
+        async () => {
+          executing.value = true
+          try {
+            await backupBeforeConfigChange(selectedDeviceId.value!)
+            await doExecutePreset(currentPreset.value!.id, selectedDeviceId.value!, formParams.value)
+          } finally {
+            executing.value = false
+          }
+        },
+      )
       return
     }
-
-    globalOtpFlow.open(
-      {
-        dept_id: currentDev.dept_id,
-        device_group: currentDev.device_group,
-        failed_devices: [],
-        message: `设备 "${currentDev.device_name}" 需要 OTP 验证码`,
-      },
-      async () => {
-        // OTP 验证成功后，直接执行预设
-        // 注意：这里需要再次设置 executing 状态，因为 globalOtpFlow 回调是在异步流程中
-        executing.value = true
-        try {
-          await backupBeforeConfigChange(selectedDeviceId.value!)
-          await doExecutePreset(currentPreset.value!.id, selectedDeviceId.value!, formParams.value)
-        } finally {
-          executing.value = false
-        }
-      },
-    )
-    return
   }
 
   executing.value = true

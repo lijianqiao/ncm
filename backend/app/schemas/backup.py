@@ -214,15 +214,20 @@ class BackupBatchByGroupRequest(BaseModel):
 
 
 class OTPNotice(BaseModel):
-    """OTP 提示信息（用于前端独立处理）。"""
+    """OTP 提示信息（用于前端独立处理）。
+
+    字段命名与 OtpMeta TypedDict 保持一致，确保前后端数据结构统一。
+    """
 
     type: str = Field(default="otp_required", description="提示类型")
     message: str = Field(default="需要重新输入 OTP 验证码", description="提示消息")
-    dept_id: UUID | None = Field(default=None, description="需要 OTP 的部门ID")
-    device_group: str | None = Field(default=None, description="需要 OTP 的设备分组")
+    otp_credential_id: UUID | None = Field(default=None, description="需要 OTP 的凭据ID")
+    otp_credential_username: str | None = Field(default=None, description="需要 OTP 的凭据账号")
+    otp_credential_device_group: str | None = Field(default=None, description="需要 OTP 的凭据分组")
+    otp_failed_device_ids: list[str] | None = Field(default=None, description="OTP 失败的设备ID列表")
     pending_device_ids: list[UUID] | None = Field(default=None, description="待继续处理的设备ID列表")
     task_id: str | None = Field(default=None, description="批量任务ID")
-    otp_wait_status: str | None = Field(default=None, description="等待状态 waiting/timeout")
+    otp_wait_status: str | None = Field(default=None, description="等待状态 waiting/timeout/ready")
     otp_wait_timeout: int | None = Field(default=None, description="等待 OTP 超时时间（秒）")
     otp_cache_ttl: int | None = Field(default=None, description="OTP 缓存有效期（秒）")
 
@@ -249,12 +254,6 @@ class BackupTaskStatus(BaseModel):
         default=None,
         description="OTP 提示信息（独立结构，前端可优先判断并弹窗处理）",
     )
-
-    # OTP 过期信息（需要用户重新输入）
-    otp_required: bool | None = Field(default=None, description="是否需要重新输入 OTP（兼容字段）")
-    otp_dept_id: UUID | None = Field(default=None, description="需要 OTP 的部门ID")
-    otp_device_group: str | None = Field(default=None, description="需要 OTP 的设备分组")
-    pending_device_ids: list[UUID] | None = Field(default=None, description="待继续处理的设备ID列表")
 
 
 class BackupBatchResult(BaseModel):
@@ -302,8 +301,3 @@ class BackupBatchHardDeleteRequest(BaseModel):
     """批量硬删除备份请求。"""
 
     backup_ids: list[UUID] = Field(..., min_length=1, max_length=500, description="备份ID列表")
-
-
-# 向后兼容：BackupBatchHardDeleteResult 与 BackupBatchDeleteResult 结构相同
-# 保留此别名以兼容现有前端代码
-BackupBatchHardDeleteResult = BackupBatchDeleteResult

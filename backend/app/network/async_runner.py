@@ -17,6 +17,7 @@ from nornir.core.task import AggregatedResult, MultiResult, Result
 from app.core.config import settings
 from app.core.exceptions import OTPRequiredException
 from app.core.logger import celery_details_logger, celery_task_logger, logger
+from app.core.otp import OtpMetaBuilder
 
 if TYPE_CHECKING:
     from nornir.core.inventory import Host, Inventory
@@ -133,26 +134,19 @@ class AsyncRunner:
                         result_data = await task(host, **kwargs)
                         return host.name, Result(host=host, result=result_data)
                 except OTPRequiredException as e:
-                    dept_id_raw = host.data.get("dept_id")
-                    device_group = host.data.get("device_group")
+                    # 使用 OtpMetaBuilder 统一构建 OTP 元数据
+                    otp_meta = OtpMetaBuilder.from_exception(e)
                     device_id = host.data.get("device_id")
-                    wait_status = None
-                    if isinstance(e.details, dict):
-                        wait_status = e.details.get("otp_wait_status")
-                    otp_meta = {
-                        "otp_dept_id": str(dept_id_raw) if dept_id_raw else None,
-                        "otp_device_group": str(device_group) if device_group else None,
-                        "otp_wait_status": wait_status,
-                        "pending_device_ids": [str(device_id)] if device_id else None,
-                    }
+                    if device_id:
+                        otp_meta["otp_failed_device_ids"] = [str(device_id)]
+                        otp_meta["pending_device_ids"] = [str(device_id)]
                     return host.name, Result(
                         host=host,
                         result={
                             "success": False,
-                            "otp_required": True,
                             "error": str(e),
                             "skipped": True,
-                            **otp_meta,
+                            **OtpMetaBuilder.serialize(otp_meta),
                         },
                         failed=True,
                     )

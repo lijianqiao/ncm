@@ -411,6 +411,7 @@ const handleDelete = (row: Credential) => {
 
 const showOTPModal = ref(false)
 const otpModel = ref({
+  credential_id: '',
   dept_id: '',
   device_group: DeviceGroup.CORE as DeviceGroupType,
   otp_code: '',
@@ -419,6 +420,7 @@ const otpModel = ref({
 
 const handleCacheOTP = (row: Credential) => {
   otpModel.value = {
+    credential_id: row.id,
     dept_id: row.dept_id,
     device_group: row.device_group,
     otp_code: '',
@@ -434,8 +436,7 @@ const submitCacheOTP = async () => {
   }
   try {
     const res = await cacheOTP({
-      dept_id: otpModel.value.dept_id,
-      device_group: otpModel.value.device_group,
+      credential_id: otpModel.value.credential_id,
       otp_code: otpModel.value.otp_code,
     })
     if (res.data.success) {

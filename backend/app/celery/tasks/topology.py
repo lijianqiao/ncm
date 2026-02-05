@@ -17,7 +17,8 @@ from app.core import cache as cache_module
 from app.core.config import settings
 from app.core.db import AsyncSessionLocal
 from app.core.exceptions import OTPRequiredException
-from app.core.logger import celery_details_logger, celery_task_logger
+from app.core.logger import celery_task_logger
+from app.core.otp import OtpMetaBuilder
 from app.crud.crud_credential import credential as credential_crud
 from app.crud.crud_device import device as device_crud
 from app.crud.crud_topology import topology_crud
@@ -98,20 +99,16 @@ def collect_topology(
                 # 返回 OTP 所需信息，不抛出异常
                 celery_task_logger.info(
                     "拓扑采集需要 OTP",
-                    dept_id=e.dept_id_str,
-                    device_group=e.device_group,
+                    credential_id=e.credential_id_str,
                     failed_devices=e.failed_devices,
                 )
+                # 使用 OtpMetaBuilder 构建元数据
+                meta = OtpMetaBuilder.from_exception(e)
+                meta["task_id"] = self.request.id
                 return {
                     "task_id": self.request.id,
                     "status": "otp_required",
-                    "otp_required": True,
-                    "dept_id": e.dept_id_str,
-                    "device_group": e.device_group,
-                    "failed_devices": e.failed_devices,
-                    "message": e.message,
-                    "otp_wait_timeout": settings.OTP_WAIT_TIMEOUT_SECONDS,
-                    "otp_cache_ttl": settings.OTP_CACHE_TTL_SECONDS,
+                    **OtpMetaBuilder.serialize(meta),
                 }
 
     return run_async(_collect())
@@ -159,20 +156,16 @@ def collect_device_topology(self, device_id: str) -> dict[str, Any]:
                 celery_task_logger.info(
                     "单设备拓扑采集需要 OTP",
                     device_id=device_id,
-                    dept_id=e.dept_id_str,
-                    device_group=e.device_group,
+                    credential_id=e.credential_id_str,
                 )
+                # 使用 OtpMetaBuilder 构建元数据
+                meta = OtpMetaBuilder.from_exception(e)
+                meta["task_id"] = self.request.id
                 return {
                     "task_id": self.request.id,
                     "device_id": device_id,
                     "status": "otp_required",
-                    "otp_required": True,
-                    "dept_id": e.dept_id_str,
-                    "device_group": e.device_group,
-                    "failed_devices": e.failed_devices,
-                    "message": e.message,
-                    "otp_wait_timeout": settings.OTP_WAIT_TIMEOUT_SECONDS,
-                    "otp_cache_ttl": settings.OTP_CACHE_TTL_SECONDS,
+                    **OtpMetaBuilder.serialize(meta),
                 }
 
     return run_async(_collect_single())
@@ -236,15 +229,18 @@ def scheduled_topology_refresh(self) -> dict[str, Any]:
                 # 定时任务不应该触发 OTP，记录警告并跳过
                 celery_task_logger.warning(
                     "定时拓扑刷新遇到 OTP 需求（已跳过）",
-                    dept_id=e.dept_id_str,
-                    device_group=e.device_group,
+                    credential_id=e.credential_id_str,
+                    credential_device_group=e.credential_device_group,
                 )
                 return {
                     "task_id": self.request.id,
                     "status": "partial",
                     "message": "部分设备因需要 OTP 而跳过",
                     "skipped_otp_groups": [
-                        {"dept_id": e.dept_id_str, "device_group": e.device_group}
+                        {
+                            "credential_id": e.credential_id_str,
+                            "credential_device_group": e.credential_device_group,
+                        }
                     ],
                     "otp_wait_timeout": settings.OTP_WAIT_TIMEOUT_SECONDS,
                     "otp_cache_ttl": settings.OTP_CACHE_TTL_SECONDS,

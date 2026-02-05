@@ -143,8 +143,11 @@ class PresetService(DeviceCredentialMixin):
                 success=False,
                 error_message=e.message,
                 otp_required=True,
-                otp_required_groups=[{"dept_id": str(e.dept_id), "device_group": str(e.device_group)}],
-                expires_in=None,
+                otp_credential_id=e.credential_id_str,
+                otp_credential_username=e.credential_username,
+                otp_credential_device_group=e.credential_device_group,
+                otp_failed_device_ids=[str(device_id)],
+                otp_wait_status=e.details.get("otp_wait_status") if isinstance(e.details, dict) else None,
                 next_action="cache_otp_and_retry_execute_preset",
             )
         except Exception as e:
@@ -241,10 +244,20 @@ class PresetService(DeviceCredentialMixin):
 
         except ScrapliAuthenticationFailed as e:
             # 认证失败：调用 OTP 处理逻辑
+            credential_username = None
+            credential_device_group = None
+            if device.credential_id:
+                credential_row = await self.credential_crud.get(self.db, device.credential_id)
+                if credential_row:
+                    credential_username = credential_row.username
+                    credential_device_group = credential_row.device_group
             host_data = {
                 "auth_type": "otp_manual"
                 if device.auth_type and AuthType(device.auth_type) == AuthType.OTP_MANUAL
                 else "static",
+                "credential_id": str(device.credential_id) if device.credential_id else None,
+                "credential_username": credential_username,
+                "credential_device_group": credential_device_group,
                 "dept_id": str(device.dept_id) if device.dept_id else None,
                 "device_group": device.device_group,
                 "device_id": str(device.id),
@@ -256,8 +269,11 @@ class PresetService(DeviceCredentialMixin):
                     success=False,
                     error_message=otp_e.message,
                     otp_required=True,
-                    otp_required_groups=[{"dept_id": str(otp_e.dept_id), "device_group": str(otp_e.device_group)}],
-                    expires_in=None,
+                    otp_credential_id=otp_e.credential_id_str,
+                    otp_credential_username=otp_e.credential_username,
+                    otp_credential_device_group=otp_e.credential_device_group,
+                    otp_failed_device_ids=otp_e.failed_devices or [],
+                    otp_wait_status=otp_e.details.get("otp_wait_status") if isinstance(otp_e.details, dict) else None,
                     next_action="cache_otp_and_retry_execute_preset",
                 )
             raise
@@ -425,10 +441,20 @@ class PresetService(DeviceCredentialMixin):
             # 认证失败：调用 OTP 处理逻辑
             from app.core.enums import AuthType
 
+            credential_username = None
+            credential_device_group = None
+            if device.credential_id:
+                credential_row = await self.credential_crud.get(self.db, device.credential_id)
+                if credential_row:
+                    credential_username = credential_row.username
+                    credential_device_group = credential_row.device_group
             host_data = {
                 "auth_type": "otp_manual"
                 if device.auth_type and AuthType(device.auth_type) == AuthType.OTP_MANUAL
                 else "static",
+                "credential_id": str(device.credential_id) if device.credential_id else None,
+                "credential_username": credential_username,
+                "credential_device_group": credential_device_group,
                 "dept_id": str(device.dept_id) if device.dept_id else None,
                 "device_group": device.device_group,
                 "device_id": str(device.id),
@@ -440,8 +466,11 @@ class PresetService(DeviceCredentialMixin):
                     success=False,
                     error_message=otp_e.message,
                     otp_required=True,
-                    otp_required_groups=[{"dept_id": str(otp_e.dept_id), "device_group": str(otp_e.device_group)}],
-                    expires_in=None,
+                    otp_credential_id=otp_e.credential_id_str,
+                    otp_credential_username=otp_e.credential_username,
+                    otp_credential_device_group=otp_e.credential_device_group,
+                    otp_failed_device_ids=otp_e.failed_devices or [],
+                    otp_wait_status=otp_e.details.get("otp_wait_status") if isinstance(otp_e.details, dict) else None,
                     next_action="cache_otp_and_retry_execute_preset",
                 )
             raise

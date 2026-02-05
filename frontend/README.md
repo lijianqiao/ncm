@@ -35,7 +35,7 @@ cp .env.example .env.development
 pnpm dev
 ```
 
-访问地址: http://127.0.0.1:5173
+访问地址: <http://127.0.0.1:5173>
 
 ## 常用命令
 

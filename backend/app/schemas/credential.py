@@ -9,7 +9,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.core.enums import AuthType, DeviceGroup
 
@@ -35,78 +35,16 @@ class DeviceCredential(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
-def _extract_value(v):
-    """从复杂结构中提取值（支持字典、列表等前端传入格式）。
-
-    Args:
-        v: 输入值，可能是字典、列表或简单值。
-
-    Returns:
-        Any: 提取后的值。
-    """
-    if isinstance(v, dict):
-        for key in ("value", "id", "dept_id", "key", "label"):
-            if key in v:
-                return _extract_value(v[key])
-        return v
-    if isinstance(v, list) and len(v) == 1:
-        return _extract_value(v[0])
-    return v
-
-
-# 设备分组中文映射
-_DEVICE_GROUP_MAPPING: dict[str, str] = {
-    "核心层": "core",
-    "汇聚层": "distribution",
-    "接入层": "access",
-    "核心": "core",
-    "汇聚": "distribution",
-    "接入": "access",
-}
-
-
 class OTPRequestBase(BaseModel):
     """OTP 请求基类 Schema，统一验证逻辑。
 
     Attributes:
-        dept_id (UUID): 部门 ID。
-        device_group (DeviceGroup): 设备分组。
+        credential_id (UUID | None): 凭据 ID。
         otp_code (str): OTP 验证码，长度 6-8 位。
     """
 
-    dept_id: UUID = Field(..., description="部门ID")
-    device_group: DeviceGroup = Field(..., description="设备分组")
+    credential_id: UUID = Field(..., description="凭据ID")
     otp_code: str = Field(..., min_length=6, max_length=8, description="OTP 验证码")
-
-    @field_validator("dept_id", mode="before")
-    @classmethod
-    def _normalize_dept_id(cls, v):
-        """从复杂结构中提取部门 ID。
-
-        Args:
-            v: 输入值。
-
-        Returns:
-            Any: 提取后的部门 ID。
-        """
-        return _extract_value(v)
-
-    @field_validator("device_group", mode="before")
-    @classmethod
-    def _normalize_device_group(cls, v):
-        """规范化设备分组（支持中文转换）。
-
-        Args:
-            v: 输入值。
-
-        Returns:
-            str: 规范化后的设备分组值。
-        """
-        v = _extract_value(v)
-        if isinstance(v, str):
-            value = v.strip().lower()
-            return _DEVICE_GROUP_MAPPING.get(value, value)
-        return v
 
 
 class OTPCacheRequest(OTPRequestBase):
