@@ -86,3 +86,42 @@ class OtpTaskRegistry:
         if not ok:
             logger.warning("更新批量任务失败", batch_id=batch_id)
         return ok
+
+    async def mark_credential_resumed(self, batch_id: str, credential_id: str) -> bool:
+        """
+        标记凭证已被 Resume，防止重复触发 OTP 请求。
+
+        Args:
+            batch_id: 批次 ID
+            credential_id: 凭据 ID
+
+        Returns:
+            bool: 是否标记成功
+        """
+        batch = await self.get_batch(batch_id)
+        if not batch:
+            return False
+        resumed_credentials: list[str] = batch.get("resumed_credentials") or []
+        if credential_id not in resumed_credentials:
+            resumed_credentials.append(credential_id)
+            batch["resumed_credentials"] = resumed_credentials
+            batch["updated_at"] = time.time()
+            return await redis_json_set(otp_batch_key(batch_id), self.ttl_seconds, batch)
+        return True
+
+    async def is_credential_resumed(self, batch_id: str, credential_id: str) -> bool:
+        """
+        检查凭证是否已被 Resume。
+
+        Args:
+            batch_id: 批次 ID
+            credential_id: 凭据 ID
+
+        Returns:
+            bool: 是否已被 Resume
+        """
+        batch = await self.get_batch(batch_id)
+        if not batch:
+            return False
+        resumed_credentials: list[str] = batch.get("resumed_credentials") or []
+        return credential_id in resumed_credentials

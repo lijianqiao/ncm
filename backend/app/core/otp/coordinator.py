@@ -359,9 +359,10 @@ class OtpCoordinator:
         *,
         reason: str | None = None,
         extra: dict | None = None,
+        accumulate: bool = True,
     ) -> None:
         """
-        记录任务暂停状态。
+        记录任务暂停状态（支持累积）。
 
         Args:
             task_id: 任务 ID
@@ -369,11 +370,21 @@ class OtpCoordinator:
             pending_device_ids: 待处理设备 ID 列表
             reason: 暂停原因（可选）
             extra: 额外信息（可选）
+            accumulate: 是否累积设备 ID，默认为 True。
+                        当同一凭证的多个批次需要等待时累积所有设备。
         """
+        # 如果是累积模式，读取现有的 pause_state 并合并设备 ID
+        merged_device_ids: list[str] = [str(x) for x in pending_device_ids]
+        if accumulate:
+            existing = await self.get_pause(task_id, credential_id)
+            if existing:
+                existing_ids = set(existing.get("pending_device_ids") or [])
+                merged_device_ids = list(existing_ids | set(merged_device_ids))
+
         payload: OtpPauseState = {
             "task_id": task_id,
             "credential_id": str(credential_id),
-            "pending_device_ids": [str(x) for x in pending_device_ids],
+            "pending_device_ids": merged_device_ids,
             "paused_at": time.time(),
             "reason": reason,
             "extra": extra,

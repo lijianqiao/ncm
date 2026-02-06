@@ -188,6 +188,9 @@ async def resume_task_group(
     if not pending_ids:
         raise BadRequestException(message="未找到可恢复的设备")
     if task_type == "backup":
+        # 标记凭证已被 Resume，防止状态查询时重复触发 OTP 请求
+        await otp_coordinator.registry.mark_credential_resumed(task_id, str(credential_id))
+
         backup_type = batch_info.get("backup_type") or "manual"
         operator_id = batch_info.get("operator_id")
         request = BackupBatchRequest(

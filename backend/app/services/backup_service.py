@@ -883,41 +883,52 @@ class BackupService(DeviceCredentialMixin):
 
                 # 检查是否有预获取的 OTP
                 if cred_id_str not in credential_otp_cache:
-                    # 没有 OTP 缓存，记录到等待列表
-                    credential_uuid = UUID(cred_id_str)
-                    otp_check = await otp_coordinator.get_or_require_otp(
-                        credential_uuid,
-                        task_id=batch_id,
-                        pending_device_ids=batch_device_ids,
-                    )
-                    await otp_coordinator.record_pause(
-                        batch_id,
-                        credential_uuid,
-                        batch_device_ids,
-                        reason="otp_required",
-                    )
-                    entry = waiting_groups.get(cred_id_str)
-                    if not entry:
-                        # 获取凭证信息
-                        if cred_id_str not in credential_info_cache:
-                            credential_row = await self.credential_crud.get(self.db, credential_uuid)
-                            if credential_row:
-                                credential_info_cache[cred_id_str] = {
-                                    "username": credential_row.username,
-                                    "device_group": credential_row.device_group,
-                                }
-                        cred_info = credential_info_cache.get(cred_id_str, {})
-                        entry = {
-                            "credential_id": cred_id_str,
-                            "pending_device_ids": set(),
-                            "otp_wait_status": otp_check["status"],
-                            "credential_username": cred_info.get("username"),
-                            "credential_device_group": cred_info.get("device_group"),
-                            "should_notify": otp_check["should_notify"],
-                        }
-                        waiting_groups[cred_id_str] = entry
-                    entry["pending_device_ids"].update(batch_device_ids)
-                    continue
+                    # Resume 模式下不再记录暂停状态，避免重复派发
+                    # 因为用户刚刚输入了 OTP，应该强制使用
+                    if request.resume_task_id:
+                        # Resume 模式：尝试再次获取 OTP 缓存（可能刚刚被缓存）
+                        credential_uuid = UUID(cred_id_str)
+                        otp_code = await otp_coordinator.get_cached_otp(credential_uuid)
+                        if otp_code:
+                            credential_otp_cache[cred_id_str] = otp_code
+                            await otp_coordinator.extend_otp_ttl(credential_uuid, additional_seconds=300)
+                        # 如果仍然没有 OTP，也继续执行任务（让任务内部处理失败）
+                    else:
+                        # 首次请求模式：记录暂停状态
+                        credential_uuid = UUID(cred_id_str)
+                        otp_check = await otp_coordinator.get_or_require_otp(
+                            credential_uuid,
+                            task_id=batch_id,
+                            pending_device_ids=batch_device_ids,
+                        )
+                        await otp_coordinator.record_pause(
+                            batch_id,
+                            credential_uuid,
+                            batch_device_ids,
+                            reason="otp_required",
+                        )
+                        entry = waiting_groups.get(cred_id_str)
+                        if not entry:
+                            # 获取凭证信息
+                            if cred_id_str not in credential_info_cache:
+                                credential_row = await self.credential_crud.get(self.db, credential_uuid)
+                                if credential_row:
+                                    credential_info_cache[cred_id_str] = {
+                                        "username": credential_row.username,
+                                        "device_group": credential_row.device_group,
+                                    }
+                            cred_info = credential_info_cache.get(cred_id_str, {})
+                            entry = {
+                                "credential_id": cred_id_str,
+                                "pending_device_ids": set(),
+                                "otp_wait_status": otp_check["status"],
+                                "credential_username": cred_info.get("username"),
+                                "credential_device_group": cred_info.get("device_group"),
+                                "should_notify": otp_check["should_notify"],
+                            }
+                            waiting_groups[cred_id_str] = entry
+                        entry["pending_device_ids"].update(batch_device_ids)
+                        continue
 
             hosts_data: list[dict[str, Any]] = []
             for device in batch_devices:
@@ -1309,6 +1320,14 @@ class BackupService(DeviceCredentialMixin):
                     credential_id = info.get("otp_credential_id") or child.get("credential_id")
                     pending_ids = child.get("device_ids") or info.get("otp_failed_device_ids") or []
                     if credential_id:
+                        # 检查凭证是否已被 Resume，如果是则跳过 OTP 请求
+                        is_resumed = await otp_coordinator.registry.is_credential_resumed(task_id, str(credential_id))
+                        if is_resumed:
+                            # 已 Resume 的凭证，按失败计入（OTP 过期导致的失败）
+                            failed_count += len(pending_ids)
+                            completed += len(pending_ids)
+                            continue
+
                         notice = await record_pause_and_build_notice(
                             task_id=task_id,
                             credential_id=UUID(str(credential_id)),
@@ -1351,22 +1370,25 @@ class BackupService(DeviceCredentialMixin):
                         pending_ids.extend(exc.details.get("pending_device_ids") or [])
                     pending_ids = list({str(x) for x in pending_ids if x})
                     if credential_id:
-                        wait_status = None
-                        if isinstance(exc.details, dict):
-                            wait_status = exc.details.get("otp_wait_status")
-                        notice = await record_pause_and_build_notice(
-                            task_id=task_id,
-                            credential_id=UUID(str(credential_id)),
-                            pending_device_ids=pending_ids,
-                            wait_status=wait_status,
-                            message=str(exc) or None,
-                            credential_username=exc.credential_username,
-                            credential_device_group=exc.credential_device_group,
-                            force=True,
-                        )
-                        if notice:
-                            status_response.otp_notice = notice
-                            return status_response
+                        # 检查凭证是否已被 Resume
+                        is_resumed = await otp_coordinator.registry.is_credential_resumed(task_id, str(credential_id))
+                        if not is_resumed:
+                            wait_status = None
+                            if isinstance(exc.details, dict):
+                                wait_status = exc.details.get("otp_wait_status")
+                            notice = await record_pause_and_build_notice(
+                                task_id=task_id,
+                                credential_id=UUID(str(credential_id)),
+                                pending_device_ids=pending_ids,
+                                wait_status=wait_status,
+                                message=str(exc) or None,
+                                credential_username=exc.credential_username,
+                                credential_device_group=exc.credential_device_group,
+                                force=True,
+                            )
+                            if notice:
+                                status_response.otp_notice = notice
+                                return status_response
                 # 失败任务按子任务设备数计入
                 failed_count += len(child.get("device_ids") or [])
                 completed += len(child.get("device_ids") or [])
@@ -1375,6 +1397,10 @@ class BackupService(DeviceCredentialMixin):
         for group in waiting_groups_payload:
             credential_id = group.get("credential_id") or group.get("otp_credential_id")
             if not credential_id:
+                continue
+            # 检查凭证是否已被 Resume
+            is_resumed = await otp_coordinator.registry.is_credential_resumed(task_id, str(credential_id))
+            if is_resumed:
                 continue
             pause_state = await otp_coordinator.get_pause(task_id, UUID(str(credential_id)))
             if not pause_state:
