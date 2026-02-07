@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.exc import StaleDataError
 
 from app.celery.app import celery_app
-from app.celery.base import BaseTask, run_async
+from app.celery.base import BaseTask, run_async, safe_update_state_async
 from app.core.command_policy import normalize_rendered_config, validate_commands
 from app.core.config import settings
 from app.core.db import AsyncSessionLocal
@@ -172,9 +172,7 @@ def _check_otp_exception_in_results(results) -> OTPRequiredException | None:
     return None
 
 
-async def _get_credential_meta_by_id(
-    db: AsyncSession, credential_id: str | None
-) -> tuple[str | None, str | None]:
+async def _get_credential_meta_by_id(db: AsyncSession, credential_id: str | None) -> tuple[str | None, str | None]:
     """根据凭据ID获取账号与设备分组信息。
 
     Args:
@@ -733,13 +731,10 @@ async def _async_deploy_task_impl(self, task_id: str, *, celery_task_id: str | N
 
     render_service = RenderService()
 
-    def _update_progress(meta: dict[str, Any]) -> None:
+    async def _update_progress(meta: dict[str, Any]) -> None:
         if not celery_task_id:
             return
-        try:
-            self.update_state(task_id=celery_task_id, state="PROGRESS", meta=meta)
-        except Exception:
-            return
+        await safe_update_state_async(self, celery_task_id, state="PROGRESS", meta=meta)
 
     async with AsyncSessionLocal() as db:
         task_uuid = UUID(task_id)
@@ -796,13 +791,13 @@ async def _async_deploy_task_impl(self, task_id: str, *, celery_task_id: str | N
             return {"status": "failed", "error": task.error_message}
 
         # 预渲染 + 校验
-        _update_progress({"stage": "rendering", "total": len(devices)})
+        await _update_progress({"stage": "rendering", "total": len(devices)})
         rendered_map: dict[str, list[str]] = {}
         rendered_hash: dict[str, str] = {}
         failed_devices: list[str] = []
 
         for idx, device in enumerate(devices, start=1):
-            _update_progress({"stage": "rendering", "progress": idx, "total": len(devices)})
+            await _update_progress({"stage": "rendering", "progress": idx, "total": len(devices)})
             try:
                 rendered = render_service.render(template, task.template_params or {}, device=device)
                 cmds = normalize_rendered_config(rendered)
@@ -835,7 +830,7 @@ async def _async_deploy_task_impl(self, task_id: str, *, celery_task_id: str | N
             return {"status": "success", "dry_run": True, "devices": len(rendered_map)}
 
         # 构建异步 hosts_data
-        _update_progress({"stage": "preparing_credentials", "total": len(devices)})
+        await _update_progress({"stage": "preparing_credentials", "total": len(devices)})
         hosts_data: list[dict[str, Any]] = []
         for d in devices:
             try:
@@ -887,7 +882,7 @@ async def _async_deploy_task_impl(self, task_id: str, *, celery_task_id: str | N
         total_hosts = len(inventory.hosts)
 
         # 变更前备份（异步，支持 OTP 断点续传）
-        _update_progress({"stage": "pre_change_backup", "total": total_hosts})
+        await _update_progress({"stage": "pre_change_backup", "total": total_hosts})
 
         backup_results = await run_async_tasks(
             inventory.hosts,
@@ -1004,7 +999,7 @@ async def _async_deploy_task_impl(self, task_id: str, *, celery_task_id: str | N
         await db.commit()
 
         # 异步下发（支持 OTP 断点续传）
-        _update_progress({"stage": "deploying", "total": total_hosts})
+        await _update_progress({"stage": "deploying", "total": total_hosts})
 
         deploy_results = await run_async_tasks(
             inventory.hosts,

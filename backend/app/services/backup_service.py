@@ -25,6 +25,7 @@ from app.core.minio_client import delete_object, get_text, put_text
 from app.core.otp import (
     OtpMetaBuilder,
     build_otp_notice_from_info,
+    is_otp_error_text,
     otp_coordinator,
     record_pause_and_build_notice,
 )
@@ -933,86 +934,14 @@ class BackupService(DeviceCredentialMixin):
             hosts_data: list[dict[str, Any]] = []
             for device in batch_devices:
                 try:
-                    auth_type = AuthType(device.auth_type)
-                    if auth_type == AuthType.OTP_MANUAL:
-                        if not device.credential_id:
-                            raise BadRequestException(message=f"设备 {device.name} 缺少凭据ID")
-                        cred_id_str = str(device.credential_id)
-                        # 使用缓存的凭证信息或重新查询
-                        if cred_id_str in credential_info_cache:
-                            cred_info = credential_info_cache[cred_id_str]
-                            username = cred_info.get("username", "")
-                            device_group = cred_info.get("device_group")
-                        else:
-                            credential_row = await self.credential_crud.get(self.db, device.credential_id)
-                            if not credential_row:
-                                raise BadRequestException(message=f"设备 {device.name} 的凭据未配置")
-                            username = credential_row.username
-                            device_group = credential_row.device_group
-                            credential_info_cache[cred_id_str] = {
-                                "username": username,
-                                "device_group": device_group,
-                            }
-                        password = ""  # OTP 密码将在任务执行时通过预获取或缓存获取
-                        # 注入预获取的 OTP 密码
-                        prefetched_otp = credential_otp_cache.get(cred_id_str)
-                        extra_data = {
-                            "auth_type": "otp_manual",
-                            "credential_id": cred_id_str,
-                            "credential_username": username,
-                            "credential_device_group": device_group,
-                            "dept_id": str(device.dept_id),
-                            "device_group": str(device.device_group),
-                            "device_id": str(device.id),
-                            "device_name": device.name,
-                            "vendor": device.vendor,
-                            "otp_password_prefetched": prefetched_otp,
-                        }
-                    elif auth_type == AuthType.OTP_SEED:
-                        if not device.credential_id:
-                            raise BadRequestException(message=f"设备 {device.name} 缺少凭据ID")
-                        credential_row = await self.credential_crud.get(self.db, device.credential_id)
-                        if not credential_row or not credential_row.otp_seed_encrypted:
-                            raise BadRequestException(message=f"设备 {device.name} 的凭据未配置 OTP 种子")
-                        username = credential_row.username
-                        password = ""
-                        extra_data = {
-                            "auth_type": "otp_seed",
-                            "otp_seed_encrypted": credential_row.otp_seed_encrypted,
-                            "credential_id": str(device.credential_id),
-                            "credential_username": credential_row.username,
-                            "credential_device_group": credential_row.device_group,
-                            "dept_id": str(device.dept_id),
-                            "device_group": str(device.device_group),
-                            "device_id": str(device.id),
-                            "device_name": device.name,
-                            "vendor": device.vendor,
-                        }
-                    else:
-                        credential = await self._get_device_credential(device)
-                        username = credential.username
-                        password = credential.password
-                        extra_data = {
-                            "auth_type": "static",
-                            "credential_id": None,
-                            "device_id": str(device.id),
-                            "device_name": device.name,
-                            "vendor": device.vendor,
-                        }
-
-                    hosts_data.append(
-                        {
-                            "name": str(device.id),
-                            "hostname": device.ip_address,
-                            "platform": device.platform or get_platform_for_vendor(str(device.vendor)),
-                            "username": username,
-                            "password": password,
-                            "port": device.ssh_port,
-                            "device_id": str(device.id),
-                            "operator_id": str(operator_id) if operator_id else None,
-                            "data": extra_data,
-                        }
+                    host_data = await self._build_host_data_for_device(
+                        device,
+                        operator_id=str(operator_id) if operator_id else None,
+                        otp_cache=credential_otp_cache,
+                        credential_info_cache=credential_info_cache,
                     )
+                    if host_data:
+                        hosts_data.append(host_data)
                 except Exception as e:
                     logger.warning(f"设备 {device.name} 凭据获取失败: {e}")
 
@@ -1033,6 +962,7 @@ class BackupService(DeviceCredentialMixin):
                 num_workers=min(100, len(hosts_data)),
                 backup_type=request.backup_type.value,
                 operator_id=str(operator_id) if operator_id else None,
+                batch_id=batch_id,
             )
             children.append(
                 {
@@ -1227,6 +1157,12 @@ class BackupService(DeviceCredentialMixin):
                 if v.get("status") == "failed"
             ]
 
+            # 根据成功/失败数量判断最终状态
+            if failed > 0 and success > 0:
+                status_response.status = "partial"
+            elif failed > 0 and success == 0:
+                status_response.status = "failed"
+
             # 调试日志：记录实际返回的数据
             logger.debug(
                 "任务状态查询 SUCCESS",
@@ -1272,11 +1208,20 @@ class BackupService(DeviceCredentialMixin):
         return status_response
 
     async def _get_batch_task_status(self, task_id: str, batch_info: dict[str, Any]) -> BackupTaskStatus:
+        """查询批量备份任务状态。
+
+        职责清晰的三步流程：
+        1. 聚合子任务结果（纯数值累加，不解析 OTP）
+        2. 检查 waiting_groups（初始 OTP 提示）
+        3. 检查 OTP 重试存储（执行中 OTP 过期，由 Celery 任务写入）
+        """
         from celery.result import AsyncResult
 
         from app.celery.app import celery_app
 
         children: list[dict[str, Any]] = batch_info.get("children") or []
+        # 去重：同一 (credential_id, batch_index) 只保留最新的子任务
+        # 注意：auto-retry children 使用独立 key，不覆盖原始任务
         latest_children: dict[tuple[str, int], dict[str, Any]] = {}
         for child in children:
             credential_id = str(child.get("credential_id") or "")
@@ -1284,7 +1229,11 @@ class BackupService(DeviceCredentialMixin):
             device_group = str(child.get("device_group") or "")
             batch_index_raw = child.get("batch_index")
             batch_index = int(batch_index_raw) if batch_index_raw is not None else -1
-            key = (credential_id or f"{dept_id}:{device_group}", batch_index)
+            if child.get("is_auto_retry"):
+                # auto-retry 用 task_id 作 key，避免覆盖原始任务结果
+                key = (f"retry:{child.get('task_id')}", batch_index)
+            else:
+                key = (credential_id or f"{dept_id}:{device_group}", batch_index)
             latest_children[key] = child
         effective_children = list(latest_children.values())
         total_devices = int(batch_info.get("total_devices") or 0) or sum(
@@ -1297,108 +1246,81 @@ class BackupService(DeviceCredentialMixin):
             total_devices=total_devices,
         )
 
-        completed = 0
-        success_count = 0
-        failed_count = 0
-        failed_devices: list[dict[str, Any]] = []
         has_running = False
+        running_completed = 0  # 正在运行的任务中已完成的设备数
+
+        # ===== 步骤 1：聚合子任务结果（按设备粒度去重，auto-retry 覆盖原始失败） =====
+        # device_results 保存每台设备的最终结果，key=device_name
+        device_results: dict[str, dict[str, Any]] = {}
 
         for child in effective_children:
             child_id = child.get("task_id")
             if not child_id:
                 continue
+            is_retry = child.get("is_auto_retry", False)
             result = AsyncResult(child_id, app=celery_app)
+
             if result.status in {"PENDING", "STARTED", "PROGRESS"}:
                 has_running = True
                 if isinstance(result.info, dict):
-                    completed += int(result.info.get("completed") or 0)
+                    running_completed += int(result.info.get("completed") or 0)
+                # 检查该子任务是否在等待 OTP（runner 写入的等待信号）
+                otp_signal = await otp_coordinator.get_otp_wait_signal(child_id)
+                if otp_signal:
+                    cred_id = otp_signal.get("credential_id")
+                    if cred_id:
+                        notice = await record_pause_and_build_notice(
+                            task_id=task_id,
+                            credential_id=UUID(cred_id),
+                            pending_device_ids=[],
+                            wait_status="waiting",
+                            credential_username=otp_signal.get("credential_username"),
+                            credential_device_group=otp_signal.get("credential_device_group"),
+                            force=True,
+                        )
+                        if notice:
+                            completed_so_far = len(device_results) + running_completed
+                            status_response.completed = completed_so_far
+                            status_response.otp_notice = notice
+                            return status_response
                 continue
 
             if result.status == "SUCCESS":
                 info = result.result or {}
-                if isinstance(info, dict) and info.get("otp_required"):
-                    credential_id = info.get("otp_credential_id") or child.get("credential_id")
-                    pending_ids = child.get("device_ids") or info.get("otp_failed_device_ids") or []
-                    if credential_id:
-                        # 检查凭证是否已被 Resume，如果是则跳过 OTP 请求
-                        is_resumed = await otp_coordinator.registry.is_credential_resumed(task_id, str(credential_id))
-                        if is_resumed:
-                            # 已 Resume 的凭证，按失败计入（OTP 过期导致的失败）
-                            failed_count += len(pending_ids)
-                            completed += len(pending_ids)
-                            continue
-
-                        notice = await record_pause_and_build_notice(
-                            task_id=task_id,
-                            credential_id=UUID(str(credential_id)),
-                            pending_device_ids=pending_ids,
-                            wait_status=info.get("otp_wait_status"),
-                            message=info.get("message"),
-                            credential_username=info.get("otp_credential_username"),
-                            credential_device_group=info.get("otp_credential_device_group"),
-                            force=True,
-                        )
-                        if notice:
-                            status_response.otp_notice = notice
-                            return status_response
-                    continue
-
                 if isinstance(info, dict):
-                    total = int(info.get("total") or 0)
-                    success = int(info.get("success") or 0)
-                    failed = int(info.get("failed") or 0)
-                    completed += total
-                    success_count += success
-                    failed_count += failed
                     for name, res in (info.get("results") or {}).items():
-                        if isinstance(res, dict) and res.get("status") == "failed":
-                            failed_devices.append({"name": res.get("device_name") or name, "error": res.get("error")})
+                        if not isinstance(res, dict):
+                            continue
+                        device_name = res.get("device_name") or name
+                        # auto-retry 结果始终覆盖；原始结果仅在首次出现时写入
+                        if is_retry or device_name not in device_results:
+                            device_results[device_name] = res
                 continue
 
             if result.status == "FAILURE":
-                from app.core.exceptions import OTPRequiredException
+                # 任务级别失败：将所有设备标记为失败
+                for did in child.get("device_ids") or []:
+                    fail_key = f"__task_fail__{did}"
+                    if is_retry or fail_key not in device_results:
+                        device_results[fail_key] = {"status": "failed", "error": "任务级别失败"}
 
-                if isinstance(result.result, OTPRequiredException):
-                    exc = result.result
-                    credential_id = exc.credential_id_str or (
-                        exc.details.get("credential_id") if isinstance(exc.details, dict) else None
-                    )
-                    pending_ids = []
-                    if child.get("device_ids"):
-                        pending_ids.extend(child.get("device_ids") or [])
-                    if isinstance(exc.details, dict) and exc.details.get("pending_device_ids"):
-                        pending_ids.extend(exc.details.get("pending_device_ids") or [])
-                    pending_ids = list({str(x) for x in pending_ids if x})
-                    if credential_id:
-                        # 检查凭证是否已被 Resume
-                        is_resumed = await otp_coordinator.registry.is_credential_resumed(task_id, str(credential_id))
-                        if not is_resumed:
-                            wait_status = None
-                            if isinstance(exc.details, dict):
-                                wait_status = exc.details.get("otp_wait_status")
-                            notice = await record_pause_and_build_notice(
-                                task_id=task_id,
-                                credential_id=UUID(str(credential_id)),
-                                pending_device_ids=pending_ids,
-                                wait_status=wait_status,
-                                message=str(exc) or None,
-                                credential_username=exc.credential_username,
-                                credential_device_group=exc.credential_device_group,
-                                force=True,
-                            )
-                            if notice:
-                                status_response.otp_notice = notice
-                                return status_response
-                # 失败任务按子任务设备数计入
-                failed_count += len(child.get("device_ids") or [])
-                completed += len(child.get("device_ids") or [])
+        # 从 device_results 计算聚合数值
+        completed = len(device_results) + running_completed
+        success_count = sum(1 for r in device_results.values() if r.get("status") == "success")
+        failed_count = sum(1 for r in device_results.values() if r.get("status") != "success")
+        failed_devices: list[dict[str, Any]] = [
+            {"name": r.get("device_name") or name, "error": r.get("error")}
+            for name, r in device_results.items()
+            if r.get("status") != "success"
+        ]
+
+        # ===== 步骤 2：检查 waiting_groups（初始 OTP 提示） =====
 
         waiting_groups_payload = batch_info.get("waiting_groups") or []
         for group in waiting_groups_payload:
             credential_id = group.get("credential_id") or group.get("otp_credential_id")
             if not credential_id:
                 continue
-            # 检查凭证是否已被 Resume
             is_resumed = await otp_coordinator.registry.is_credential_resumed(task_id, str(credential_id))
             if is_resumed:
                 continue
@@ -1406,18 +1328,74 @@ class BackupService(DeviceCredentialMixin):
             if not pause_state:
                 continue
             pending_ids = pause_state.get("pending_device_ids") or group.get("pending_device_ids") or []
-            info = OtpMetaBuilder.build_info(
-                credential_id=credential_id,
-                failed_device_ids=pending_ids,
-                wait_status=group.get("otp_wait_status"),
-                credential_username=group.get("otp_credential_username") or group.get("credential_username"),
-                credential_device_group=group.get("otp_credential_device_group")
-                or group.get("credential_device_group"),
-            )
-            notice = await build_otp_notice_from_info(info, task_id=task_id, force=True)
-            if notice:
-                status_response.otp_notice = notice
-                return status_response
+            if pending_ids:
+                notice = await record_pause_and_build_notice(
+                    task_id=task_id,
+                    credential_id=UUID(str(credential_id)),
+                    pending_device_ids=[str(x) for x in pending_ids],
+                    wait_status=group.get("otp_wait_status"),
+                    credential_username=group.get("otp_credential_username") or group.get("credential_username"),
+                    credential_device_group=group.get("otp_credential_device_group")
+                    or group.get("credential_device_group"),
+                    force=True,
+                )
+                if notice:
+                    status_response.otp_notice = notice
+                    return status_response
+
+        # ===== 步骤 3：自动重试非 OTP 失败设备（最后一轮） =====
+        # 所有子任务完成 + 有失败设备 + 未提交过重试 → 自动合并失败设备提交重试任务
+        if not has_running and completed >= total_devices and failed_count > 0:
+            is_retried = await otp_coordinator.registry.is_auto_retry_submitted(task_id)
+            if not is_retried:
+                retry_device_ids = self._collect_non_otp_failed_device_ids(effective_children, celery_app)
+                if retry_device_ids:
+                    retry_ok = await self._submit_auto_retry(task_id, batch_info, retry_device_ids)
+                    if retry_ok:
+                        await otp_coordinator.registry.mark_auto_retry_submitted(task_id)
+                        # 重试任务已提交，返回 running 继续轮询
+                        status_response.status = "running"
+                        status_response.completed = completed
+                        status_response.total = total_devices
+                        status_response.success_count = success_count
+                        status_response.failed_count = failed_count
+                        status_response.failed_devices = failed_devices
+                        logger.info(
+                            "自动重试任务已提交",
+                            task_id=task_id,
+                            retry_device_count=len(retry_device_ids),
+                        )
+                        return status_response
+
+        # ===== 步骤 4：任务完成后 OTP 失败设备返回 428 =====
+        # 所有子任务完成 + 存在 OTP 失败设备 → 返回 428 让用户重新输入 OTP
+        if not has_running and completed >= total_devices and failed_devices:
+            otp_failed_device_ids = self._collect_otp_failed_device_ids(effective_children, celery_app)
+            if otp_failed_device_ids:
+                # 找到第一个 OTP 凭据的 credential_id（用于构建 otp_notice）
+                otp_cred_id, otp_cred_username, otp_cred_device_group = self._find_otp_credential_from_batch(
+                    batch_info, effective_children
+                )
+                if otp_cred_id:
+                    notice = await record_pause_and_build_notice(
+                        task_id=task_id,
+                        credential_id=UUID(otp_cred_id),
+                        pending_device_ids=otp_failed_device_ids,
+                        wait_status="waiting",
+                        credential_username=otp_cred_username,
+                        credential_device_group=otp_cred_device_group,
+                        force=True,
+                    )
+                    if notice:
+                        status_response.completed = completed
+                        status_response.total = total_devices
+                        status_response.success_count = success_count
+                        status_response.failed_count = failed_count
+                        status_response.failed_devices = failed_devices
+                        status_response.otp_notice = notice
+                        return status_response
+
+        # ===== 正常返回 =====
 
         status_response.completed = completed
         status_response.total = total_devices
@@ -1427,9 +1405,348 @@ class BackupService(DeviceCredentialMixin):
         status_response.failed_devices = failed_devices
 
         if not has_running and completed >= total_devices:
-            status_response.status = "success" if failed_count == 0 else "failed"
+            if failed_count == 0:
+                status_response.status = "success"
+            elif success_count == 0:
+                status_response.status = "failed"
+            else:
+                status_response.status = "partial"
 
         return status_response
+
+    # ===== 自动失败重试辅助方法 =====
+
+    async def _build_host_data_for_device(
+        self,
+        device: Device,
+        *,
+        operator_id: str | None = None,
+        otp_cache: dict[str, str] | None = None,
+        credential_info_cache: dict[str, dict[str, Any]] | None = None,
+    ) -> dict[str, Any] | None:
+        """
+        为单台设备构建 Celery 任务所需的 host_data 字典。
+
+        统一处理三种认证类型的凭据获取和数据构建，供
+        backup_devices_batch 和 _submit_auto_retry 复用。
+
+        Args:
+            device: 设备对象
+            operator_id: 操作人 ID
+            otp_cache: OTP 缓存字典 {credential_id: otp_code}
+            credential_info_cache: 凭证信息缓存 {credential_id: {username, device_group}}
+
+        Returns:
+            dict | None: host_data 字典，凭据获取失败时返回 None
+        """
+        if otp_cache is None:
+            otp_cache = {}
+        if credential_info_cache is None:
+            credential_info_cache = {}
+
+        auth_type = AuthType(device.auth_type)
+
+        if auth_type == AuthType.OTP_MANUAL:
+            if not device.credential_id:
+                return None
+            cred_id_str = str(device.credential_id)
+            if cred_id_str in credential_info_cache:
+                cred_info = credential_info_cache[cred_id_str]
+                username = cred_info.get("username", "")
+                device_group = cred_info.get("device_group")
+            else:
+                credential_row = await self.credential_crud.get(self.db, device.credential_id)
+                if not credential_row:
+                    return None
+                username = credential_row.username
+                device_group = credential_row.device_group
+                credential_info_cache[cred_id_str] = {"username": username, "device_group": device_group}
+            prefetched_otp = otp_cache.get(cred_id_str)
+            if not prefetched_otp:
+                prefetched_otp = await otp_coordinator.get_cached_otp(device.credential_id) or None
+            extra_data = {
+                "auth_type": "otp_manual",
+                "credential_id": cred_id_str,
+                "credential_username": username,
+                "credential_device_group": device_group,
+                "dept_id": str(device.dept_id),
+                "device_group": str(device.device_group),
+                "device_id": str(device.id),
+                "device_name": device.name,
+                "vendor": device.vendor,
+                "otp_password_prefetched": prefetched_otp,
+            }
+            return {
+                "name": str(device.id),
+                "hostname": device.ip_address,
+                "platform": device.platform or get_platform_for_vendor(str(device.vendor)),
+                "username": username,
+                "password": "",
+                "port": device.ssh_port,
+                "device_id": str(device.id),
+                "operator_id": operator_id,
+                "data": extra_data,
+            }
+
+        if auth_type == AuthType.OTP_SEED:
+            if not device.credential_id:
+                return None
+            credential_row = await self.credential_crud.get(self.db, device.credential_id)
+            if not credential_row or not credential_row.otp_seed_encrypted:
+                return None
+            return {
+                "name": str(device.id),
+                "hostname": device.ip_address,
+                "platform": device.platform or get_platform_for_vendor(str(device.vendor)),
+                "username": credential_row.username,
+                "password": "",
+                "port": device.ssh_port,
+                "device_id": str(device.id),
+                "operator_id": operator_id,
+                "data": {
+                    "auth_type": "otp_seed",
+                    "otp_seed_encrypted": credential_row.otp_seed_encrypted,
+                    "credential_id": str(device.credential_id),
+                    "credential_username": credential_row.username,
+                    "credential_device_group": credential_row.device_group,
+                    "dept_id": str(device.dept_id),
+                    "device_group": str(device.device_group),
+                    "device_id": str(device.id),
+                    "device_name": device.name,
+                    "vendor": device.vendor,
+                },
+            }
+
+        # 静态密码
+        credential = await self._get_device_credential(device)
+        return {
+            "name": str(device.id),
+            "hostname": device.ip_address,
+            "platform": device.platform or get_platform_for_vendor(str(device.vendor)),
+            "username": credential.username,
+            "password": credential.password,
+            "port": device.ssh_port,
+            "device_id": str(device.id),
+            "operator_id": operator_id,
+            "data": {
+                "auth_type": "static",
+                "credential_id": None,
+                "device_id": str(device.id),
+                "device_name": device.name,
+                "vendor": device.vendor,
+            },
+        }
+
+    @staticmethod
+    def _collect_non_otp_failed_device_ids(
+        effective_children: list[dict[str, Any]],
+        celery_app: Any,
+    ) -> list[str]:
+        """
+        收集所有非 OTP 原因失败的设备 ID。
+
+        Args:
+            effective_children: 去重后的子任务列表
+            celery_app: Celery 应用实例
+
+        Returns:
+            list[str]: 非 OTP 失败的设备 ID 列表（去重）
+        """
+        from celery.result import AsyncResult
+
+        retry_ids: set[str] = set()
+        for child in effective_children:
+            child_id = child.get("task_id")
+            if not child_id:
+                continue
+            result = AsyncResult(child_id, app=celery_app)
+
+            if result.status == "SUCCESS":
+                info = result.result or {}
+                if not isinstance(info, dict):
+                    continue
+                for host_key, res in (info.get("results") or {}).items():
+                    if not isinstance(res, dict):
+                        continue
+                    if res.get("status") != "failed":
+                        continue
+                    error_text = res.get("error") or ""
+                    if is_otp_error_text(error_text):
+                        continue
+                    device_id = res.get("device_id") or host_key
+                    if device_id:
+                        retry_ids.add(str(device_id))
+
+            elif result.status == "FAILURE":
+                device_ids = child.get("device_ids") or []
+                for did in device_ids:
+                    retry_ids.add(str(did))
+
+        return sorted(retry_ids)
+
+    @staticmethod
+    def _collect_otp_failed_device_ids(
+        effective_children: list[dict[str, Any]],
+        celery_app: Any,
+    ) -> list[str]:
+        """
+        收集所有 OTP 原因失败的设备 ID。
+
+        与 _collect_non_otp_failed_device_ids 互补：
+        后者收集非 OTP 失败设备用于自动重试，
+        本方法收集 OTP 失败设备用于返回 428 让用户重新输入 OTP。
+
+        Args:
+            effective_children: 去重后的子任务列表
+            celery_app: Celery 应用实例
+
+        Returns:
+            list[str]: OTP 失败的设备 ID 列表（去重）
+        """
+        from celery.result import AsyncResult
+
+        otp_ids: set[str] = set()
+        for child in effective_children:
+            child_id = child.get("task_id")
+            if not child_id:
+                continue
+            result = AsyncResult(child_id, app=celery_app)
+
+            if result.status == "SUCCESS":
+                info = result.result or {}
+                if not isinstance(info, dict):
+                    continue
+                for host_key, res in (info.get("results") or {}).items():
+                    if not isinstance(res, dict):
+                        continue
+                    if res.get("status") != "failed":
+                        continue
+                    error_text = res.get("error") or ""
+                    if not is_otp_error_text(error_text):
+                        continue
+                    device_id = res.get("device_id") or host_key
+                    if device_id:
+                        otp_ids.add(str(device_id))
+
+        return sorted(otp_ids)
+
+    @staticmethod
+    def _find_otp_credential_from_batch(
+        batch_info: dict[str, Any],
+        effective_children: list[dict[str, Any]],
+    ) -> tuple[str | None, str | None, str | None]:
+        """
+        从批次信息中找到第一个 OTP 凭据信息。
+
+        优先从 waiting_groups（包含 credential_username 等详情）查找，
+        回退到 children 中的 credential_id。
+
+        Args:
+            batch_info: 批次信息字典
+            effective_children: 去重后的子任务列表
+
+        Returns:
+            tuple: (credential_id, credential_username, credential_device_group)
+        """
+        # 优先从 waiting_groups 获取（包含凭据详情）
+        for group in batch_info.get("waiting_groups") or []:
+            cred_id = group.get("credential_id") or group.get("otp_credential_id")
+            if cred_id:
+                return (
+                    str(cred_id),
+                    group.get("otp_credential_username") or group.get("credential_username"),
+                    group.get("otp_credential_device_group") or group.get("credential_device_group"),
+                )
+        # 回退到 children 中的 credential_id
+        for child in effective_children:
+            cred_id = child.get("credential_id")
+            if cred_id:
+                return str(cred_id), None, None
+        return None, None, None
+
+    async def _submit_auto_retry(
+        self,
+        task_id: str,
+        batch_info: dict[str, Any],
+        retry_device_ids: list[str],
+    ) -> bool:
+        """
+        提交自动重试任务（复用 _build_host_data_for_device 构建 host_data）。
+
+        Args:
+            task_id: 批次 ID
+            batch_info: 批次信息
+            retry_device_ids: 需要重试的设备 ID 列表
+
+        Returns:
+            bool: 是否成功提交
+        """
+        if not retry_device_ids:
+            return False
+
+        try:
+            device_uuids = [UUID(did) for did in retry_device_ids]
+            devices = await self.device_crud.get_by_ids(
+                self.db, device_uuids, options=self.device_crud._DEVICE_OPTIONS
+            )
+            if not devices:
+                logger.warning("自动重试：未找到有效设备", task_id=task_id)
+                return False
+
+            backup_type_str = batch_info.get("backup_type") or BackupType.MANUAL.value
+            operator_id = batch_info.get("operator_id")
+
+            batches = build_backup_batches(list(devices), chunk_size=50)
+            if not batches:
+                return False
+
+            from app.celery.tasks.backup import async_backup_devices
+
+            children: list[dict[str, Any]] = []
+            for batch in batches:
+                batch_devices: list[Device] = batch.get("devices") or []
+                if not batch_devices:
+                    continue
+
+                hosts_data: list[dict[str, Any]] = []
+                for device in batch_devices:
+                    try:
+                        host_data = await self._build_host_data_for_device(device, operator_id=operator_id)
+                        if host_data:
+                            hosts_data.append(host_data)
+                    except Exception as e:
+                        logger.warning(f"自动重试：设备 {device.name} 凭据获取失败: {e}")
+
+                if not hosts_data:
+                    continue
+
+                task = async_backup_devices.delay(  # type: ignore[attr-defined]
+                    hosts_data=hosts_data,
+                    num_workers=min(100, len(hosts_data)),
+                    backup_type=backup_type_str,
+                    operator_id=operator_id,
+                    batch_id=task_id,
+                )
+                children.append(
+                    {
+                        "task_id": task.id,
+                        "credential_id": str(batch.get("credential_id")) if batch.get("credential_id") else None,
+                        "device_ids": [str(d.id) for d in batch_devices],
+                        "batch_index": batch.get("batch_index"),
+                        "is_auto_retry": True,
+                    }
+                )
+
+            if not children:
+                return False
+
+            await otp_coordinator.registry.append_children(task_id, children)
+            logger.info("自动重试子任务已提交", task_id=task_id, retry_tasks=len(children), retry_devices=len(retry_device_ids))
+            return True
+
+        except Exception as e:
+            logger.error(f"自动重试提交失败: {e}", exc_info=True)
+            return False
 
     # ===== 定时任务接口 =====
 

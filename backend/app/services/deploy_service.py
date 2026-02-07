@@ -15,7 +15,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.decorator import transactional
 from app.core.enums import ApprovalStatus, AuthType, DeviceStatus, TaskStatus, TaskType, TemplateStatus
 from app.core.exceptions import BadRequestException, ForbiddenException, NotFoundException
-from app.core.otp import OtpMetaBuilder, dedupe_otp_groups, otp_coordinator
+from app.core.logger import logger
+from app.core.otp import OtpMetaBuilder, dedupe_otp_groups, is_otp_error_text, otp_coordinator
 from app.core.otp_service import otp_service
 from app.crud.crud_credential import CRUDCredential
 from app.crud.crud_device import CRUDDevice
@@ -967,9 +968,46 @@ class DeployService(BaseService):
 
         raise ValueError(f"不支持的认证类型: {auth_type}")
 
+    async def _resubmit_for_devices(self, task: Task, device_ids: list[str]) -> Task:
+        """
+        将任务按指定设备列表重新提交 Celery 执行（共享底层逻辑）。
+
+        供 retry_failed_devices 和 check_and_auto_retry 复用。
+
+        Args:
+            task: 任务对象
+            device_ids: 要执行的设备 ID 列表
+
+        Returns:
+            Task: 更新后的任务对象
+        """
+        from app.celery.tasks.deploy import async_deploy_task
+
+        task.target_devices = {"device_ids": device_ids}
+        task.total_devices = len(device_ids)
+        task.success_count = 0
+        task.failed_count = 0
+        task.progress = 0
+        task.error_message = None
+
+        celery_result = async_deploy_task.delay(task_id=str(task.id))  # type: ignore[attr-defined]
+        task.celery_task_id = celery_result.id
+        task.status = TaskStatus.RUNNING.value
+        task.started_at = datetime.now(UTC)
+        task.finished_at = None
+
+        await otp_coordinator.registry.create_batch(str(task.id), {"task_type": "deploy"})
+
+        await self.db.flush()
+        await self.db.refresh(task)
+        task_with_related = await self.task_crud.get(self.db, task.id, options=self.task_crud.RELATED_OPTIONS)
+        if not task_with_related:
+            raise NotFoundException("任务不存在")
+        return task_with_related
+
     @transactional()
     async def retry_failed_devices(self, task_id: UUID) -> Task:
-        """重试失败的设备。
+        """重试失败的设备（手动触发）。
 
         仅 PARTIAL 或 FAILED 状态可重试。
         """
@@ -986,43 +1024,15 @@ class DeployService(BaseService):
                 if isinstance(res, dict) and res.get("status") != "success":
                     failed_device_ids.append(device_id)
 
-        # 如果没有从 results 中找到失败设备，但任务状态是 FAILED，
-        # 可能是任务执行前就失败了（如凭据问题），此时重试所有目标设备
+        # 回退到原始目标设备列表
         if not failed_device_ids and task.status == TaskStatus.FAILED.value:
-            # 回退到原始目标设备列表
             original_device_ids = self._get_target_device_ids(task)
             failed_device_ids = [str(d) for d in original_device_ids]
 
         if not failed_device_ids:
             raise BadRequestException("没有需要重试的失败设备")
 
-        # 更新 target_devices 仅包含失败设备
-        task.target_devices = {"device_ids": failed_device_ids}
-        task.total_devices = len(failed_device_ids)
-        task.success_count = 0
-        task.failed_count = 0
-        task.progress = 0
-        task.error_message = None
-        # 保留原有结果用于审计，但清除以便重新执行
-        # task.result = None  # 可选：是否清除
-
-        # 重新提交执行（使用 AsyncRunner + asyncssh）
-        from app.celery.tasks.deploy import async_deploy_task
-
-        celery_result = async_deploy_task.delay(task_id=str(task_id))  # type: ignore[attr-defined]
-        task.celery_task_id = celery_result.id
-        task.status = TaskStatus.RUNNING.value
-        task.started_at = datetime.now(UTC)
-        task.finished_at = None
-
-        await otp_coordinator.registry.create_batch(str(task_id), {"task_type": "deploy"})
-
-        await self.db.flush()
-        await self.db.refresh(task)
-        task_with_related = await self.task_crud.get(self.db, task.id, options=self.task_crud.RELATED_OPTIONS)
-        if not task_with_related:
-            raise NotFoundException("任务不存在")
-        return task_with_related
+        return await self._resubmit_for_devices(task, failed_device_ids)
 
     @transactional()
     async def resume_task_by_device_ids(self, task_id: UUID, device_ids: list[UUID]) -> Task:
@@ -1030,30 +1040,7 @@ class DeployService(BaseService):
         task = await self.get_task(task_id)
         if not device_ids:
             raise BadRequestException("没有可恢复的设备")
-
-        task.target_devices = {"device_ids": [str(x) for x in device_ids]}
-        task.total_devices = len(device_ids)
-        task.success_count = 0
-        task.failed_count = 0
-        task.progress = 0
-        task.error_message = None
-
-        from app.celery.tasks.deploy import async_deploy_task
-
-        celery_result = async_deploy_task.delay(task_id=str(task_id))  # type: ignore[attr-defined]
-        task.celery_task_id = celery_result.id
-        task.status = TaskStatus.RUNNING.value
-        task.started_at = datetime.now(UTC)
-        task.finished_at = None
-
-        await otp_coordinator.registry.create_batch(str(task_id), {"task_type": "deploy"})
-
-        await self.db.flush()
-        await self.db.refresh(task)
-        task_with_related = await self.task_crud.get(self.db, task.id, options=self.task_crud.RELATED_OPTIONS)
-        if not task_with_related:
-            raise NotFoundException("任务不存在")
-        return task_with_related
+        return await self._resubmit_for_devices(task, [str(x) for x in device_ids])
 
     async def get_group_device_ids(self, task_id: UUID, dept_id: UUID, device_group: str) -> list[UUID]:
         """按部门+分组获取任务内待恢复设备列表。"""
@@ -1063,3 +1050,71 @@ class DeployService(BaseService):
             return []
         devices = await self.device_crud.get_by_ids(self.db, target_ids, options=self.device_crud._DEVICE_OPTIONS)
         return [d.id for d in devices if d.dept_id == dept_id and str(d.device_group) == str(device_group)]
+
+    # ===== 自动失败重试 =====
+
+    async def check_and_auto_retry(self, task: Task) -> Task:
+        """
+        检查部署任务是否需要自动重试失败设备。
+
+        当任务处于 PARTIAL 或 FAILED 状态、且结果中包含非 OTP 失败设备、
+        且未提交过自动重试时，自动收集失败设备并提交重试任务。
+
+        Args:
+            task: 任务对象
+
+        Returns:
+            Task: 原任务（如果无需重试）或重试后的任务对象
+        """
+        if task.status not in {TaskStatus.PARTIAL.value, TaskStatus.FAILED.value}:
+            return task
+
+        batch_id = str(task.id)
+        is_retried = await otp_coordinator.registry.is_auto_retry_submitted(batch_id)
+        if is_retried:
+            return task
+
+        failed_device_ids = self._collect_non_otp_failed_device_ids(task)
+        if not failed_device_ids:
+            return task
+
+        try:
+            await otp_coordinator.registry.mark_auto_retry_submitted(batch_id)
+            result = await self._resubmit_for_devices(task, failed_device_ids)
+            await self.db.commit()
+            logger.info("部署任务自动重试已提交", task_id=batch_id, retry_device_count=len(failed_device_ids))
+            return result
+        except Exception as e:
+            logger.error(f"部署任务自动重试提交失败: {e}", exc_info=True)
+            await self.db.rollback()
+            return task
+
+    @staticmethod
+    def _collect_non_otp_failed_device_ids(task: Task) -> list[str]:
+        """
+        从部署任务结果中收集非 OTP 原因失败的设备 ID。
+
+        Args:
+            task: 任务对象
+
+        Returns:
+            list[str]: 非 OTP 失败的设备 ID 列表
+        """
+        if not task.result or not isinstance(task.result, dict):
+            return []
+
+        results = task.result.get("results", {})
+        failed_ids: list[str] = []
+        for device_id, res in results.items():
+            if not isinstance(res, dict):
+                continue
+            if res.get("status") == "success":
+                continue
+            error_text = res.get("error") or ""
+            # 排除 OTP 相关失败
+            if is_otp_error_text(error_text):
+                continue
+            failed_ids.append(str(device_id))
+        return failed_ids
+
+    # ===== 自动失败重试 =====

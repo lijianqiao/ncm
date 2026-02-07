@@ -42,7 +42,7 @@ export interface UseTaskPollingOptions<T extends TaskStatusBase> {
  * 默认判断任务是否完成
  */
 function defaultIsComplete(status: TaskStatusBase): boolean {
-  const completedStatuses = ['SUCCESS', 'FAILURE', 'success', 'failed', 'REVOKED']
+  const completedStatuses = ['SUCCESS', 'FAILURE', 'success', 'failed', 'partial', 'REVOKED']
   return completedStatuses.includes(status.status)
 }
 

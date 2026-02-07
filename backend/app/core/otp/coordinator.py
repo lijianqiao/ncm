@@ -9,7 +9,7 @@
 """
 
 import time
-from typing import cast
+from typing import Any, cast
 from uuid import UUID
 
 from app.core.config import settings
@@ -18,8 +18,11 @@ from app.core.logger import logger
 from .registry import OtpTaskRegistry
 from .storage import (
     otp_cache_key_by_credential,
+    otp_invalidate_lock_key,
+    otp_retry_key,
     otp_task_pause_key_by_credential,
     otp_wait_lock_key_by_credential,
+    otp_wait_signal_key,
     otp_wait_state_key_by_credential,
     redis_delete,
     redis_expire,
@@ -97,6 +100,26 @@ class OtpCoordinator:
             credential_id: 凭据 ID
         """
         await redis_delete(otp_cache_key_by_credential(credential_id))
+
+    async def safe_invalidate_and_poll(self, credential_id: UUID) -> None:
+        """
+        带分布式锁的 OTP invalidate。
+
+        用于防止多个 Celery 任务（同一 credential_id 的不同子任务）
+        同时执行 invalidate_otp，避免清掉用户刚输入的新 OTP。
+        只有第一个拿到锁的调用者执行 invalidate，其他调用者跳过直接进入轮询。
+
+        Args:
+            credential_id: 凭据 ID
+        """
+        lock_key = otp_invalidate_lock_key(credential_id)
+        acquired = await redis_setnx_ex(lock_key, self.wait_timeout, "1")
+        if acquired:
+            await self.invalidate_otp(credential_id)
+            logger.debug("OTP invalidate 已执行（获取到分布式锁）", credential_id=str(credential_id))
+        else:
+            logger.debug("OTP invalidate 已跳过（其他任务持有锁）", credential_id=str(credential_id))
+        # 无论是否拿到锁，都不影响后续轮询
 
     async def extend_otp_ttl(self, credential_id: UUID, additional_seconds: int = 300) -> int:
         """
@@ -246,7 +269,14 @@ class OtpCoordinator:
                 await redis_json_set(otp_wait_state_key_by_credential(credential_id), self.wait_timeout, state)
             return state
 
-        await self.acquire_wait_lock(credential_id)
+        locked = await self.acquire_wait_lock(credential_id)
+        if not locked:
+            # 其他请求已在处理，重新读取现有状态
+            existing = await redis_json_get(otp_wait_state_key_by_credential(credential_id))
+            if existing:
+                return cast(OtpWaitState, existing)
+            # 锁被占用但状态尚未写入，仍使用新状态（极端竞态下的兜底）
+
         state = self._build_waiting_state(
             credential_id,
             task_id=task_id,
@@ -414,6 +444,141 @@ class OtpCoordinator:
             credential_id: 凭据 ID
         """
         await redis_delete(otp_task_pause_key_by_credential(task_id, credential_id))
+
+    # ===== OTP 等待信号（通知轮询端点返回 428） =====
+
+    async def signal_otp_wait(
+        self,
+        celery_task_id: str,
+        credential_id: UUID,
+        *,
+        credential_username: str | None = None,
+        credential_device_group: str | None = None,
+    ) -> bool:
+        """
+        发出 OTP 等待信号（由 AsyncRunner 在任务内等待 OTP 时调用）。
+
+        轮询端点检测到此信号后返回 428，通知前端弹出 OTP 输入框。
+        这是一个通用机制，备份/部署/拓扑等任务均可使用。
+
+        Args:
+            celery_task_id: Celery 任务 ID
+            credential_id: 凭据 ID
+            credential_username: 凭据用户名（前端展示用）
+            credential_device_group: 凭据设备分组（前端展示用）
+
+        Returns:
+            bool: 是否写入成功
+        """
+        data = {
+            "credential_id": str(credential_id),
+            "credential_username": credential_username,
+            "credential_device_group": credential_device_group,
+            "timestamp": time.time(),
+        }
+        return await redis_json_set(otp_wait_signal_key(celery_task_id), self.wait_timeout, data)
+
+    async def get_otp_wait_signal(self, celery_task_id: str) -> dict[str, Any] | None:
+        """
+        读取 OTP 等待信号（由轮询端点调用）。
+
+        Args:
+            celery_task_id: Celery 任务 ID
+
+        Returns:
+            dict | None: 等待信号数据，包含 credential_id 等信息
+        """
+        return await redis_json_get(otp_wait_signal_key(celery_task_id))
+
+    async def clear_otp_wait_signal(self, celery_task_id: str) -> None:
+        """
+        清除 OTP 等待信号（等待完成后调用）。
+
+        Args:
+            celery_task_id: Celery 任务 ID
+        """
+        await redis_delete(otp_wait_signal_key(celery_task_id))
+
+    # ===== OTP 重试存储（执行中 OTP 过期的设备） =====
+
+    async def record_otp_retry(
+        self,
+        batch_id: str,
+        credential_id: UUID,
+        device_ids: list[str],
+        *,
+        credential_username: str | None = None,
+        credential_device_group: str | None = None,
+    ) -> bool:
+        """
+        记录 OTP 过期失败的设备到重试存储（由 Celery 任务调用）。
+
+        同一 credential 的多次写入自动合并（set union），确保所有子任务的
+        OTP 失败设备被完整收集。
+
+        Args:
+            batch_id: 批次 ID
+            credential_id: 凭据 ID
+            device_ids: 设备 ID 列表
+            credential_username: 凭据用户名（用于前端展示）
+            credential_device_group: 凭据设备分组（用于前端展示）
+
+        Returns:
+            bool: 是否写入成功
+        """
+        key = otp_retry_key(batch_id)
+        existing = await redis_json_get(key) or {}
+        cred_str = str(credential_id)
+        group = existing.get(cred_str) or {"device_ids": [], "username": None, "device_group": None}
+        merged_ids = set(group.get("device_ids") or [])
+        merged_ids.update(str(x) for x in device_ids if x)
+        group["device_ids"] = sorted(merged_ids)
+        if credential_username:
+            group["username"] = credential_username
+        if credential_device_group:
+            group["device_group"] = credential_device_group
+        existing[cred_str] = group
+        ok = await redis_json_set(key, 3600, existing)
+        if ok:
+            logger.info(
+                "OTP 重试设备已记录",
+                batch_id=batch_id,
+                credential_id=cred_str,
+                device_count=len(group["device_ids"]),
+            )
+        return ok
+
+    async def get_otp_retries(self, batch_id: str) -> dict[str, Any] | None:
+        """
+        获取批次的所有 OTP 重试设备（按 credential_id 分组）。
+
+        Args:
+            batch_id: 批次 ID
+
+        Returns:
+            dict | None: {credential_id: {device_ids: [...], username: ..., device_group: ...}}
+        """
+        return await redis_json_get(otp_retry_key(batch_id))
+
+    async def clear_otp_retry(self, batch_id: str, credential_id: UUID) -> None:
+        """
+        清除指定凭证的 OTP 重试记录（恢复后调用）。
+
+        如果该批次下还有其他凭证的重试记录则保留，全部清空则删除整个 key。
+
+        Args:
+            batch_id: 批次 ID
+            credential_id: 凭据 ID
+        """
+        key = otp_retry_key(batch_id)
+        existing = await redis_json_get(key)
+        if not existing:
+            return
+        existing.pop(str(credential_id), None)
+        if existing:
+            await redis_json_set(key, 3600, existing)
+        else:
+            await redis_delete(key)
 
     async def resume_group(self, task_id: str, credential_id: UUID) -> OtpPauseState | None:
         """

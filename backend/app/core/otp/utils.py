@@ -69,18 +69,27 @@ def to_str_list(values: Iterable[Any] | None) -> list[str] | None:
 def is_otp_error_text(text: str | None) -> bool:
     """判断错误文本是否为 OTP 认证失败。
 
+    匹配的错误文本示例：
+    - "OTP 多次重试仍然失败"
+    - "等待 OTP 验证码超时"
+    - "需要重新输入 OTP 验证码"
+    - "OTP 过期"
+    - "OTP_REQUIRED"
+    - "OTP 处理异常: ..."
+
     Args:
         text: 错误文本
 
     Returns:
-        bool: 是否为 OTP 认证失败
+        bool: 是否为 OTP 相关错误
     """
     if not text:
         return False
     lowered = text.lower()
-    return "otp" in lowered and (
-        "过期" in lowered or "required" in lowered or "认证" in lowered or "验证码" in lowered
-    )
+    if "otp" not in lowered:
+        return False
+    _OTP_KEYWORDS = ("过期", "required", "认证", "验证码", "重试", "失败", "超时", "处理异常")
+    return any(kw in lowered for kw in _OTP_KEYWORDS)
 
 
 def dedupe_otp_groups(groups: list[dict[str, Any]]) -> list[dict[str, Any]]:

@@ -255,6 +255,10 @@ async def get_deploy_task(task_id: UUID, service: DeployServiceDep) -> ResponseB
         ResponseBase[DeployTaskResponse]: 包含设备下发日志及状态的详细数据。
     """
     task = await service.get_task(task_id)
+
+    # 自动重试：检查是否需要对非 OTP 失败设备进行最后一轮重试
+    task = await service.check_and_auto_retry(task)
+
     data = DeployTaskResponse.model_validate(task)
     data.device_results = await service.get_device_results(task)
     required_response = build_otp_required_response_from_result(data.result, message=data.error_message)

@@ -21,6 +21,9 @@ OTP_WAIT_LOCK_PREFIX_V2 = "ncm:otp:v2:wait:lock"
 OTP_WAIT_STATE_PREFIX_V2 = "ncm:otp:v2:wait:state"
 OTP_TASK_PAUSE_PREFIX_V2 = "ncm:otp:v2:task:pause"
 OTP_BATCH_PREFIX_V2 = "ncm:otp:v2:task:batch"
+OTP_RETRY_PREFIX_V2 = "ncm:otp:v2:retry"
+OTP_WAIT_SIGNAL_PREFIX_V2 = "ncm:otp:v2:wait_signal"
+OTP_INVALIDATE_LOCK_PREFIX_V2 = "ncm:otp:v2:invalidate:lock"
 
 
 def otp_cache_key_by_credential(credential_id: UUID | str) -> str:
@@ -74,6 +77,53 @@ def otp_task_pause_key_by_credential(task_id: str, credential_id: UUID | str) ->
         str: Redis 键名
     """
     return f"{OTP_TASK_PAUSE_PREFIX_V2}:{task_id}:{credential_id}"
+
+
+def otp_wait_signal_key(celery_task_id: str) -> str:
+    """
+    生成 OTP 等待信号键名（按 Celery 任务 ID）。
+
+    Celery 任务内的 runner 进入 OTP 等待时写入此 key，
+    轮询端点检测到后返回 428，通知前端弹出 OTP 输入框。
+
+    Args:
+        celery_task_id: Celery 任务 ID
+
+    Returns:
+        str: Redis 键名
+    """
+    return f"{OTP_WAIT_SIGNAL_PREFIX_V2}:{celery_task_id}"
+
+
+def otp_invalidate_lock_key(credential_id: UUID | str) -> str:
+    """
+    生成 OTP invalidate 分布式锁键名（按凭据 ID）。
+
+    用于防止多个 Celery 任务同时 invalidate 同一凭据的 OTP 缓存，
+    避免清掉用户刚输入的新 OTP。
+
+    Args:
+        credential_id: 设备凭据 ID
+
+    Returns:
+        str: Redis 键名
+    """
+    return f"{OTP_INVALIDATE_LOCK_PREFIX_V2}:{credential_id}"
+
+
+def otp_retry_key(batch_id: str) -> str:
+    """
+    生成 OTP 重试存储键名（按批次 ID）。
+
+    存储执行过程中 OTP 过期导致失败的设备，供轮询和恢复流程读取。
+
+    Args:
+        batch_id: 批次 ID
+
+    Returns:
+        str: Redis 键名
+    """
+    return f"{OTP_RETRY_PREFIX_V2}:{batch_id}"
 
 
 def otp_batch_key(batch_id: str) -> str:

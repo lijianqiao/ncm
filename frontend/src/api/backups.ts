@@ -121,7 +121,7 @@ export interface FailedDevice {
 /** 备份任务状态 */
 export interface BackupTaskStatus {
   task_id: string
-  status: 'pending' | 'running' | 'success' | 'failed'
+  status: 'pending' | 'running' | 'success' | 'partial' | 'failed'
 
   // 进度信息
   progress?: Record<string, unknown> | null

@@ -201,31 +201,23 @@ def _compute_unified_diff(old_text: str, new_text: str, context_lines: int = 3) 
 def _convert_async_results_to_summary(
     results: Any,
     hosts_data: list[dict[str, Any]] | None = None,
-    *,
-    include_otp_info: bool = False,
 ) -> dict[str, Any]:
     """
     将 AsyncRunner 结果转换为统一的聚合格式。
 
-    统一的结果聚合函数，支持简单模式（仅聚合成功/失败）和完整模式（包含 OTP 信息）。
+    纯粹的结果聚合，不包含任何 OTP 逻辑。
+    OTP 过期重试由 AsyncRunner 在任务内部处理（等待用户输入新 OTP）。
 
     Args:
         results: AsyncRunner 返回的 AggregatedResult
-        hosts_data: 原始主机数据（include_otp_info=True 时需要）
-        include_otp_info: 是否包含 OTP 超时/认证信息
+        hosts_data: 原始主机数据（用于映射设备名称）
 
     Returns:
-        dict: 兼容 _save_backup_results 的格式
-            {"results": {name: {"status": ..., "result": ..., "error": ...}}, "success": n, "failed": n, ...}
+        dict: {"results": {name: {"status": ..., "result": ..., "error": ...}}, "success": n, "failed": n}
     """
     success_count = 0
     failed_count = 0
     results_dict: dict[str, dict[str, Any]] = {}
-
-    # OTP 相关跟踪（仅在 include_otp_info=True 时使用）
-    otp_required_info: dict[str, Any] | None = None
-    otp_failed_device_ids: list[str] = []
-    completed_device_ids: list[str] = []
 
     # 构建 host_key -> 元信息 映射（用于显示名称/设备ID）
     host_meta: dict[str, dict[str, str]] = {}
@@ -244,7 +236,6 @@ def _convert_async_results_to_summary(
             host_meta[host_key] = meta
 
     for host_name, multi_result in results.items():
-        # 尝试映射回设备名（如果有映射），确保 name 为 str
         host_key = str(host_name) if host_name else "unknown"
         meta = host_meta.get(host_key, {})
         device_id = meta.get("device_id")
@@ -253,86 +244,25 @@ def _convert_async_results_to_summary(
         if not multi_result or multi_result.failed:
             failed_count += 1
             error_msg = "Unknown error"
-            otp_required: OTPRequiredException | None = None
-            is_otp_required = False
-            otp_wait_status = None
-            otp_credential_id = None
-            otp_credential_username = None
-            otp_credential_device_group = None
-
             if multi_result and len(multi_result) > 0:
                 r = multi_result[0]
-                result_data = r.result or {}
-
-                # 检查 OTP 相关状态
-                if include_otp_info:
-                    if result_data.get("otp_required"):
-                        is_otp_required = True
-                        otp_wait_status = result_data.get("otp_wait_status")
-                        if otp_wait_status == "timeout":
-                            error_msg = result_data.get("error", "用户未提供 OTP 验证码，连接失败")
-                        else:
-                            error_msg = result_data.get("error", "需要输入 OTP 验证码")
-                    if result_data.get("otp_credential_id"):
-                        otp_credential_id = result_data.get("otp_credential_id")
-                    if result_data.get("otp_credential_username"):
-                        otp_credential_username = result_data.get("otp_credential_username")
-                    if result_data.get("otp_credential_device_group"):
-                        otp_credential_device_group = result_data.get("otp_credential_device_group")
-
                 if r.exception:
                     error_msg = str(r.exception)
-                    if include_otp_info and isinstance(r.exception, OTPRequiredException):
-                        otp_required = r.exception
-                        if isinstance(r.exception.details, dict):
-                            otp_wait_status = r.exception.details.get("otp_wait_status") or otp_wait_status
-                            otp_credential_id = r.exception.details.get("credential_id") or otp_credential_id
-                            otp_credential_username = (
-                                r.exception.details.get("otp_credential_username") or otp_credential_username
-                            )
-                            otp_credential_device_group = (
-                                r.exception.details.get("otp_credential_device_group") or otp_credential_device_group
-                            )
-
-            if include_otp_info and (otp_required is not None or is_otp_required):
-                # 使用 OtpMetaBuilder 构建 OTP 元数据
-                otp_meta = OtpMetaBuilder.build(
-                    credential_id=otp_required.credential_id_str if otp_required else otp_credential_id,
-                    credential_username=otp_required.credential_username if otp_required else otp_credential_username,
-                    credential_device_group=(
-                        otp_required.credential_device_group if otp_required else otp_credential_device_group
-                    ),
-                    wait_status=otp_wait_status,
-                    failed_device_ids=[str(device_id)] if device_id else None,
-                )
-                results_dict[host_key] = {
-                    "status": "otp_required",
-                    "error": error_msg,
-                    "result": None,
-                    "device_id": device_id,
-                    "device_name": device_name,
-                    **OtpMetaBuilder.serialize(otp_meta),
-                }
-                if device_id:
-                    otp_failed_device_ids.append(str(device_id))
-                if otp_required_info is None:
-                    otp_required_info = OtpMetaBuilder.serialize(otp_meta)
-            else:
-                results_dict[host_key] = {
-                    "status": "failed",
-                    "error": error_msg,
-                    "result": None,
-                    "device_id": device_id,
-                    "device_name": device_name,
-                }
+                elif r.result and isinstance(r.result, dict):
+                    error_msg = r.result.get("error", "Unknown error")
+            results_dict[host_key] = {
+                "status": "failed",
+                "error": error_msg,
+                "result": None,
+                "device_id": device_id,
+                "device_name": device_name,
+            }
         else:
             result_data = multi_result[0].result if multi_result else None
             task_success = result_data.get("success", True) if result_data else False
 
             if task_success:
                 success_count += 1
-                if include_otp_info and device_id:
-                    completed_device_ids.append(str(device_id))
                 results_dict[host_key] = {
                     "status": "success",
                     "result": result_data.get("config") if result_data else None,
@@ -350,22 +280,12 @@ def _convert_async_results_to_summary(
                     "device_name": device_name,
                 }
 
-    # 构建汇总结果
-    summary: dict[str, Any] = {
+    return {
         "success": success_count,
         "failed": failed_count,
         "total": success_count + failed_count,
         "results": results_dict,
     }
-
-    # 添加 OTP 相关信息（仅在 include_otp_info=True 时）
-    if include_otp_info:
-        summary["otp_failed_device_ids"] = otp_failed_device_ids
-        summary["completed_device_ids"] = completed_device_ids
-        if otp_required_info:
-            summary.update(otp_required_info)
-
-    return summary
 
 
 def _sanitize_summary_for_result(summary: dict[str, Any]) -> dict[str, Any]:
@@ -419,6 +339,7 @@ async def _save_backup_results(
     operator_id: str | None = None,
     *,
     celery_task_id: str | None = None,
+    batch_id: str | None = None,
 ) -> None:
     """保存备份结果到数据库（支持指定备份类型、md5 去重、保留策略）。
 
@@ -427,6 +348,8 @@ async def _save_backup_results(
         summary (dict): 备份结果汇总字典。
         backup_type (str): 备份类型，默认为手动备份。
         operator_id (str | None): 操作员 ID。
+        celery_task_id (str | None): Celery 任务 ID，用于幂等保护。
+        batch_id (str | None): 批次 ID，用于 OTP 重试存储。
 
     Returns:
         None: 无返回值。
@@ -445,22 +368,17 @@ async def _save_backup_results(
             effective_operator_id = operator_id or host.get("operator_id")
 
             host_key = host.get("name") or host.get("hostname")
-            display_name = (host.get("data") or {}).get("device_name") or host.get("device_name") or host_key
             result = summary.get("results", {}).get(host_key, {})
             status = result.get("status", "unknown")
             error_message = result.get("error") if status != "success" else None
-            if status == "otp_required" or (
-                error_message
-                and "otp" in error_message.lower()
-                and ("过期" in error_message or "required" in error_message.lower() or "认证" in error_message)
-            ):
-                celery_details_logger.info(
-                    "OTP 过期导致备份暂停，跳过记录",
-                    device_id=device_id,
-                    device_name=display_name,
-                )
-                continue
             config_content = result.get("result") if status == "success" else None
+
+            # OTP 相关错误不落库（OTP 失败由前端 428 流程处理，不需要持久化）
+            if status != "success" and error_message:
+                from app.core.otp.utils import is_otp_error_text
+
+                if is_otp_error_text(error_message):
+                    continue
 
             # 计算存储信息
             content = None
@@ -513,15 +431,18 @@ async def _save_backup_results(
                         )
 
             try:
-                if celery_task_id:
-                    dedupe_key = f"v1:celery:backup:{bt.value}:{device_id}:{celery_task_id}"
+                # 幂等保护：优先使用 batch_id（批量备份场景），
+                # 确保同一批次中同一台设备只保存一次（原始任务和重试任务共享 key）
+                effective_dedupe_id = batch_id or celery_task_id
+                if effective_dedupe_id:
+                    dedupe_key = f"v1:celery:backup:{bt.value}:{device_id}:{effective_dedupe_id}"
                     acquired = await _try_acquire_idempotency_key(dedupe_key)
                     if not acquired:
                         celery_task_logger.info(
                             "幂等 Key 已存在，跳过备份保存",
                             device_id=device_id,
                             backup_type=bt.value,
-                            task_id=celery_task_id,
+                            dedupe_id=effective_dedupe_id,
                         )
                         continue
                 backup_data = BackupCreate(
@@ -1215,6 +1136,7 @@ def async_backup_devices(
     num_workers: int = 100,
     backup_type: str = BackupType.MANUAL.value,
     operator_id: str | None = None,
+    batch_id: str | None = None,
 ) -> dict[str, Any]:
     """
     异步批量备份设备配置的 Celery 任务。
@@ -1369,20 +1291,21 @@ def async_backup_devices(
                 if otp_meta:
                     progress_meta.update(otp_meta)
 
-                celery_task_logger.debug(
-                    "进度回调触发",
-                    task_id=celery_task_id,
-                    host=host_name,
-                    completed=completed,
-                    total=total_hosts,
-                )
+            # 锁外执行 Redis 写入，避免持锁期间阻塞其他协程
+            celery_task_logger.debug(
+                "进度回调触发",
+                task_id=celery_task_id,
+                host=host_name,
+                completed=progress_meta.get("completed"),
+                total=total_hosts,
+            )
 
-                await safe_update_state_async(
-                    celery_task,
-                    celery_task_id,
-                    state="PROGRESS",
-                    meta=progress_meta,
-                )
+            await safe_update_state_async(
+                celery_task,
+                celery_task_id,
+                state="PROGRESS",
+                meta=progress_meta,
+            )
 
         self.update_state(
             state="PROGRESS",
@@ -1400,11 +1323,12 @@ def async_backup_devices(
                 async_collect_config,
                 num_workers=num_workers,
                 progress_callback=_progress_callback,
+                celery_task_id=celery_task_id,
             )
         )
 
         # 聚合结果（转换为与同步版本兼容的格式，包含 OTP 信息）
-        summary = _convert_async_results_to_summary(results, hosts_data, include_otp_info=True)
+        summary = _convert_async_results_to_summary(results, hosts_data)
 
         # 保存备份结果到数据库
         run_async(
@@ -1414,6 +1338,7 @@ def async_backup_devices(
                 backup_type=backup_type,
                 operator_id=operator_id,
                 celery_task_id=celery_task_id,
+                batch_id=batch_id,
             )
         )
 

@@ -216,12 +216,8 @@ async def safe_update_state_async(
         from app.celery.app import celery_app
 
         backend = celery_app.backend
-        # store_result 是线程安全的，直接写入 Redis
-        backend.store_result(
-            celery_task_id,
-            meta,
-            state,
-        )
+        # 使用 to_thread 避免同步 Redis IO 阻塞事件循环
+        await asyncio.to_thread(backend.store_result, celery_task_id, meta, state)
         celery_task_logger.debug(
             "异步更新任务状态成功",
             task_id=celery_task_id,

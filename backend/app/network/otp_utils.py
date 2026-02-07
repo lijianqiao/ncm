@@ -10,7 +10,6 @@ from uuid import UUID
 
 from app.core.enums import AuthType
 from app.core.exceptions import OTPRequiredException
-from app.core.logger import logger
 from app.core.otp import otp_coordinator
 from app.core.otp_service import otp_service
 
@@ -126,24 +125,34 @@ async def handle_otp_auth_failure(
     *,
     failed_devices: list[str] | None = None,
 ) -> None:
-    """认证失败时统一处理 OTP 逻辑。
+    """认证失败时判断是否为 OTP 相关，是则抛出 OTPRequiredException。
 
-    处理流程：
-    - 失效缓存
-    - 标记等待状态
-    - 抛出 OTPRequiredException
+    注意：此函数不做缓存失效或等待状态操作。
+    这些操作由 AsyncRunner 在捕获异常后统一处理（每个 credential 只执行一次），
+    避免多台设备同时失效导致用户刚输入的新 OTP 被清除。
+
+    仅在以下条件同时满足时才转换为 OTPRequiredException：
+    1. auth_type 为 otp_manual
+    2. 原始错误不是网络超时/连接类错误
 
     Args:
-        host_data: 主机数据字典，需包含 auth_type, dept_id, device_group, device_id
+        host_data: 主机数据字典，需包含 auth_type, credential_id 等
         original_error: 原始认证异常
         failed_devices: 失败设备 ID 列表（可选）
 
     Raises:
-        OTPRequiredException: 需要重新输入 OTP 时抛出
-        Exception: 非 OTP 认证类型时直接抛出原始异常
+        OTPRequiredException: OTP 手动认证类型且为真正的 OTP 认证失败时抛出
+        Exception: 非 OTP 认证类型或网络/连接类错误时直接抛出原始异常
     """
     auth_type = host_data.get("auth_type")
     if auth_type != "otp_manual":
+        raise original_error
+
+    # 检查是否为网络/连接类错误（非 OTP 认证问题）
+    # ScrapliAuthenticationFailed 也会在连接超时时抛出，需要排除这类情况
+    error_msg = str(original_error).lower()
+    _NON_OTP_KEYWORDS = ("timed out", "timeout", "connection lost", "connection refused", "unreachable")
+    if any(kw in error_msg for kw in _NON_OTP_KEYWORDS):
         raise original_error
 
     credential_id = _extract_uuid(host_data.get("credential_id"))
@@ -151,29 +160,6 @@ async def handle_otp_auth_failure(
     credential_username = host_data.get("credential_username")
     credential_device_group = host_data.get("credential_device_group")
 
-    if not credential_id:
-        raise OTPRequiredException(
-            credential_id=None,
-            failed_devices=failed_devices or ([str(device_id)] if device_id else None),
-            pending_device_ids=failed_devices or ([str(device_id)] if device_id else None),
-            message="需要输入 OTP 验证码",
-            otp_wait_status="waiting",
-            credential_username=credential_username,
-            credential_device_group=credential_device_group,
-        )
-
-    await otp_coordinator.invalidate_otp(
-        credential_id
-    )
-    await otp_coordinator.get_or_require_otp(
-        credential_id,
-        pending_device_ids=failed_devices or ([str(device_id)] if device_id else None),
-    )
-    logger.warning(
-        "OTP 认证失败，等待重新输入",
-        credential_id=str(credential_id),
-        error=str(original_error),
-    )
     raise OTPRequiredException(
         credential_id=credential_id,
         failed_devices=failed_devices or ([str(device_id)] if device_id else None),

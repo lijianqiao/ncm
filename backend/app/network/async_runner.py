@@ -11,13 +11,14 @@
 import asyncio
 from collections.abc import Awaitable, Callable, Coroutine
 from typing import TYPE_CHECKING, Any
+from uuid import UUID
 
 from nornir.core.task import AggregatedResult, MultiResult, Result
 
 from app.core.config import settings
 from app.core.exceptions import OTPRequiredException
 from app.core.logger import celery_details_logger, celery_task_logger, logger
-from app.core.otp import OtpMetaBuilder
+from app.core.otp import otp_coordinator
 
 if TYPE_CHECKING:
     from nornir.core.inventory import Host, Inventory
@@ -102,18 +103,20 @@ class AsyncRunner:
         hosts: HostsDict,
         progress_callback: ProgressCallback | None = None,
         otp_wait_timeout: int | None = None,
+        celery_task_id: str | None = None,
         **kwargs: Any,
     ) -> AggregatedResult:
         """
         异步执行主体。
 
-        使用 Semaphore 控制并发，支持可配置的重试机制和 OTP 断点续传。
+        使用 Semaphore 控制并发，支持 OTP 任务内等待机制。
 
         Args:
             task: 异步任务函数
             hosts: 主机字典
             progress_callback: 可选的进度回调
-            otp_wait_timeout: OTP 等待超时时间（秒），兼容参数，不参与执行
+            otp_wait_timeout: OTP 等待超时时间（秒），兼容参数
+            celery_task_id: Celery 任务 ID（用于写入 OTP 等待信号，通知轮询端点返回 428）
             **kwargs: 额外参数
 
         Returns:
@@ -122,6 +125,77 @@ class AsyncRunner:
         task_name = getattr(task, "__name__", "async_task")
         results = AggregatedResult(task_name)
         semaphore = asyncio.Semaphore(self.semaphore_limit)
+
+        # ===== OTP 共享等待机制 =====
+        # 同一 credential_id 下所有设备共享一个 Redis 轮询和结果，
+        # 避免 100 台设备各自轮询导致 Redis "Too many connections"。
+        _otp_events: dict[str, asyncio.Event] = {}
+        _otp_results: dict[str, str | None] = {}  # credential_id -> otp_code 或 None(超时)
+        _otp_polling: set[str] = set()
+
+        async def _poll_otp_once(cred_id_str: str, credential_id: UUID) -> None:
+            """单个 Redis 轮询协程（每个 credential 最多一个）。"""
+            poll_interval = 2
+            waited = 0
+            wait_timeout = settings.OTP_WAIT_TIMEOUT_SECONDS
+
+            while waited < wait_timeout:
+                await asyncio.sleep(poll_interval)
+                waited += poll_interval
+                try:
+                    otp = await otp_coordinator.get_cached_otp(credential_id)
+                    if otp:
+                        _otp_results[cred_id_str] = otp
+                        # 安全访问：event 可能被其他协程重置
+                        evt = _otp_events.get(cred_id_str)
+                        if evt:
+                            evt.set()
+                        return
+                except Exception:
+                    pass  # Redis 暂时不可用，继续重试
+
+            # 超时
+            _otp_results[cred_id_str] = None
+            evt = _otp_events.get(cred_id_str)
+            if evt:
+                evt.set()
+
+        async def _wait_for_shared_otp(credential_id: UUID) -> str | None:
+            """等待新 OTP（共享：同一 credential 只有 1 个 Redis 轮询）。"""
+            cred_str = str(credential_id)
+
+            # 已有结果（之前的设备等到了或超时了）
+            if cred_str in _otp_results:
+                return _otp_results[cred_str]
+
+            # 创建共享事件（确保始终存在）
+            if cred_str not in _otp_events:
+                _otp_events[cred_str] = asyncio.Event()
+
+            # 如果没有轮询协程在跑，启动一个
+            # 使用分布式锁保护 invalidate，防止跨 Celery 任务竞态清掉用户新输入的 OTP
+            if cred_str not in _otp_polling:
+                _otp_polling.add(cred_str)
+                await otp_coordinator.safe_invalidate_and_poll(credential_id)
+                asyncio.create_task(_poll_otp_once(cred_str, credential_id))
+
+            # 所有设备等同一个事件（带超时保护）
+            # 安全获取 event：可能在 await 期间被其他协程重置，需要重新获取
+            evt = _otp_events.get(cred_str)
+            if evt is None:
+                # 极端竞态：event 被移除，重新创建
+                evt = asyncio.Event()
+                _otp_events[cred_str] = evt
+
+            try:
+                await asyncio.wait_for(
+                    evt.wait(),
+                    timeout=settings.OTP_WAIT_TIMEOUT_SECONDS + 5,  # 略大于轮询超时
+                )
+            except TimeoutError:
+                pass
+
+            return _otp_results.get(cred_str)
 
         async def _execute_host(host: "Host") -> tuple[str, Result]:
             """单设备执行（带信号量控制、OTP 等待和可选重试）。"""
@@ -134,22 +208,114 @@ class AsyncRunner:
                         result_data = await task(host, **kwargs)
                         return host.name, Result(host=host, result=result_data)
                 except OTPRequiredException as e:
-                    # 使用 OtpMetaBuilder 统一构建 OTP 元数据
-                    otp_meta = OtpMetaBuilder.from_exception(e)
-                    device_id = host.data.get("device_id")
-                    if device_id:
-                        otp_meta["otp_failed_device_ids"] = [str(device_id)]
-                        otp_meta["pending_device_ids"] = [str(device_id)]
-                    return host.name, Result(
-                        host=host,
-                        result={
-                            "success": False,
-                            "error": str(e),
-                            "skipped": True,
-                            **OtpMetaBuilder.serialize(otp_meta),
-                        },
-                        failed=True,
-                    )
+                    # OTP 过期：进入等待→重试循环（最多 3 轮）
+                    # 每轮：等待用户输入新 OTP → 用新 OTP 重试 SSH → 成功则返回
+                    # 如果重试又 OTP 过期，重置共享状态，进入下一轮等待
+                    try:
+                        credential_id_str = e.credential_id_str
+                        if not credential_id_str:
+                            return host.name, Result(
+                                host=host,
+                                result={"success": False, "error": str(e)},
+                                failed=True,
+                            )
+
+                        credential_id = UUID(credential_id_str)
+                        max_otp_rounds = 3
+                        last_otp_error: Exception | None = e
+
+                        for otp_round in range(max_otp_rounds):
+                            # 写入等待信号 → 轮询端点返回 428 → 前端弹 OTP 输入
+                            if celery_task_id:
+                                await otp_coordinator.signal_otp_wait(
+                                    celery_task_id,
+                                    credential_id,
+                                    credential_username=getattr(last_otp_error, "credential_username", None),
+                                    credential_device_group=getattr(last_otp_error, "credential_device_group", None),
+                                )
+
+                            celery_task_logger.info(
+                                "OTP 过期，等待用户输入新 OTP",
+                                host=host.name,
+                                credential_id=credential_id_str,
+                                otp_round=otp_round + 1,
+                            )
+
+                            # 共享等待：同一 credential 只有 1 个 Redis 轮询
+                            new_otp = await _wait_for_shared_otp(credential_id)
+
+                            # 等待结束，清除信号
+                            if celery_task_id:
+                                await otp_coordinator.clear_otp_wait_signal(celery_task_id)
+
+                            if not new_otp:
+                                celery_task_logger.warning(
+                                    "OTP 等待超时",
+                                    host=host.name,
+                                    credential_id=credential_id_str,
+                                )
+                                return host.name, Result(
+                                    host=host,
+                                    result={"success": False, "error": "等待 OTP 验证码超时"},
+                                    failed=True,
+                                )
+
+                            # 收到新 OTP，重试连接
+                            celery_task_logger.info(
+                                "收到新 OTP，重试连接",
+                                host=host.name,
+                                otp_round=otp_round + 1,
+                            )
+                            host.data["otp_password_prefetched"] = new_otp
+                            try:
+                                async with semaphore:
+                                    result_data = await task(host, **kwargs)
+                                    return host.name, Result(host=host, result=result_data)
+                            except OTPRequiredException as otp_retry_exc:
+                                # 重试也 OTP 过期 → 重置共享状态，下一轮重新等待
+                                last_otp_error = otp_retry_exc
+                                cred_str = str(credential_id)
+                                # 重置 event（不删除！）防止其他等待中的协程 KeyError
+                                _otp_events[cred_str] = asyncio.Event()
+                                _otp_results.pop(cred_str, None)
+                                _otp_polling.discard(cred_str)
+                                celery_task_logger.warning(
+                                    "OTP 重试仍然过期，进入下一轮等待",
+                                    host=host.name,
+                                    otp_round=otp_round + 1,
+                                )
+                                continue
+                            except Exception as retry_exc:
+                                # 非 OTP 错误（连接超时等）→ 直接失败
+                                celery_details_logger.error(
+                                    "OTP 重试后仍然失败",
+                                    host=host.name,
+                                    error=str(retry_exc),
+                                    error_type=type(retry_exc).__name__,
+                                )
+                                return host.name, Result(host=host, exception=retry_exc, failed=True)
+
+                        # 3 轮都 OTP 过期 → 最终失败
+                        return host.name, Result(
+                            host=host,
+                            result={"success": False, "error": "OTP 多次重试仍然失败"},
+                            failed=True,
+                        )
+                    except Exception as otp_handler_exc:
+                        # 兜底：OTP 处理流程内的非预期异常（如竞态 KeyError）
+                        # 转为设备级别失败，不让整个任务崩溃
+                        celery_details_logger.error(
+                            "OTP 处理流程内部异常",
+                            host=host.name,
+                            error=str(otp_handler_exc),
+                            error_type=type(otp_handler_exc).__name__,
+                            exc_info=True,
+                        )
+                        return host.name, Result(
+                            host=host,
+                            result={"success": False, "error": f"OTP 处理异常: {otp_handler_exc}"},
+                            failed=True,
+                        )
                 except asyncio.CancelledError:
                     raise
                 except Exception as e:
@@ -172,15 +338,32 @@ class AsyncRunner:
                         )
                         await asyncio.sleep(delay)
                     else:
-                        # 记录详细失败日志到 celery_details
-                        celery_details_logger.error(
-                            "任务执行失败",
-                            host=host.name,
-                            task=task_name,
-                            error=str(e),
-                            error_type=type(e).__name__,
-                            exc_info=True,
+                        # 预期的网络自动化错误（设备不可达、超时等）降级为 warning
+                        _EXPECTED_NETWORK_ERRORS = (
+                            "ScrapliAuthenticationFailed",
+                            "ScrapliTimeout",
+                            "ConnectionLost",
+                            "ConnectionRefused",
+                            "ScrapliConnectionNotOpened",
                         )
+                        error_type_name = type(e).__name__
+                        if error_type_name in _EXPECTED_NETWORK_ERRORS:
+                            celery_details_logger.warning(
+                                "设备连接失败",
+                                host=host.name,
+                                task=task_name,
+                                error=str(e),
+                                error_type=error_type_name,
+                            )
+                        else:
+                            celery_details_logger.error(
+                                "任务执行失败",
+                                host=host.name,
+                                task=task_name,
+                                error=str(e),
+                                error_type=error_type_name,
+                                exc_info=True,
+                            )
 
             return host.name, Result(host=host, exception=last_exception, failed=True)
 
@@ -276,6 +459,7 @@ async def run_async_tasks(
     num_workers: int | None = None,
     progress_callback: ProgressCallback | None = None,
     otp_wait_timeout: int | None = None,
+    celery_task_id: str | None = None,
     **kwargs: Any,
 ) -> AggregatedResult:
     """
@@ -321,6 +505,7 @@ async def run_async_tasks(
         hosts_dict,
         progress_callback=progress_callback,
         otp_wait_timeout=otp_wait_timeout,
+        celery_task_id=celery_task_id,
         **kwargs,
     )
 

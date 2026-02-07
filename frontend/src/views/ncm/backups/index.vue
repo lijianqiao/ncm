@@ -794,14 +794,17 @@ const {
 } = useTaskPolling<BackupTaskStatus>((taskId) => getBackupTaskStatus(taskId), {
   onComplete: (status) => {
     // 任务完成后，1 秒后自动关闭弹窗并刷新列表
+    // 任务完成后，刷新列表，但不关闭弹窗
     if (status.status === 'success') {
       $alert.success(
         `备份完成：成功 ${status.success_count ?? 0} 台，失败 ${status.failed_count ?? 0} 台`,
       )
-      setTimeout(() => {
-        showBatchBackupModal.value = false
-        tableRef.value?.reload()
-      }, 1000)
+      tableRef.value?.reload()
+    } else if (status.status === 'partial') {
+      $alert.warning(
+        `备份部分完成：成功 ${status.success_count ?? 0} 台，失败 ${status.failed_count ?? 0} 台`,
+      )
+      tableRef.value?.reload()
     } else if (status.status === 'running') {
       // 检查运行中是否返回了 OTP 要求
       const otpNotice = status.otp_notice
@@ -829,9 +832,7 @@ const {
       }
     } else if (status.status === 'failed') {
       $alert.error(`备份失败: ${status.error || '未知错误'}`)
-      setTimeout(() => {
-        showBatchBackupModal.value = false
-      }, 2000)
+      tableRef.value?.reload()
     }
   },
   onError: (error) => {
@@ -1040,11 +1041,13 @@ watch(autoRefresh, () => {
               状态:
               <n-tag :type="batchTaskStatus.status === 'success'
                 ? 'success'
-                : batchTaskStatus.status === 'failed'
-                  ? 'error'
-                  : 'info'
+                : batchTaskStatus.status === 'partial'
+                  ? 'warning'
+                  : batchTaskStatus.status === 'failed'
+                    ? 'error'
+                    : 'info'
                 ">
-                {{ batchTaskStatus.status }}
+                {{ batchTaskStatus.status === 'partial' ? '部分成功' : batchTaskStatus.status }}
               </n-tag>
             </p>
             <!-- 显示进度信息 -->
@@ -1058,11 +1061,13 @@ watch(autoRefresh, () => {
             :percentage="batchTaskStatus.percent ?? (batchTaskStatus.total ? Math.round((batchTaskStatus.completed ?? 0) / batchTaskStatus.total * 100) : 0)"
             :status="batchTaskStatus.status === 'success'
               ? 'success'
-              : batchTaskStatus.status === 'failed'
-                ? 'error'
-                : 'default'
+              : batchTaskStatus.status === 'partial'
+                ? 'warning'
+                : batchTaskStatus.status === 'failed'
+                  ? 'error'
+                  : 'default'
               " :processing="batchTaskStatus.status === 'running' || batchTaskStatus.status === 'pending'" />
-          <template v-if="batchTaskStatus.status === 'success' || batchTaskStatus.status === 'failed'">
+          <template v-if="batchTaskStatus.status === 'success' || batchTaskStatus.status === 'partial' || batchTaskStatus.status === 'failed'">
             <div>
               <p>总数: {{ batchTaskStatus.total_devices }}</p>
               <p>
@@ -1074,19 +1079,21 @@ watch(autoRefresh, () => {
                 {{ batchTaskStatus.failed_count ?? 0 }}
               </p>
             </div>
-            <div v-if="batchTaskStatus.failed_devices?.length">
+            <div v-if="batchTaskStatus.failed_devices?.length" style="margin-top: 10px">
               <p>失败详情:</p>
-              <ul>
-                <li v-for="item in batchTaskStatus.failed_devices" :key="item.name">
-                  设备 {{ item.name }}: {{ item.error }}
-                </li>
-              </ul>
+              <div style="max-height: 200px; overflow-y: auto; border: 1px solid #eee; padding: 8px; border-radius: 4px; background-color: #f9f9f9;">
+                <ul style="padding-left: 20px; margin: 0;">
+                  <li v-for="item in batchTaskStatus.failed_devices" :key="item.name" style="margin-bottom: 4px;">
+                    <span style="font-weight: 500;">{{ item.name }}</span>: <span style="color: #d03050;">{{ item.error }}</span>
+                  </li>
+                </ul>
+              </div>
             </div>
           </template>
 
           <n-alert v-if="batchTaskStatus.error" type="error" :title="batchTaskStatus.error" />
         </n-space>
-        <div v-if="batchTaskStatus.status === 'success' || batchTaskStatus.status === 'failed'"
+        <div v-if="batchTaskStatus.status === 'success' || batchTaskStatus.status === 'partial' || batchTaskStatus.status === 'failed'"
           style="margin-top: 20px; text-align: right">
           <n-button @click="closeBatchBackupModal">关闭</n-button>
         </div>

@@ -180,16 +180,32 @@ async def resume_task_group(
     if not batch_info:
         raise NotFoundException(message="任务不存在或不支持恢复")
 
-    pause_state = await otp_coordinator.resume_group(task_id, credential_id)
-    pending_ids = [UUID(str(x)) for x in (pause_state.get("pending_device_ids") if pause_state else []) or []]
     task_type = batch_info.get("task_type")
-    if not pending_ids and task_type == "deploy":
-        raise BadRequestException(message="未找到可恢复的设备")
+    cred_str = str(credential_id)
+    pending_ids: list[UUID] = []
+
+    # 优先从 OTP 重试存储读取（Celery 任务执行中 OTP 过期的设备）
+    otp_retries = await otp_coordinator.get_otp_retries(task_id)
+    if otp_retries and cred_str in otp_retries:
+        retry_info = otp_retries[cred_str]
+        pending_ids = [UUID(str(x)) for x in (retry_info.get("device_ids") or [])]
+        # 清除该凭证的重试记录（避免轮询再次触发 428）
+        await otp_coordinator.clear_otp_retry(task_id, credential_id)
+
+    # 回退：从 pause_state 读取（初始 OTP 等待的设备）
     if not pending_ids:
-        raise BadRequestException(message="未找到可恢复的设备")
+        pause_state = await otp_coordinator.resume_group(task_id, credential_id)
+        pending_ids = [UUID(str(x)) for x in (pause_state.get("pending_device_ids") if pause_state else []) or []]
+
+    if not pending_ids:
+        # 无 pending 设备：可能是 runner 内部正在等待 OTP（轮询 Redis），
+        # 用户刚刚通过 cacheOTP 写入了新 OTP，runner 会自动拾取。
+        # 返回成功，前端恢复轮询即可。
+        return ResponseBase(data={"task_id": task_id, "message": "OTP 已缓存，任务将自动继续"})
+
     if task_type == "backup":
-        # 标记凭证已被 Resume，防止状态查询时重复触发 OTP 请求
-        await otp_coordinator.registry.mark_credential_resumed(task_id, str(credential_id))
+        # 标记凭证已被 Resume，防止 waiting_groups 重复触发 OTP 请求
+        await otp_coordinator.registry.mark_credential_resumed(task_id, cred_str)
 
         backup_type = batch_info.get("backup_type") or "manual"
         operator_id = batch_info.get("operator_id")
